@@ -1,0 +1,13 @@
+repos:
+  - repo: local
+    hooks:
+      - id: kb-lint
+        name: kb lint
+        entry: kb lint --scope agent-kb
+        language: system
+        pass_filenames: false
+      - id: kb-index
+        name: kb index sync
+        entry: kb index --check
+        language: system
+        pass_filenames: false

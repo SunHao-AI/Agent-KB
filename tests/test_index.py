@@ -1,0 +1,29 @@
+import json
+from pathlib import Path
+from kb.index import build_indexes, check_indexes
+from conftest import make_entry
+
+
+def _put(repo, rel, text):
+    p = Path(repo) / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+
+
+def test_draft_excluded_from_main_index(tmp_repo):
+    _put(tmp_repo, "kb/pitfall/frontend/a.md", make_entry(status="accepted"))
+    _put(tmp_repo, "kb/pitfall/frontend/d.md", make_entry(id="kb-20261012-abcd", status="draft"))
+    md, jl, dj = build_indexes(tmp_repo)
+    main = [json.loads(x) for x in jl.read_text(encoding="utf-8").splitlines()]
+    draft = [json.loads(x) for x in dj.read_text(encoding="utf-8").splitlines()]
+    assert {r["id"] for r in main} == {"kb-20261012-7f3a"}
+    assert {r["id"] for r in draft} == {"kb-20261012-abcd"}
+    assert md.exists()
+
+
+def test_check_detects_stale(tmp_repo):
+    _put(tmp_repo, "kb/pitfall/frontend/a.md", make_entry(status="accepted"))
+    build_indexes(tmp_repo)
+    assert check_indexes(tmp_repo) is True
+    _put(tmp_repo, "kb/pitfall/frontend/b.md", make_entry(id="kb-20261012-0001", status="accepted"))
+    assert check_indexes(tmp_repo) is False

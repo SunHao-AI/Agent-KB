@@ -3,6 +3,7 @@ import datetime as dt
 import re
 import secrets
 from pathlib import Path
+import yaml
 from kb.taxonomy import load_taxonomy
 from kb.entry import Entry, parse_entry
 
@@ -16,6 +17,20 @@ def new_id(today: dt.date) -> str:
 def slug(title: str, today: dt.date) -> str:
     k = _NONKEBAB.sub("-", title.lower()).strip("-")
     return f"{today.isoformat()}-{k}" if k else today.isoformat()
+
+
+def _unique_path(repo_root: Path, type_name: str, domain: str,
+                 title: str, today: dt.date, entry_id: str) -> Path:
+    base = slug(title, today)
+    # kebab 部分为空(如纯中文标题)时用 id 后 4 hex 兜底, 避免同日同目录路径相同
+    if base == today.isoformat():
+        base = f"{base}-{entry_id[-4:]}"
+    path = Path(repo_root) / "kb" / type_name / domain / f"{base}.md"
+    n = 2
+    while path.exists():
+        path = path.with_name(f"{base}-{n}.md")
+        n += 1
+    return path
 
 
 def _template_body(type_name: str) -> str:
@@ -45,10 +60,9 @@ def create_entry(repo_root: Path, type: str, domain: str, scope: str,
     }
     if "severity" in tax["types"][type].get("requires", []):
         fm["severity"] = "medium"
-    fm_text = "\n".join(f"{k}: {v}" for k, v in fm.items())
+    fm_text = yaml.safe_dump(fm, allow_unicode=True, sort_keys=False).strip()
     body = f"\n# {title}\n\n{_template_body(type)}"
-    rel = Path("kb") / type / domain / f"{slug(title, today)}.md"
-    path = Path(repo_root) / rel
+    path = _unique_path(Path(repo_root), type, domain, title, today, fm["id"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\n{fm_text}\n---\n{body}", encoding="utf-8")
     return parse_entry(path)

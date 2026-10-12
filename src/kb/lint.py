@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import Counter
 from pathlib import Path
 import jsonschema
 from kb.entry import parse_entry
@@ -20,8 +21,11 @@ def lint_repo(repo_root: Path, scope: str = "project") -> list[str]:
     errors: list[str] = []
     entries = list(_iter_entries(repo_root))
     ids = {e.fm.get("id") for e in entries}
+    id_counts = Counter(e.fm.get("id") for e in entries if e.fm.get("id"))
     for e in entries:
         rid = e.fm.get("id", e.path.name)
+        if id_counts.get(e.fm.get("id"), 0) > 1:
+            errors.append(f"{rid}: duplicate id {e.fm['id']}")
         for err in sorted(validator.iter_errors(e.fm), key=lambda x: x.json_path):
             errors.append(f"{rid}: schema {err.json_path}: {err.message}")
         if e.fm.get("scope") == "project" and scope == "agent-kb":

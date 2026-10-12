@@ -6,11 +6,17 @@ from kb.entry import parse_entry
 from kb.taxonomy import load_taxonomy, derive_schema
 
 
+# `kb index` 的生成物固定名, 不作为知识条目参与 lint
+_GENERATED_NAMES = {"INDEX.md", "index.jsonl", "index.draft.jsonl"}
+
+
 def _iter_entries(root: Path):
     kb = Path(root) / "kb"
     if not kb.exists():
         return
     for p in sorted(kb.rglob("*.md")):
+        if p.name in _GENERATED_NAMES:
+            continue
         yield parse_entry(p)
 
 

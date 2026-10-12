@@ -1,5 +1,6 @@
 from pathlib import Path
 from kb.lint import lint_repo
+from kb.index import build_indexes
 from conftest import make_entry
 
 
@@ -64,4 +65,13 @@ def test_supersedes_none_or_absent_not_flagged(tmp_repo):
          "scope: project\nstatus: superseded\nconfidence: verified\n"
          "created: 2026-10-12\nupdated: 2026-10-12\n"
          "supersedes: null\nsuperseded_by: kb-20261012-7f3a\n---\n\n# demo2\n\n首段摘要。\n")
+    assert lint_repo(tmp_repo, scope="project") == []
+
+
+def test_generated_index_md_not_linted(tmp_repo):
+    # 生成物 kb/INDEX.md 必须被 lint 跳过, 否则 kb index 之后 lint 恒误报
+    _put(tmp_repo, "kb/pitfall/frontend/a.md",
+         make_entry(scope="project", status="accepted", confidence="verified"))
+    build_indexes(tmp_repo)
+    assert (Path(tmp_repo) / "kb" / "INDEX.md").exists()
     assert lint_repo(tmp_repo, scope="project") == []

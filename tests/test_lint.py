@@ -77,6 +77,15 @@ def test_generated_index_md_not_linted(tmp_repo):
     assert lint_repo(tmp_repo, scope="project") == []
 
 
+def test_h1_counting_ignores_fenced_code_blocks(tmp_repo):
+    # 围栏代码块内的 "# " 开头行(shell/YAML 注释)不得计入 H1,
+    # 否则迁移侧被迫把代码块里的 "# " 改成 "#" 规避, 损害内容保真
+    entry = make_entry(scope="project", status="accepted", confidence="verified")
+    entry += "\n```bash\n# 注释: 这是 shell 注释不是标题\n# 第二行注释\ndocker ps\n```\n"
+    _put(tmp_repo, "kb/pitfall/frontend/a.md", entry)
+    assert lint_repo(tmp_repo, scope="project") == []
+
+
 def test_submodule_subtree_not_scanned(tmp_repo):
     # 项目 kb 根(docs/kb)内挂载的子模块仓 .agent-kb/kb/ 子树不属于本项目 lint 范围,
     # 全量 rglob 会把子仓生成物/条目误扫入, 造成误报与 scope 落位错乱

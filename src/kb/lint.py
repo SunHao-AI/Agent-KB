@@ -49,7 +49,16 @@ def lint_repo(repo_root: Path, scope: str = "project") -> list[str]:
             ref = e.fm.get(f)
             if ref and ref not in ids:
                 errors.append(f"{rid}: {f} references missing {ref}")
-        h1 = sum(1 for ln in e.body.splitlines() if ln.strip().startswith("# "))
+        # H1 计数需跳过 ``` 围栏代码块: 块内以 "# " 开头的 shell/YAML 注释
+        # 不是标题, 误计会迫使迁移侧改写代码块内容规避
+        h1 = 0
+        in_fence = False
+        for ln in e.body.splitlines():
+            if ln.strip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if not in_fence and ln.strip().startswith("# "):
+                h1 += 1
         if h1 != 1:
             errors.append(f"{rid}: expected exactly one H1, found {h1}")
     return errors

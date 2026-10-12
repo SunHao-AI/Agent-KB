@@ -11,8 +11,8 @@ Agent-KB 是**跨项目研发知识库的事实源**, 配套 `kb` CLI(本仓 `sr
 - **本项目知识**: 各项目仓内 `docs/kb/`(scope: project), 随代码版本化;
 - **通用知识**: Agent-KB 仓 `kb/`(scope: stack/universal), 在各项目内以 submodule 挂载于 `.agent-kb/kb/`。
 
-两处共用同一套 front-matter schema、模板、索引格式与 CLI。`kb/INDEX.md` 与
-`kb/index.jsonl` 是 `kb index` 的**生成物**, 勿手改。
+两处共用同一套 front-matter schema、模板、索引格式与 CLI。`kb/INDEX.md`、
+`kb/index.jsonl` 与 `kb/index.draft.jsonl` 是 `kb index` 的**生成物**, 勿手改。
 
 ## 怎么查(三级披露)
 
@@ -52,7 +52,8 @@ kb promote kb-20261012-7f3a --to stack --repo . # 建议提升 scope(由人确�
 2. Agent **永远不能**直接写 `scope != project` 的条目; 认为值得上提 Agent-KB 时,
    只做 `kb promote <id> --to stack|universal` 式的**建议**, 由人确认。
 3. 沉淀前**必须**先 `kb search` 去重; 命中既有条目则更新(追加"新发现"), 不新建。
-4. 无实测证据的结论**必须**标 `confidence: speculative`; 检索默认只信 verified/probable。
+4. 无实测证据的结论**必须**标 `confidence: speculative`; 采信时默认只信 verified/probable,
+   `speculative` 结论须自行验证后才可依据(检索本身不做 confidence 过滤)。
 5. 单次任务最多沉淀 **3 条**, 防刷噪音。
 
 ## 收录标准

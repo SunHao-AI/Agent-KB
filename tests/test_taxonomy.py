@@ -36,3 +36,16 @@ def test_enums_present():
     assert tax["enums"]["status"][0] == "draft"
     assert "universal" in tax["enums"]["scope"]
     assert "speculative" in tax["enums"]["confidence"]
+
+
+def test_derive_schema_marks_required_and_enums():
+    from kb.taxonomy import load_taxonomy, derive_schema
+    schema = derive_schema(load_taxonomy())
+    assert set(schema["required"]) >= {"id", "title", "type", "scope", "status", "confidence"}
+    assert schema["properties"]["type"]["enum"] == sorted(REQUIRED_TYPES)
+    assert schema["properties"]["severity"]["enum"] == ["low", "medium", "high", "critical"]
+
+
+def test_repo_root_finds_taxonomy_file():
+    from kb.taxonomy import repo_root
+    assert (repo_root() / "taxonomy.yaml").exists()

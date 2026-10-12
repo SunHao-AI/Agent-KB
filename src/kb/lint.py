@@ -1,0 +1,42 @@
+from __future__ import annotations
+from pathlib import Path
+import jsonschema
+from kb.entry import parse_entry
+from kb.taxonomy import load_taxonomy, derive_schema
+
+
+def _iter_entries(root: Path):
+    kb = Path(root) / "kb"
+    if not kb.exists():
+        return
+    for p in sorted(kb.rglob("*.md")):
+        yield parse_entry(p)
+
+
+def lint_repo(repo_root: Path, scope: str = "project") -> list[str]:
+    tax = load_taxonomy()
+    schema = derive_schema(tax)
+    validator = jsonschema.Draft202012Validator(schema)
+    errors: list[str] = []
+    entries = list(_iter_entries(repo_root))
+    ids = {e.fm.get("id") for e in entries}
+    for e in entries:
+        rid = e.fm.get("id", e.path.name)
+        for err in sorted(validator.iter_errors(e.fm), key=lambda x: x.json_path):
+            errors.append(f"{rid}: schema {err.json_path}: {err.message}")
+        if e.fm.get("scope") == "project" and scope == "agent-kb":
+            errors.append(f"{rid}: scope=project must not live in agent-kb")
+        if e.fm.get("scope") != "project" and scope == "project":
+            errors.append(f"{rid}: scope!=project must be promoted to agent-kb")
+        for f in ("related",):
+            for ref in e.fm.get(f, []) or []:
+                if ref not in ids:
+                    errors.append(f"{rid}: {f} references missing {ref}")
+        for f in ("supersedes", "superseded_by"):
+            ref = e.fm.get(f)
+            if ref and ref not in ids:
+                errors.append(f"{rid}: {f} references missing {ref}")
+        h1 = sum(1 for ln in e.body.splitlines() if ln.strip().startswith("# "))
+        if h1 != 1:
+            errors.append(f"{rid}: expected exactly one H1, found {h1}")
+    return errors

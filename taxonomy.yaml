@@ -1,0 +1,58 @@
+version: 1
+types:
+  decision:
+    label: 技术决策
+    template: decision.md
+    requires: []
+    sections: [背景, 候选方案, 决策, 理由, 后果]
+  spec:
+    label: 设计/需求规格
+    template: spec.md
+    requires: []
+    sections: [背景, 目标, 非目标, 方案, 验收标准]
+  plan:
+    label: 实施计划
+    template: plan.md
+    requires: []
+    sections: [目标, 架构, 任务拆解, 风险]
+  pitfall:
+    label: 踩坑记录
+    template: pitfall.md
+    requires: [severity]
+    sections: [背景 / 现象, 根因, 解决方案, 验证, 适用边界与反例, 参考]
+  rca:
+    label: 故障根因分析
+    template: rca.md
+    requires: [severity]
+    sections: [现象, 影响, 时间线, 根因, 处置, 预防, 行动项]
+  howto:
+    label: 操作指南
+    template: howto.md
+    requires: []
+    sections: [前提, 步骤, 验证, 常见错误]
+  reference:
+    label: 参考资料/术语
+    template: reference.md
+    requires: []
+    sections: [定义, 用法, 示例, 参考]
+  retrospective:
+    label: 经验复盘
+    template: retrospective.md
+    requires: []
+    sections: [目标, 结果, 做得好的, 待改进, 行动项]
+domains:
+  backend:    {label: 后端}
+  frontend:   {label: 前端}
+  database:   {label: 数据库}
+  devops:     {label: 基础设施/运维}
+  security:   {label: 安全}
+  testing:    {label: 测试}
+  build:      {label: 构建/工具链}
+  algorithm:  {label: 算法/模型}
+  process:    {label: 研发流程}
+  tooling:    {label: 协作工具}
+enums:
+  scope:      [project, stack, universal]
+  status:     [draft, proposed, accepted, deprecated, superseded]
+  severity:   [low, medium, high, critical]
+  confidence: [verified, probable, speculative]

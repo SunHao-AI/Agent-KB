@@ -75,3 +75,14 @@ def test_generated_index_md_not_linted(tmp_repo):
     build_indexes(tmp_repo)
     assert (Path(tmp_repo) / "kb" / "INDEX.md").exists()
     assert lint_repo(tmp_repo, scope="project") == []
+
+
+def test_submodule_subtree_not_scanned(tmp_repo):
+    # 项目 kb 根(docs/kb)内挂载的子模块仓 .agent-kb/kb/ 子树不属于本项目 lint 范围,
+    # 全量 rglob 会把子仓生成物/条目误扫入, 造成误报与 scope 落位错乱
+    _put(tmp_repo, "kb/.agent-kb/kb/INDEX.md",
+         "# Knowledge Index\n\n- [demo](pitfall/frontend/x.md)\n")
+    _put(tmp_repo, "kb/.agent-kb/kb/pitfall/frontend/x.md",
+         make_entry(id="kb-20261012-ffff", scope="stack",
+                    status="accepted", confidence="verified"))
+    assert lint_repo(tmp_repo, scope="project") == []

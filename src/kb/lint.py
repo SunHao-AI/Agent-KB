@@ -14,10 +14,13 @@ def _iter_entries(root: Path):
     kb = Path(root) / "kb"
     if not kb.exists():
         return
-    for p in sorted(kb.rglob("*.md")):
-        if p.name in _GENERATED_NAMES:
-            continue
-        yield parse_entry(p)
+    # 只遍历 kb 根第一层条目目录(kb/<type>/)再向下 rglob, 不进入 kb 根下
+    # 挂载的子仓/子树(如 .agent-kb/), 避免扫入子仓生成物造成误报
+    for d in sorted(p for p in kb.iterdir() if p.is_dir() and not p.name.startswith(".")):
+        for p in sorted(d.rglob("*.md")):
+            if p.name in _GENERATED_NAMES:
+                continue
+            yield parse_entry(p)
 
 
 def lint_repo(repo_root: Path, scope: str = "project") -> list[str]:

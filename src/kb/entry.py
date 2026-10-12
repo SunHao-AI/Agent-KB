@@ -46,7 +46,12 @@ def parse_entry(path: pathlib.Path) -> Entry:
     m = _FM_RE.match(text)
     if not m:
         return Entry(fm={}, body=text, path=pathlib.Path(path))
-    fm = _normalize_dates(yaml.safe_load(m.group(1)) or {})
+    data = yaml.safe_load(m.group(1))
+    # YAML 根类型非 mapping(list/str/...)视为无 front-matter: fm={}, body=全文,
+    # 由 lint 自然报必填缺失, 避免 _normalize_dates 对 list 抛 AttributeError
+    if not isinstance(data, dict):
+        return Entry(fm={}, body=text, path=pathlib.Path(path))
+    fm = _normalize_dates(data)
     body = m.group(2)
     return Entry(fm=fm, body=body, path=pathlib.Path(path))
 

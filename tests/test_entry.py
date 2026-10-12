@@ -26,3 +26,13 @@ def test_dump_roundtrip_preserves_fields(tmp_repo):
     text = dump_entry(e)
     e2 = parse_entry(_write(tmp_repo, text))
     assert e2.fm["title"] == "A"
+
+
+def test_non_mapping_frontmatter_treated_as_no_fm(tmp_repo):
+    # YAML 根类型是 list 时不得抛 AttributeError, 与"无 front-matter"同路径:
+    # fm={}, body=全文, 由 lint 自然报必填缺失
+    text = "---\n- just\n- a\n- list\n---\n\n# 标题\n\n正文。\n"
+    p = _write(tmp_repo, text)
+    e = parse_entry(p)
+    assert e.fm == {}
+    assert "- just" in e.body and "# 标题" in e.body

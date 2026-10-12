@@ -54,6 +54,13 @@ def test_no_frontmatter_reports_required_without_crash(tmp_repo):
     assert any("required" in e for e in errs)
 
 
+def test_malformed_frontmatter_reports_required_without_crash(tmp_repo):
+    # front-matter 根类型是 list(畸形)时不得崩溃, 按无 fm 处理报必填缺失
+    _put(tmp_repo, "kb/pitfall/frontend/a.md", "---\n- just\n- a\n- list\n---\n\n# 标题\n\n正文。\n")
+    errs = lint_repo(tmp_repo, scope="project")
+    assert any("required" in e for e in errs)
+
+
 def test_supersedes_none_or_absent_not_flagged(tmp_repo):
     # supersedes 字段缺失: 不报引用错误
     _put(tmp_repo, "kb/pitfall/frontend/a.md",

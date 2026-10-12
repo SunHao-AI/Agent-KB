@@ -27,3 +27,16 @@ def test_check_detects_stale(tmp_repo):
     assert check_indexes(tmp_repo) is True
     _put(tmp_repo, "kb/pitfall/frontend/b.md", make_entry(id="kb-20261012-0001", status="accepted"))
     assert check_indexes(tmp_repo) is False
+
+
+def test_index_md_links_relative_to_kb_dir(tmp_repo):
+    # INDEX.md 位于 kb/ 内, 链接必须相对 kb/ 目录解析;
+    # 若写成 repo 相对的 kb/... 会被解析成 kb/kb/... 而断裂
+    _put(tmp_repo, "kb/pitfall/frontend/a.md", make_entry(status="accepted"))
+    md, jl, dj = build_indexes(tmp_repo)
+    content = md.read_text(encoding="utf-8")
+    assert "](pitfall/frontend/a.md)" in content
+    assert "](kb/" not in content
+    # jsonl 的 path 字段保持 repo 相对不变
+    rec = json.loads(jl.read_text(encoding="utf-8").splitlines()[0])
+    assert rec["path"] == "kb/pitfall/frontend/a.md"

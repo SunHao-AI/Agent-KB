@@ -25,9 +25,13 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("--title", required=True)
     p_new.add_argument("--generated", action="store_true")
 
-    sub.add_parser("lint", parents=[common]).add_argument("--scope", default="project")
+    p_lint = sub.add_parser("lint", parents=[common])
+    # choices 严格校验, 拼错立即 exit 2 而非静默关闭落位检查
+    p_lint.add_argument("--scope", default="project", choices=["project", "agent-kb"])
     p_idx = sub.add_parser("index", parents=[common])
     p_idx.add_argument("--check", action="store_true")
+    p_idx.add_argument("--repo-name", default=None,
+                       help="repo 名(写入索引 repo 字段), 默认取 --repo 目录名")
 
     p_s = sub.add_parser("search", parents=[common])
     for flag in ("type", "domain", "tag", "scope", "status", "confidence", "query"):
@@ -53,11 +57,12 @@ def main(argv: list[str] | None = None) -> int:
             print(e, file=sys.stderr)
         return 1 if errs else 0
     if args.cmd == "index":
+        repo_name = args.repo_name or repo.resolve().name
         if args.check:
-            ok = check_indexes(repo)
+            ok = check_indexes(repo, repo_name=repo_name)
             print("index up to date" if ok else "index stale")
             return 0 if ok else 1
-        md, jl, dj = build_indexes(repo)
+        md, jl, dj = build_indexes(repo, repo_name=repo_name)
         print(f"wrote {md}\nwrote {jl}\nwrote {dj}")
         return 0
     if args.cmd == "search":

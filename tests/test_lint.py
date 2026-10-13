@@ -1,4 +1,6 @@
 from pathlib import Path
+from kb import dedup
+from kb import lint as lint_mod
 from kb.lint import lint_repo
 from kb.index import build_indexes
 from conftest import make_entry
@@ -9,6 +11,12 @@ def _put(repo, rel, text):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text, encoding="utf-8")
     return p
+
+
+def test_lint_threshold_is_dedup_constant():
+    # 门槛常量单一事实源: lint 引用的 MIN_FP_LEN 必须是 dedup 模块同一对象,
+    # 杜绝 lint 内再出现本地副本
+    assert lint_mod.MIN_FP_LEN is dedup.MIN_FP_LEN
 
 
 def test_ok_for_valid_project_entry(tmp_repo):

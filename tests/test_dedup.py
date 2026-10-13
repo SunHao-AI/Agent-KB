@@ -30,3 +30,17 @@ def test_fingerprint_stable_and_12hex(tmp_path):
     b = _entry(b_dir, "# 不同标题\n\n## 根因\n同一机制   同一结论\n")
     assert fingerprint(a) == fingerprint(b)          # 规范化后等价
     assert len(fingerprint(a)) == 12
+
+def test_min_fp_len_public_constant():
+    # 门槛常量单一事实源: dedup 公开 MIN_FP_LEN, 内部旧名同值别名
+    from kb.dedup import MIN_FP_LEN, _MIN_FP_LEN, fingerprint_text
+    assert MIN_FP_LEN == _MIN_FP_LEN == 16
+    assert fingerprint_text("长度介于十六与一千之间的规范化文本内容") != ""
+
+def test_fingerprint_text_threshold_follows_min_fp_len(monkeypatch):
+    # 行为证明: 单点调整 dedup.MIN_FP_LEN 同时改变短源门槛(fingerprint_text 动态读取)
+    from kb import dedup
+    text = "长度介于十六与一千之间的规范化文本内容"
+    assert dedup.fingerprint_text(text) != ""
+    monkeypatch.setattr(dedup, "MIN_FP_LEN", 10_000)
+    assert dedup.fingerprint_text(text) == ""

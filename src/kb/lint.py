@@ -3,7 +3,7 @@ from collections import Counter
 from pathlib import Path
 import re
 import jsonschema
-from kb.dedup import fingerprint, fingerprint_source, normalize
+from kb.dedup import MIN_FP_LEN, fingerprint, fingerprint_source, normalize
 from kb.entry import parse_entry
 from kb.taxonomy import load_taxonomy, derive_schema
 
@@ -101,13 +101,13 @@ def lint_repo(repo_root: Path, scope: str = "project",
         rc = _root_cause_section(e)
         if rc is not None and not _HTML_COMMENT_RE.sub("", rc).strip():
             errors.append(f"warning: {rid}: placeholder root-cause section")
-    # 指纹冲突检测: 规范化源短于 _MIN_FP_LEN 不参检(防测试桩/占位段互撞)
-    _MIN_FP_LEN = 16
+    # 指纹冲突检测: 规范化源短于 MIN_FP_LEN 不参检(防测试桩/占位段互撞),
+    # 门槛常量唯一事实源在 kb.dedup
     fp_map: dict[str, list[str]] = {}
     for e in entries:
         rid = e.fm.get("id", e.path.name)
         src = normalize(fingerprint_source(e))
-        if len(src) < _MIN_FP_LEN:
+        if len(src) < MIN_FP_LEN:
             continue
         fp_map.setdefault(fingerprint(e), []).append(rid)
     for fp, rids in fp_map.items():
@@ -117,12 +117,12 @@ def lint_repo(repo_root: Path, scope: str = "project",
     for other in cross_repos or []:
         other_fps: dict[str, str] = {}
         for oe in _iter_entries(Path(other)):
-            if len(normalize(fingerprint_source(oe))) >= _MIN_FP_LEN:
+            if len(normalize(fingerprint_source(oe))) >= MIN_FP_LEN:
                 other_fps.setdefault(fingerprint(oe), oe.fm.get("id", oe.path.name))
         for e in entries:
             rid = e.fm.get("id", e.path.name)
             src = normalize(fingerprint_source(e))
-            if len(src) < _MIN_FP_LEN:
+            if len(src) < MIN_FP_LEN:
                 continue
             oid = other_fps.get(fingerprint(e))
             if oid:

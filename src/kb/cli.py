@@ -84,7 +84,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
         print(json.dumps({**e.fm, "path": str(e.path)}, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "set-scope":
-        print(json.dumps(gate_set_scope(repo, args.id, args.scope), ensure_ascii=False, indent=2))
+        e = gate_set_scope(repo, args.id, args.scope)
+        print(json.dumps({**e.fm, "path": str(e.path)}, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "export":
         print(export_entry(repo, Path(args.to_repo), args.id, to_scope=args.to_scope))

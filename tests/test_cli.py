@@ -71,6 +71,19 @@ def test_cli_review_success_prints_json(tmp_repo, capsys):
     assert out["id"] == "kb-20261014-c2c2" and out["status"] == "proposed"
 
 
+def test_cli_set_scope_success_prints_json(tmp_repo, capsys):
+    # 成功路径必须可 JSON 序列化输出(与 review 同款缺陷, Entry 不可直接 dumps)
+    d = tmp_repo / "kb" / "pitfall" / "frontend"; d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261014-c3c3", status="draft",
+                                       confidence="probable",
+                                       tags=["needs-scope-review"]), encoding="utf-8")
+    assert main(["set-scope", "kb-20261014-c3c3", "project",
+                 "--repo", str(tmp_repo)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["id"] == "kb-20261014-c3c3" and out["scope"] == "project"
+    assert "needs-scope-review" not in (out.get("tags") or [])
+
+
 def test_cli_new_generated_scope_ignored(tmp_repo, capsys):
     rc = main(["new", "pitfall", "--domain", "frontend", "--title", "门控新建",
                "--scope", "stack", "--generated", "--repo", str(tmp_repo)])

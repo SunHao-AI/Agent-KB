@@ -44,3 +44,23 @@ def test_tags_severity_applied(tmp_repo):
     e = create_draft(tmp_repo, type="pitfall", domain="frontend", title="带标签",
                      body=BODY + "\n## 参考\n无\n", tags=["vite"], severity="high")
     assert e.fm["tags"] == ["vite"] and e.fm["severity"] == "high"
+
+
+# --- F5: body=None(仅标题查重路径)行为锁定 ---
+def test_dup_title_hit_without_body_rejected(tmp_repo):
+    # body=None 时无指纹可比, 查重退化为仅标题 token 命中, 命中仍须拒建
+    _accepted_entry(tmp_repo, "kb-20261012-4444", "Vite HMR windows 失效", "无关根因甲。")
+    with pytest.raises(DuplicateCandidate) as ei:
+        create_draft(tmp_repo, type="pitfall", domain="frontend",
+                     title="vite hmr 又失效", body=None)
+    assert ei.value.entries[0]["id"] == "kb-20261012-4444"
+
+
+def test_no_title_hit_without_body_creates(tmp_repo):
+    # body=None 且标题不命中: 正常建 draft(正文为模板骨架, 非空 body 覆写)
+    _accepted_entry(tmp_repo, "kb-20261012-5555", "无关主题", "无关根因甲。")
+    e = create_draft(tmp_repo, type="pitfall", domain="frontend",
+                     title="SQLAlchemy JSON 列原地改不落库", body=None)
+    assert e.fm["status"] == "draft" and e.path.exists()
+    text = e.path.read_text(encoding="utf-8")
+    assert "## 根因" in text  # 模板骨架保留

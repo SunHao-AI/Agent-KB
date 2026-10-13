@@ -44,3 +44,13 @@ def test_due_review(tmp_repo):
     _seed(tmp_repo)
     due = due_review(tmp_repo, dt.date(2026, 10, 12))
     assert {r["id"] for r in due} == {"kb-20261012-aaaa"}
+
+
+def test_needs_scope_lists_tagged(tmp_repo):
+    from kb.query import needs_scope
+    d = tmp_repo / "kb" / "pitfall" / "backend"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261014-a1a1", tags=["needs-scope-review"]), encoding="utf-8")
+    (d / "b.md").write_text(make_entry(id="kb-20261014-b2b2", tags=["vite"]), encoding="utf-8")
+    rows = needs_scope(tmp_repo)
+    assert [r["id"] for r in rows] == ["kb-20261014-a1a1"]

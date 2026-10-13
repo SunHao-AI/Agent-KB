@@ -66,3 +66,16 @@ def due_review(repo_root: Path, today: dt.date) -> list[dict]:
             out.append({"id": e.fm.get("id"), "title": e.fm.get("title"),
                         "review_by": str(rb)})
     return out
+
+
+def needs_scope(repo_root: Path) -> list[dict]:
+    out = []
+    kb = Path(repo_root) / "kb"
+    for p in sorted(kb.rglob("*.md")) if kb.exists() else []:
+        e = parse_entry(p)
+        if "needs-scope-review" in (e.fm.get("tags") or []):
+            out.append({"id": e.fm.get("id"), "title": e.fm.get("title"),
+                        "type": e.fm.get("type"),
+                        "domain": e.fm.get("domain", []),
+                        "summary": e.summary()})
+    return out

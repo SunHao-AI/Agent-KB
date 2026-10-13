@@ -50,3 +50,49 @@ def test_cli_lint_rejects_invalid_scope(tmp_repo):
     with pytest.raises(SystemExit) as exc:
         main(["lint", "--repo", str(tmp_repo), "--scope", "projekt"])
     assert exc.value.code == 2
+
+
+def test_cli_review_rejects_illegal_transition(tmp_repo, capsys):
+    d = tmp_repo / "kb" / "pitfall" / "frontend"; d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261014-c1c1", status="accepted",
+                                       confidence="verified"), encoding="utf-8")
+    assert main(["review", "kb-20261014-c1c1", "--to", "draft", "--repo", str(tmp_repo)]) == 1
+    assert "kb error:" in capsys.readouterr().err
+
+
+def test_cli_new_generated_scope_ignored(tmp_repo, capsys):
+    rc = main(["new", "pitfall", "--domain", "frontend", "--title", "门控新建",
+               "--scope", "stack", "--generated", "--repo", str(tmp_repo)])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "note: generated entries are always scope=project" in err
+    md = next((tmp_repo / "kb" / "pitfall" / "frontend").glob("*.md"))
+    assert "scope: project" in md.read_text(encoding="utf-8")
+
+
+def test_cli_stat_needs_scope_md(tmp_repo, capsys):
+    d = tmp_repo / "kb" / "pitfall" / "backend"; d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261014-d2d2", title="待认定",
+                                       tags=["needs-scope-review"]), encoding="utf-8")
+    assert main(["stat", "--needs-scope", "--format", "md", "--repo", str(tmp_repo)]) == 0
+    assert "待认定" in capsys.readouterr().out
+
+
+def test_cli_search_agent_kb_layers(tmp_path, capsys):
+    # 双层检索: 项目层 + agent-kb 层各命中一条, repo 字段区分来源
+    proj_kb = tmp_path / "proj"
+    (proj_kb / "kb").mkdir(parents=True)
+    _put(proj_kb, "kb/pitfall/frontend/a.md",
+         make_entry(id="kb-20261014-e1e1", title="projvite", status="accepted"))
+    stack_kb = tmp_path / "stackkb"
+    (stack_kb / "kb").mkdir(parents=True)
+    _put(stack_kb, "kb/pitfall/backend/b.md",
+         make_entry(id="kb-20261014-f2f2", title="stackvite", status="accepted",
+                    scope="stack"))
+    from kb.index import build_indexes
+    build_indexes(proj_kb, repo_name=proj_kb.name)
+    build_indexes(stack_kb, repo_name=stack_kb.name)
+    assert main(["search", "--repo", str(proj_kb), "--agent-kb", str(stack_kb),
+                 "--query", "vite"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert {r["repo"] for r in rows} == {proj_kb.name, stack_kb.name}

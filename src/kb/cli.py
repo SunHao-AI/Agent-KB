@@ -80,7 +80,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
         print(e.path)
         return 0
     if args.cmd == "review":
-        print(json.dumps(gate_review(repo, args.id, args.to), ensure_ascii=False, indent=2))
+        e = gate_review(repo, args.id, args.to)
+        print(json.dumps({**e.fm, "path": str(e.path)}, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "set-scope":
         print(json.dumps(gate_set_scope(repo, args.id, args.scope), ensure_ascii=False, indent=2))

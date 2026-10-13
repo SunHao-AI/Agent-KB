@@ -19,9 +19,30 @@ def test_lint_threshold_is_dedup_constant():
     assert lint_mod.MIN_FP_LEN is dedup.MIN_FP_LEN
 
 
+def test_lint_pitfall_requires_severity_error(tmp_repo):
+    # taxonomy pitfall.requires=[severity] 已并入派生 schema: 缺 severity → error(阻断)
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261013-c3c3"), encoding="utf-8")
+    errs = lint_repo(tmp_repo, scope="project")
+    assert any("severity" in e and "required" in e and not e.startswith("warning: ")
+               for e in errs)
+
+
+def test_lint_reference_without_severity_ok(tmp_repo):
+    # 条件必填只作用于声明 requires 的 type: reference 缺 severity 不受影响
+    d = tmp_repo / "kb" / "reference" / "tooling"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text(
+        make_entry(id="kb-20261013-d4d4", type="reference", status="accepted",
+                   confidence="verified"), encoding="utf-8")
+    assert lint_repo(tmp_repo, scope="project") == []
+
+
 def test_ok_for_valid_project_entry(tmp_repo):
     _put(tmp_repo, "kb/pitfall/frontend/a.md",
-         make_entry(scope="project", status="accepted", confidence="verified"))
+         make_entry(scope="project", status="accepted", confidence="verified",
+                    severity="medium"))
     assert lint_repo(tmp_repo, scope="project") == []
 
 
@@ -72,12 +93,13 @@ def test_malformed_frontmatter_reports_required_without_crash(tmp_repo):
 def test_supersedes_none_or_absent_not_flagged(tmp_repo):
     # supersedes 字段缺失: 不报引用错误
     _put(tmp_repo, "kb/pitfall/frontend/a.md",
-         make_entry(scope="project", status="accepted", confidence="verified"))
+         make_entry(scope="project", status="accepted", confidence="verified",
+                    severity="medium"))
     # supersedes 为 YAML 显式 null: 不报引用错误; superseded_by 指向存在的 id
     # (make_entry 用 f-string 渲染, None 会变成字面量 "None", 故手写 front-matter)
     _put(tmp_repo, "kb/pitfall/frontend/b.md",
          "---\nid: kb-20261012-b002\ntitle: demo2\ntype: pitfall\ndomain: [frontend]\n"
-         "scope: project\nstatus: superseded\nconfidence: verified\n"
+         "scope: project\nstatus: superseded\nseverity: low\nconfidence: verified\n"
          "created: 2026-10-12\nupdated: 2026-10-12\n"
          "supersedes: null\nsuperseded_by: kb-20261012-7f3a\n---\n\n# demo2\n\n首段摘要。\n")
     assert lint_repo(tmp_repo, scope="project") == []
@@ -86,7 +108,8 @@ def test_supersedes_none_or_absent_not_flagged(tmp_repo):
 def test_generated_index_md_not_linted(tmp_repo):
     # 生成物 kb/INDEX.md 必须被 lint 跳过, 否则 kb index 之后 lint 恒误报
     _put(tmp_repo, "kb/pitfall/frontend/a.md",
-         make_entry(scope="project", status="accepted", confidence="verified"))
+         make_entry(scope="project", status="accepted", confidence="verified",
+                    severity="medium"))
     build_indexes(tmp_repo)
     assert (Path(tmp_repo) / "kb" / "INDEX.md").exists()
     assert lint_repo(tmp_repo, scope="project") == []
@@ -95,7 +118,8 @@ def test_generated_index_md_not_linted(tmp_repo):
 def test_h1_counting_ignores_fenced_code_blocks(tmp_repo):
     # 围栏代码块内的 "# " 开头行(shell/YAML 注释)不得计入 H1,
     # 否则迁移侧被迫把代码块里的 "# " 改成 "#" 规避, 损害内容保真
-    entry = make_entry(scope="project", status="accepted", confidence="verified")
+    entry = make_entry(scope="project", status="accepted", confidence="verified",
+                       severity="medium")
     entry += "\n```bash\n# 注释: 这是 shell 注释不是标题\n# 第二行注释\ndocker ps\n```\n"
     _put(tmp_repo, "kb/pitfall/frontend/a.md", entry)
     assert lint_repo(tmp_repo, scope="project") == []

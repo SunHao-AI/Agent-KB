@@ -54,7 +54,18 @@ def derive_schema(tax: dict) -> dict:
         "supersedes": {"type": ["string", "null"]},
         "superseded_by": {"type": ["string", "null"]},
     }
-    return {
+    # per-type 条件必填: taxonomy types[*].requires 非空的 type,
+    # 用 draft 2020-12 allOf + if/then 生成"该 type 必须携带这些字段"规则。
+    # if 子句同时 required type, 防 type 字段缺失时 const 误匹配导致误触发。
+    conditionals = [
+        {
+            "if": {"properties": {"type": {"const": t}}, "required": ["type"]},
+            "then": {"required": list(meta["requires"])},
+        }
+        for t, meta in sorted(tax["types"].items())
+        if meta.get("requires")
+    ]
+    schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "Agent-KB front-matter",
         "type": "object",
@@ -62,3 +73,6 @@ def derive_schema(tax: dict) -> dict:
                       "status", "confidence", "created", "updated"],
         "properties": props,
     }
+    if conditionals:
+        schema["allOf"] = conditionals
+    return schema

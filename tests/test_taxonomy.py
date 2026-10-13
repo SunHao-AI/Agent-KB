@@ -1,5 +1,6 @@
 import json
 import pathlib
+import jsonschema
 import yaml
 from kb.taxonomy import load_taxonomy, derive_schema, repo_root
 
@@ -45,6 +46,38 @@ def test_derive_schema_marks_required_and_enums():
     assert set(schema["required"]) >= {"id", "title", "type", "scope", "status", "confidence"}
     assert schema["properties"]["type"]["enum"] == sorted(REQUIRED_TYPES)
     assert schema["properties"]["severity"]["enum"] == ["low", "medium", "high", "critical"]
+
+
+def _fm(**over) -> dict:
+    fm = {
+        "id": "kb-20261012-7f3a", "title": "t", "type": "pitfall",
+        "domain": ["frontend"], "scope": "project", "status": "draft",
+        "confidence": "speculative", "created": "2026-10-12", "updated": "2026-10-12",
+    }
+    fm.update(over)
+    return fm
+
+
+def test_derive_schema_conditional_required_pitfall_severity():
+    # taxonomy types[*].requires 必须并入派生 schema: pitfall/rca 缺 severity → 校验失败;
+    # 其他 type 缺 severity 不受影响(条件必填, 非全局必填)
+    schema = derive_schema(_load_repo_taxonomy())
+    v = jsonschema.Draft202012Validator(schema)
+    assert v.is_valid(_fm(type="reference"))
+    assert v.is_valid(_fm(type="pitfall", severity="high"))
+    assert not v.is_valid(_fm(type="pitfall"))
+    assert not v.is_valid(_fm(type="rca"))
+
+
+def test_derive_schema_conditional_rule_needs_type_present():
+    # if 子句同时 required type: type 字段本身缺失时不得被 if/then 误触发重复报错,
+    # 但 root required 仍须报 type 缺失
+    schema = derive_schema(_load_repo_taxonomy())
+    v = jsonschema.Draft202012Validator(schema)
+    fm = {k: v2 for k, v2 in _fm().items() if k != "type"}
+    assert not v.is_valid(fm)  # type 缺失: root required 拦截
+    msgs = [e.message for e in v.iter_errors(fm)]
+    assert any("'type' is a required property" in m for m in msgs)
 
 
 def test_repo_root_finds_taxonomy_file():

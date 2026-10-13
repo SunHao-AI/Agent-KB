@@ -1,24 +1,24 @@
 from __future__ import annotations
-from pathlib import Path
-from kb.entry import parse_entry, dump_entry
+import datetime as dt
+from kb.entry import parse_entry
+from kb.gate import _find, _save, set_scope
 
 
-def _find(repo_root: Path, id: str) -> Path | None:
-    for p in sorted((Path(repo_root) / "kb").rglob("*.md")):
-        if parse_entry(p).fm.get("id") == id:
-            return p
-    return None
+def promote(repo_root, id: str, to: str, today: dt.date | None = None) -> dict:
+    """人工 CLI: 上提 scope 并打 promoted tag(建议标记).
 
-
-def promote(repo_root: Path, id: str, to: str) -> dict:
-    path = _find(repo_root, id)
-    if not path:
-        raise FileNotFoundError(f"entry not found: {id}")
-    e = parse_entry(path)
-    e.fm["scope"] = to
-    tags = list(e.fm.get("tags", []) or [])
+    scope 变更与 needs-scope-review 清理复用 gate.set_scope 公共写路径,
+    本函数只做 stack/universal 目标限制与 promoted tag 追加, 不再独立写 scope。
+    """
+    if to not in ("stack", "universal"):
+        raise ValueError(f"promote target scope must be stack/universal, got {to}")
+    today = today or dt.date.today()
+    e = set_scope(repo_root, id, to, today=today)  # 枚举校验 + 标签清理 + 落盘
+    p = _find(repo_root, id)
+    fm = dict(e.fm)
+    tags = list(fm.get("tags") or [])
     if "promoted" not in tags:
         tags.append("promoted")
-    e.fm["tags"] = tags
-    path.write_text(dump_entry(e), encoding="utf-8")
-    return e.fm
+    fm["tags"] = tags
+    _save(p, fm, e.body, today)
+    return parse_entry(p).fm

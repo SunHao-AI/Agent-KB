@@ -3,12 +3,10 @@ import datetime as dt
 import json
 import re
 from pathlib import Path
-from kb.dedup import fingerprint, fingerprint_source, normalize
+from kb.dedup import fingerprint_source, fingerprint_text
 from kb.entry import Entry, parse_entry, dump_entry
 from kb.new_entry import create_entry
 from kb.taxonomy import load_taxonomy
-
-_MIN_FP_LEN = 16
 
 
 class GateViolation(Exception):
@@ -65,8 +63,8 @@ def create_draft(repo, *, type: str, domain: str, title: str, body: str | None =
     repos = [Path(repo)] + [Path(p) for p in agent_kbs]
     fp = ""
     if body:
-        src = normalize(fingerprint_source(_tmp_entry(body)))
-        fp = fingerprint(_tmp_entry(body)) if len(src) >= _MIN_FP_LEN else ""
+        # fingerprint_text 内含短源门槛(规范化后 <16 返回 ""), 单次提取+哈希
+        fp = fingerprint_text(fingerprint_source(_tmp_entry(body)))
     hits = _dup_hits(repos, fp, title)
     if hits:
         raise DuplicateCandidate(hits)
@@ -86,8 +84,8 @@ def create_draft(repo, *, type: str, domain: str, title: str, body: str | None =
 
 
 _TRANSITIONS: dict[str, set[str]] = {
-    "draft": {"proposed", "deprecated"},
-    "proposed": {"draft", "deprecated"},
+    "draft": {"proposed", "accepted", "deprecated"},
+    "proposed": {"draft", "accepted", "deprecated"},
     "accepted": {"deprecated", "superseded"},
     "deprecated": set(),
     "superseded": set(),
@@ -138,10 +136,10 @@ def review(repo, id: str, to: str, today: dt.date | None = None) -> Entry:
     p = _find(repo, id)
     e = parse_entry(p)
     frm = e.fm.get("status", "")
-    if to == "accepted" and e.fm.get("confidence") == "speculative":
-        raise GateViolation(f"{id}: confidence=speculative must be verified before accepted")
     if to not in _TRANSITIONS.get(frm, set()):
         raise GateViolation(f"{id}: illegal transition {frm} -> {to}")
+    if to == "accepted" and e.fm.get("confidence") == "speculative":
+        raise GateViolation(f"{id}: confidence=speculative must be verified before accepted")
     e.fm["status"] = to
     return _save(p, dict(e.fm), e.body, today or dt.date.today())
 

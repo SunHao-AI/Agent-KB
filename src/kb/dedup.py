@@ -40,6 +40,19 @@ def fingerprint_source(entry: Entry) -> str:
     return "\n".join(ln for ln in lines if not ln.strip().startswith("# ")).strip()
 
 
+# 规范化源短于该长度不参检(防测试桩/占位段互撞), 与 lint 侧门槛一致
+_MIN_FP_LEN = 16
+
+
+def fingerprint_text(text: str) -> str:
+    """规范化文本指纹(12 位小写 hex); 规范化源短于 _MIN_FP_LEN 返回 ''."""
+    src = normalize(text)
+    if len(src) < _MIN_FP_LEN:
+        return ""
+    return hashlib.sha256(src.encode("utf-8")).hexdigest()[:12]
+
+
 def fingerprint(entry: Entry) -> str:
+    """条目指纹, 恒为 12 hex(index dedup_key 依赖, 短源也出值)."""
     src = normalize(fingerprint_source(entry))
     return hashlib.sha256(src.encode("utf-8")).hexdigest()[:12]

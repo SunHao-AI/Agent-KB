@@ -35,15 +35,20 @@ def test_update_draft_missing_id(tmp_repo):
         update_draft(tmp_repo, "kb-20261014-9999", body="x")
 
 
-@pytest.mark.parametrize("frm,to,ok", [
-    ("draft", "proposed", True), ("draft", "accepted", False),
-    ("draft", "deprecated", True), ("proposed", "draft", True),
-    ("proposed", "accepted", False), ("accepted", "deprecated", True),
-    ("accepted", "superseded", True), ("accepted", "draft", False),
-    ("deprecated", "accepted", False),
+@pytest.mark.parametrize("frm,conf,to,ok", [
+    ("draft", "probable", "proposed", True),
+    ("draft", "probable", "accepted", True),
+    ("draft", "speculative", "accepted", False),
+    ("draft", "probable", "deprecated", True),
+    ("proposed", "probable", "draft", True),
+    ("proposed", "probable", "accepted", True),
+    ("proposed", "speculative", "accepted", False),
+    ("accepted", "verified", "deprecated", True),
+    ("accepted", "verified", "superseded", True),
+    ("accepted", "verified", "draft", False),
+    ("deprecated", "verified", "accepted", False),
 ])
-def test_review_transitions(tmp_repo, frm, to, ok):
-    conf = "speculative" if frm == "draft" else "verified"
+def test_review_transitions(tmp_repo, frm, conf, to, ok):
     _mk(tmp_repo, "kb-20261014-cccc", status=frm, conf=conf)
     if ok:
         assert review(tmp_repo, "kb-20261014-cccc", to).fm["status"] == to

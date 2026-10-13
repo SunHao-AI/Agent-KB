@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 from kb.new_entry import create_entry
-from kb.gate import (create_draft, update_draft, review as gate_review,
+from kb.gate import (create_draft, review as gate_review,
                      set_scope as gate_set_scope, export_entry,
                      DuplicateCandidate, GateViolation)
 from kb.layers import search_layers, get_layered, related_layers
@@ -124,8 +124,11 @@ def _dispatch(argv: list[str] | None = None) -> int:
             print(got[0])
             return 0
         text = get_entry(repo, args.id)
-        print(text if text else f"not found: {args.id}")
-        return 0 if text else 1
+        if not text:
+            print(f"not found: {args.id}", file=sys.stderr)
+            return 1
+        print(text)
+        return 0
     if args.cmd == "related":
         if args.agent_kb:
             print(json.dumps(related_layers([repo] + [Path(p) for p in args.agent_kb], args.id),
@@ -137,11 +140,12 @@ def _dispatch(argv: list[str] | None = None) -> int:
         if args.needs_scope:
             rows = needs_scope(repo)
             if args.format == "md":
+                _md_cell = lambda s: str(s).replace("|", "\\|")
                 print("| id | title | type | domain | summary |")
                 print("| --- | --- | --- | --- | --- |")
                 for r in rows:
-                    print(f"| {r['id']} | {r['title']} | {r['type']} | "
-                          f"{','.join(r['domain'])} | {r['summary']} |")
+                    print(f"| {r['id']} | {_md_cell(r['title'])} | {r['type']} | "
+                          f"{','.join(r['domain'])} | {_md_cell(r['summary'])} |")
             else:
                 print(json.dumps(rows, ensure_ascii=False, indent=2))
             return 0

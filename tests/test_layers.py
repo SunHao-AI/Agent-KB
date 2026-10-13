@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 from kb.index import build_indexes
 from kb.layers import search_layers, get_layered, related_layers
 from conftest import make_entry

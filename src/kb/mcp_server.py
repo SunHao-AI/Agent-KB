@@ -2,9 +2,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
-from kb.gate import DuplicateCandidate, GateViolation, create_draft, update_draft
+from kb.gate import DuplicateCandidate, create_draft, update_draft
 from kb.layers import get_layered, related_layers, search_layers
-from kb.query import get_entry
 
 
 def _json(obj) -> str:

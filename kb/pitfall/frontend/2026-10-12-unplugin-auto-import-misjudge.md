@@ -1,0 +1,46 @@
+---
+id: kb-20261012-8d7f
+title: unplugin-auto-import 自动注入导致"未导入标识符"误判
+type: pitfall
+domain:
+- frontend
+tags:
+- unplugin
+- auto-import
+- code-review
+scope: stack
+status: accepted
+severity: medium
+confidence: probable
+created: '2026-09-01'
+updated: '2026-10-12'
+source:
+  project: flysee-video-setting
+  ref: docs/known-pitfalls/frontend/构建工具与开发流程.md
+---
+
+# unplugin-auto-import 自动注入导致"未导入标识符"误判
+
+## 背景 / 现象
+
+代码中使用 `nextTick` 但 `<script setup>` import 未包含，审查者判定为运行时 ReferenceError，实际构建与运行均正常。
+
+## 根因
+
+项目配置了 `unplugin-auto-import`（vite/plugins/auto-import.js，imports 含 'vue'），`nextTick` 等 vue API 由构建期自动注入，无需显式 import。
+
+## 解决方案
+
+排查"未定义标识符"问题时，先确认项目是否配置 unplugin-auto-import 及其 imports 范围；vue 的常用 API（ref/computed/nextTick 等）通常已被覆盖。**但 Element Plus 的 JS API（ElMessage、ElMessageBox 等）不在 auto-import 范围，必须显式 import**——未导入时运行时抛 ReferenceError，且若被 try/catch 吞掉会表现为功能静默失效（如确认框不弹出、上传静默中止），极难排查。
+
+## 验证
+
+<!-- 待补: 原始记录未含验证步骤 -->
+
+## 适用边界与反例
+
+<!-- 待补: 原始记录未含边界说明 -->
+
+## 参考
+
+- 源记录: `docs/known-pitfalls/frontend/构建工具与开发流程.md`

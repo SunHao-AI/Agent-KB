@@ -1,7 +1,7 @@
 # Agent-KB P1 设计 — 检索与门控闭环
 
 - 日期: 2026-10-13
-- 状态: 待评审
+- 状态: 已评审通过 (2026-10-13, 分节评审: 架构与模块 / 闭环流程与验收)
 - 上游: `docs/specs/2026-10-12-agent-kb-design.md` (总设计, 下称 P0 spec)
 - 前置: P0 已完成 (Agent-KB @ 24584fa, flysee-video-setting feat/agent-kb-onboarding @ 1cf1a2d)
 

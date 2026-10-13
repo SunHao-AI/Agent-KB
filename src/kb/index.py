@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 from pathlib import Path
+from kb.dedup import fingerprint
 from kb.entry import parse_entry
 
 
@@ -22,7 +23,7 @@ def _records(repo_root: Path, repo_name: str):
             "confidence": fm.get("confidence", ""),
             "path": p.relative_to(repo_root).as_posix(),
             "summary": e.summary(),
-            "dedup_key": fm.get("dedup_key"),
+            "dedup_key": fingerprint(e),
             "related": fm.get("related", []),
             "updated": fm.get("updated", ""), "repo": repo_name,
         }

@@ -53,7 +53,6 @@ def derive_schema(tax: dict) -> dict:
         "related": {"type": "array", "items": {"type": "string"}},
         "supersedes": {"type": ["string", "null"]},
         "superseded_by": {"type": ["string", "null"]},
-        "dedup_key": {"type": ["string", "null"]},
     }
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

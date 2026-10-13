@@ -49,3 +49,15 @@ def test_derive_schema_marks_required_and_enums():
 def test_repo_root_finds_taxonomy_file():
     from kb.taxonomy import repo_root
     assert (repo_root() / "taxonomy.yaml").exists()
+
+
+import json
+from kb.taxonomy import load_taxonomy, derive_schema, repo_root
+
+
+def test_committed_schema_matches_derivation():
+    committed = json.loads(
+        (repo_root() / "schema" / "frontmatter.schema.json").read_text(encoding="utf-8"))
+    derived = derive_schema(load_taxonomy())
+    assert committed == derived
+    assert "dedup_key" not in committed["properties"]

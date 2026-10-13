@@ -1,7 +1,7 @@
-import json
+import json, re
 from pathlib import Path
 from kb.index import build_indexes, check_indexes
-from conftest import make_entry
+from conftest import make_entry, SAMPLE_FRONTMATTER
 
 
 def _put(repo, rel, text):
@@ -40,3 +40,12 @@ def test_index_md_links_relative_to_kb_dir(tmp_repo):
     # jsonl 的 path 字段保持 repo 相对不变
     rec = json.loads(jl.read_text(encoding="utf-8").splitlines()[0])
     assert rec["path"] == "kb/pitfall/frontend/a.md"
+
+
+def test_index_dedup_key_is_fingerprint(tmp_repo):
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text(SAMPLE_FRONTMATTER, encoding="utf-8")
+    build_indexes(tmp_repo)
+    rec = json.loads((tmp_repo / "kb" / "index.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert re.fullmatch(r"[0-9a-f]{12}", rec["dedup_key"])

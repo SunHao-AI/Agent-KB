@@ -138,12 +138,6 @@
         "string",
         "null"
       ]
-    },
-    "dedup_key": {
-      "type": [
-        "string",
-        "null"
-      ]
     }
   }
 }

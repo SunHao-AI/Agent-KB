@@ -15,28 +15,37 @@ def normalize(text: str) -> str:
     return _STRIP_RE.sub("", text.lower())
 
 
-def fingerprint_source(entry: Entry) -> str:
-    """第一个 H2 含'根因'的段全文; 无根因段则退化正文全文(剔 H1 行)."""
-    out: list[str] = []
-    capturing = False
+def h2_sections(entry: Entry) -> list[tuple[str, str]]:
+    """正文所有 H2 段的 (段名, 段内容) 列表; 围栏代码块内 '## ' 开头行不算标题."""
+    sections: list[tuple[str, str]] = []
+    header: str | None = None
+    buf: list[str] = []
     in_fence = False
-    lines = entry.body.splitlines()
-    for ln in lines:
+    for ln in entry.body.splitlines():
         if ln.strip().startswith("```"):
             in_fence = not in_fence
-            if capturing:
-                out.append(ln)
+            if header is not None:
+                buf.append(ln)
             continue
         if not in_fence and ln.startswith("## "):
-            if capturing:
-                break
-            if "根因" in ln:
-                capturing = True
+            if header is not None:
+                sections.append((header, "\n".join(buf).strip()))
+            header = ln[3:].strip()
+            buf = []
             continue
-        if capturing:
-            out.append(ln)
-    if capturing:
-        return "\n".join(out).strip()
+        if header is not None:
+            buf.append(ln)
+    if header is not None:
+        sections.append((header, "\n".join(buf).strip()))
+    return sections
+
+
+def fingerprint_source(entry: Entry) -> str:
+    """第一个段名含'根因'的 H2 段全文; 无根因段则退化正文全文(剔 H1 行)."""
+    for header, content in h2_sections(entry):
+        if "根因" in header:
+            return content
+    lines = entry.body.splitlines()
     return "\n".join(ln for ln in lines if not ln.strip().startswith("# ")).strip()
 
 

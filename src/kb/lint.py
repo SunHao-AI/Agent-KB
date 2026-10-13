@@ -3,7 +3,8 @@ from collections import Counter
 from pathlib import Path
 import re
 import jsonschema
-from kb.dedup import MIN_FP_LEN, fingerprint, fingerprint_source, normalize
+from kb.dedup import (MIN_FP_LEN, fingerprint, fingerprint_source, h2_sections,
+                      normalize)
 from kb.entry import parse_entry
 from kb.taxonomy import load_taxonomy, derive_schema
 
@@ -11,37 +12,27 @@ from kb.taxonomy import load_taxonomy, derive_schema
 # `kb index` 的生成物固定名, 不作为知识条目参与 lint
 _GENERATED_NAMES = {"INDEX.md", "index.jsonl", "index.draft.jsonl"}
 
-# 占位根因检测用: 剥离 HTML 注释后判断根因段是否为空
+# 占位段检测用: 剥离 HTML 注释后判断段内容是否为空
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
-def _root_cause_section(entry) -> str | None:
-    """第一个含'根因'的 H2 段全文; 无根因段返回 None.
+def _placeholder_warnings(entry, sections: list[str]) -> list[str]:
+    """该 type taxonomy sections 定义的每个 H2 段, 段内容剥离 HTML 注释后为空
+    → 占位段回流, 返回不带 warning 前缀的提示列表(缺段不报, 只报"有段且为空")。
 
-    段提取规则与 dedup.fingerprint_source 保持一致(H2 边界 + 围栏跳过),
-    仅额外区分'无根因段'(None)与'有段但内容为空'(''), 供占位根因检测使用。
-    dedup 公共面不提供该区分, 故在 lint 内部实现小 helper。
+    段提取复用 dedup.h2_sections(H2 边界 + 围栏跳过), 与指纹提取同一实现。
+    根因段文案保持既有 `placeholder root-cause section` 不变(兼容既有消费方),
+    其余段文案为 `placeholder <段名> section`。
     """
     out: list[str] = []
-    capturing = False
-    in_fence = False
-    for ln in entry.body.splitlines():
-        if ln.strip().startswith("```"):
-            in_fence = not in_fence
-            if capturing:
-                out.append(ln)
+    for header, content in h2_sections(entry):
+        if _HTML_COMMENT_RE.sub("", content).strip():
             continue
-        if not in_fence and ln.startswith("## "):
-            if capturing:
-                break
-            if "根因" in ln:
-                capturing = True
-            continue
-        if capturing:
-            out.append(ln)
-    if capturing:
-        return "\n".join(out).strip()
-    return None
+        if "根因" in header:
+            out.append("placeholder root-cause section")
+        elif header in sections:
+            out.append(f"placeholder {header} section")
+    return out
 
 
 def _iter_entries(root: Path):
@@ -96,11 +87,11 @@ def lint_repo(repo_root: Path, scope: str = "project",
                 h1 += 1
         if h1 != 1:
             errors.append(f"{rid}: expected exactly one H1, found {h1}")
-        # 占位根因回流防护: 该 type 存在根因 H2 段(如 pitfall/rca), 但段内容
+        # 占位段回流防护: 该 type 存在模板定义的 H2 段(含根因段)但段内容
         # 剥离 HTML 注释后为空 → 仅 warning(占位段不阻断, 提示人工回填)
-        rc = _root_cause_section(e)
-        if rc is not None and not _HTML_COMMENT_RE.sub("", rc).strip():
-            errors.append(f"warning: {rid}: placeholder root-cause section")
+        type_sections = tax["types"].get(e.fm.get("type"), {}).get("sections", [])
+        for msg in _placeholder_warnings(e, type_sections):
+            errors.append(f"warning: {rid}: {msg}")
     # 指纹冲突检测: 规范化源短于 MIN_FP_LEN 不参检(防测试桩/占位段互撞),
     # 门槛常量唯一事实源在 kb.dedup
     fp_map: dict[str, list[str]] = {}

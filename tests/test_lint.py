@@ -185,3 +185,52 @@ def test_lint_real_root_cause_no_placeholder_warning(tmp_repo):
     _pitfall(tmp_repo, "kb-20261013-b2b2", "这是真实根因机制说明文字且长度足够")
     msgs = lint_repo(tmp_repo)
     assert not any("placeholder root-cause section" in m for m in msgs)
+
+
+# --- F4: 占位段检测泛化到该 type taxonomy sections 定义的每个 H2 段 ---
+def _with_sections(tmp_repo, eid, sections):
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True, exist_ok=True)
+    body = make_entry(id=eid)
+    for header, content in sections:
+        body += f"\n## {header}\n{content}\n"
+    (d / f"{eid}.md").write_text(body, encoding="utf-8")
+
+
+def test_lint_placeholder_verification_section_warning(tmp_repo):
+    # 验证段存在但剥离 HTML 注释后为空 → placeholder 验证 warning(迁移侧占位回流防护)
+    _with_sections(tmp_repo, "kb-20261013-e5e5", [
+        ("根因", "真实机制说明文字内容且长度足够避免短源门槛"),
+        ("验证", "<!-- TODO: 待补充验证 -->"),
+    ])
+    msgs = lint_repo(tmp_repo)
+    assert any(m.startswith("warning: ") and "placeholder 验证 section" in m
+               for m in msgs)
+    assert not any("placeholder root-cause" in m for m in msgs)
+
+
+def test_lint_placeholder_phenomenon_section_warning(tmp_repo):
+    # 背景 / 现象 段(段名含空格与斜杠)同样纳入占位检测
+    _with_sections(tmp_repo, "kb-20261013-f6f6", [
+        ("背景 / 现象", "<!-- TODO -->"),
+        ("根因", "真实机制说明文字内容且长度足够避免短源门槛"),
+    ])
+    msgs = lint_repo(tmp_repo)
+    assert any("placeholder 背景 / 现象 section" in m for m in msgs)
+
+
+def test_lint_filled_sections_no_placeholder_warning(tmp_repo):
+    _with_sections(tmp_repo, "kb-20261013-a7a7", [
+        ("背景 / 现象", "现象描述文字内容。"),
+        ("根因", "真实机制说明文字内容且长度足够避免短源门槛"),
+        ("验证", "验证步骤文字内容。"),
+    ])
+    msgs = lint_repo(tmp_repo)
+    assert not any("placeholder" in m for m in msgs)
+
+
+def test_lint_absent_section_not_flagged(tmp_repo):
+    # 段缺失 ≠ 占位: 只有"存在该 H2 段且内容为空"才报, 缺段不报
+    _pitfall(tmp_repo, "kb-20261013-b8b8", "真实机制说明文字内容且长度足够避免短源门槛")
+    msgs = lint_repo(tmp_repo)
+    assert not any("placeholder" in m for m in msgs)

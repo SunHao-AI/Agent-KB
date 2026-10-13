@@ -41,12 +41,19 @@ kb show kb-20261012-7f3a --repo .               # 按 id 读全文
 kb related kb-20261012-7f3a --repo .            # 反向链接
 kb stat --repo .                                # 质量报告; --due-review 看待复核
 kb promote kb-20261012-7f3a --to stack --repo . # 建议提升 scope(由人确认落地)
+kb review kb-20261012-7f3a --to proposed --repo .   # 人工流转(draft→proposed→…)
+kb set-scope kb-20261012-7f3a stack --repo .        # scope 终审落地(清 needs-scope-review)
+kb export kb-20261012-7f3a --to-repo ../Agent-KB --to-scope stack --repo docs  # 跨仓上提(人工)
+kb search --query "x" --repo docs --agent-kb .agent-kb   # 双层检索
 ```
 
 `kb new` 的 `<type>` ∈ decision/spec/plan/pitfall/rca/howto/reference/retrospective;
 `--domain` ∈ backend/frontend/database/devops/security/testing/build/algorithm/process/tooling。
 
 ## 沉淀门控红线(强制)
+
+> P1 起红线已由工具面强制: `kb new --generated` 与 MCP `kb_create` 只可能产出
+> draft/project/speculative, 违规直接报错退出。
 
 1. Agent **永远不能**直接写 `status: accepted`, 只能产出 `draft`, 生效必经人工 PR 审核。
 2. Agent **永远不能**直接写 `scope != project` 的条目; 认为值得上提 Agent-KB 时,

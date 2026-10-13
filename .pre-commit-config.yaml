@@ -3,11 +3,11 @@ repos:
     hooks:
       - id: kb-lint
         name: kb lint
-        entry: kb lint --scope agent-kb
+        entry: python -m kb.cli lint --scope agent-kb
         language: system
         pass_filenames: false
       - id: kb-index
         name: kb index sync
-        entry: kb index --check
+        entry: python -m kb.cli index --check --repo-name agent-kb
         language: system
         pass_filenames: false

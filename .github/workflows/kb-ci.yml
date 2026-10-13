@@ -1,15 +1,16 @@
 name: kb-ci
 on:
-  push: {}
-  pull_request: {}
+  push: {branches: [master]}
+  pull_request: {branches: [master]}
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
-      - run: pip install -e ".[dev]"
+        with: {python-version: "3.12", cache: pip}
+      # mcp extras 必须装: test_mcp.py 顶层 import mcp, 缺了会 collection 报错
+      - run: pip install -e ".[dev,mcp]"
       - run: pytest -q
-      - run: kb lint --scope agent-kb
-      - run: kb index --check --repo-name agent-kb
+      - run: python -m kb.cli lint --scope agent-kb
+      - run: python -m kb.cli index --check --repo-name agent-kb

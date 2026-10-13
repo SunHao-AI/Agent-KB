@@ -102,3 +102,54 @@ def test_submodule_subtree_not_scanned(tmp_repo):
          make_entry(id="kb-20261012-ffff", scope="stack",
                     status="accepted", confidence="verified"))
     assert lint_repo(tmp_repo, scope="project") == []
+
+
+# --- Task 3: 指纹冲突检测(同仓 error / 跨仓 warning) + 占位根因 warning ---
+# 注: 应触发用例的根因样本规范化后须 >= _MIN_FP_LEN(16), 否则被短源门槛跳过;
+# brief 原样本("同一根因机制说明文字完全一致"=14、"跨仓相同根因的机制性描述"=12)
+# 长度不足, 已在保持断言/消息格式/常量逐字不变的前提下加长样本至 >=16 字符。
+def _pitfall(tmp_repo, eid, root_cause, title="t"):
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True, exist_ok=True)
+    body = make_entry(id=eid, title=title)
+    body = body + f"\n## 根因\n{root_cause}\n"
+    (d / f"{eid}.md").write_text(body, encoding="utf-8")
+
+
+def test_lint_same_repo_duplicate_fingerprint_is_error(tmp_repo):
+    _pitfall(tmp_repo, "kb-20261013-aaaa", "同一根因机制说明文字完全一致的版本")
+    _pitfall(tmp_repo, "kb-20261013-bbbb", "同一根因机制说明文字完全一致的版本")
+    errs = lint_repo(tmp_repo)
+    assert any("duplicate fingerprint" in e for e in errs)
+
+
+def test_lint_short_source_not_compared(tmp_repo):
+    _pitfall(tmp_repo, "kb-20261013-cccc", "太短")
+    _pitfall(tmp_repo, "kb-20261013-dddd", "太短")
+    assert not any("fingerprint" in e for e in lint_repo(tmp_repo))
+
+
+def test_lint_cross_repo_warning(tmp_repo, tmp_path):
+    other = tmp_path / "other"
+    (other / "kb" / "pitfall" / "frontend").mkdir(parents=True)
+    _pitfall(tmp_repo, "kb-20261013-eeee", "跨仓相同根因的机制性描述文字内容")
+    body = (make_entry(id="kb-20261013-ffff", title="x")
+            + "\n## 根因\n跨仓相同根因的机制性描述文字内容\n")
+    (other / "kb" / "pitfall" / "frontend" / "x.md").write_text(body, encoding="utf-8")
+    msgs = lint_repo(tmp_repo, cross_repos=[other])
+    assert any(m.startswith("warning: ") and "same fingerprint" in m for m in msgs)
+    assert not any(not m.startswith("warning: ") and "fingerprint" in m for m in msgs)
+
+
+def test_lint_placeholder_root_cause_is_warning(tmp_repo):
+    # 存在根因 H2 段但剥离 HTML 注释后为空 → 占位根因回流, 应出 warning(非 error)
+    _pitfall(tmp_repo, "kb-20261013-a1a1", "<!-- TODO: 待人工补充机制性根因 -->")
+    msgs = lint_repo(tmp_repo)
+    assert any(m.startswith("warning: ") and "placeholder root-cause section" in m
+               for m in msgs)
+
+
+def test_lint_real_root_cause_no_placeholder_warning(tmp_repo):
+    _pitfall(tmp_repo, "kb-20261013-b2b2", "这是真实根因机制说明文字且长度足够")
+    msgs = lint_repo(tmp_repo)
+    assert not any("placeholder root-cause section" in m for m in msgs)

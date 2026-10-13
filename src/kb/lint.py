@@ -1,13 +1,47 @@
 from __future__ import annotations
 from collections import Counter
 from pathlib import Path
+import re
 import jsonschema
+from kb.dedup import fingerprint, fingerprint_source, normalize
 from kb.entry import parse_entry
 from kb.taxonomy import load_taxonomy, derive_schema
 
 
 # `kb index` 的生成物固定名, 不作为知识条目参与 lint
 _GENERATED_NAMES = {"INDEX.md", "index.jsonl", "index.draft.jsonl"}
+
+# 占位根因检测用: 剥离 HTML 注释后判断根因段是否为空
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def _root_cause_section(entry) -> str | None:
+    """第一个含'根因'的 H2 段全文; 无根因段返回 None.
+
+    段提取规则与 dedup.fingerprint_source 保持一致(H2 边界 + 围栏跳过),
+    仅额外区分'无根因段'(None)与'有段但内容为空'(''), 供占位根因检测使用。
+    dedup 公共面不提供该区分, 故在 lint 内部实现小 helper。
+    """
+    out: list[str] = []
+    capturing = False
+    in_fence = False
+    for ln in entry.body.splitlines():
+        if ln.strip().startswith("```"):
+            in_fence = not in_fence
+            if capturing:
+                out.append(ln)
+            continue
+        if not in_fence and ln.startswith("## "):
+            if capturing:
+                break
+            if "根因" in ln:
+                capturing = True
+            continue
+        if capturing:
+            out.append(ln)
+    if capturing:
+        return "\n".join(out).strip()
+    return None
 
 
 def _iter_entries(root: Path):
@@ -23,7 +57,8 @@ def _iter_entries(root: Path):
             yield parse_entry(p)
 
 
-def lint_repo(repo_root: Path, scope: str = "project") -> list[str]:
+def lint_repo(repo_root: Path, scope: str = "project",
+              cross_repos: list[Path] | None = None) -> list[str]:
     tax = load_taxonomy()
     schema = derive_schema(tax)
     validator = jsonschema.Draft202012Validator(schema)
@@ -61,4 +96,35 @@ def lint_repo(repo_root: Path, scope: str = "project") -> list[str]:
                 h1 += 1
         if h1 != 1:
             errors.append(f"{rid}: expected exactly one H1, found {h1}")
+        # 占位根因回流防护: 该 type 存在根因 H2 段(如 pitfall/rca), 但段内容
+        # 剥离 HTML 注释后为空 → 仅 warning(占位段不阻断, 提示人工回填)
+        rc = _root_cause_section(e)
+        if rc is not None and not _HTML_COMMENT_RE.sub("", rc).strip():
+            errors.append(f"warning: {rid}: placeholder root-cause section")
+    # 指纹冲突检测: 规范化源短于 _MIN_FP_LEN 不参检(防测试桩/占位段互撞)
+    _MIN_FP_LEN = 16
+    fp_map: dict[str, list[str]] = {}
+    for e in entries:
+        rid = e.fm.get("id", e.path.name)
+        src = normalize(fingerprint_source(e))
+        if len(src) < _MIN_FP_LEN:
+            continue
+        fp_map.setdefault(fingerprint(e), []).append(rid)
+    for fp, rids in fp_map.items():
+        for i in range(len(rids)):
+            for j in range(i + 1, len(rids)):
+                errors.append(f"{rids[i]}: duplicate fingerprint with {rids[j]}")
+    for other in cross_repos or []:
+        other_fps: dict[str, str] = {}
+        for oe in _iter_entries(Path(other)):
+            if len(normalize(fingerprint_source(oe))) >= _MIN_FP_LEN:
+                other_fps.setdefault(fingerprint(oe), oe.fm.get("id", oe.path.name))
+        for e in entries:
+            rid = e.fm.get("id", e.path.name)
+            src = normalize(fingerprint_source(e))
+            if len(src) < _MIN_FP_LEN:
+                continue
+            oid = other_fps.get(fingerprint(e))
+            if oid:
+                errors.append(f"warning: {rid}: same fingerprint as {oid} in {Path(other).name}")
     return errors

@@ -1,0 +1,98 @@
+import datetime as dt
+import pytest
+from kb.gate import update_draft, review, set_scope, export_entry, GateViolation
+from kb.entry import parse_entry
+from conftest import make_entry
+
+TODAY = dt.date(2026, 10, 14)
+
+
+def _mk(tmp_repo, eid, status="draft", conf="speculative", scope="project", tags=None):
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True, exist_ok=True)
+    body = make_entry(id=eid, status=status, confidence=conf, scope=scope,
+                      tags=list(tags) if tags else [])
+    p = d / f"{eid}.md"
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_update_draft_ok(tmp_repo):
+    _mk(tmp_repo, "kb-20261014-aaaa")
+    e = update_draft(tmp_repo, "kb-20261014-aaaa", body="## 根因\n新机制。\n", today=TODAY)
+    assert e.body.count("新机制") == 1 and e.fm["updated"] == "2026-10-14"
+    assert e.fm["status"] == "draft"
+
+
+def test_update_draft_rejects_accepted(tmp_repo):
+    _mk(tmp_repo, "kb-20261014-bbbb", status="accepted", conf="verified")
+    with pytest.raises(GateViolation, match="accepted"):
+        update_draft(tmp_repo, "kb-20261014-bbbb", body="x")
+
+
+def test_update_draft_missing_id(tmp_repo):
+    with pytest.raises(FileNotFoundError):
+        update_draft(tmp_repo, "kb-20261014-9999", body="x")
+
+
+@pytest.mark.parametrize("frm,to,ok", [
+    ("draft", "proposed", True), ("draft", "accepted", False),
+    ("draft", "deprecated", True), ("proposed", "draft", True),
+    ("proposed", "accepted", False), ("accepted", "deprecated", True),
+    ("accepted", "superseded", True), ("accepted", "draft", False),
+    ("deprecated", "accepted", False),
+])
+def test_review_transitions(tmp_repo, frm, to, ok):
+    conf = "speculative" if frm == "draft" else "verified"
+    _mk(tmp_repo, "kb-20261014-cccc", status=frm, conf=conf)
+    if ok:
+        assert review(tmp_repo, "kb-20261014-cccc", to).fm["status"] == to
+    else:
+        with pytest.raises(GateViolation):
+            review(tmp_repo, "kb-20261014-cccc", to)
+
+
+def test_review_accept_requires_non_speculative(tmp_repo):
+    _mk(tmp_repo, "kb-20261014-dddd", status="proposed", conf="speculative")
+    with pytest.raises(GateViolation, match="speculative"):
+        review(tmp_repo, "kb-20261014-dddd", "accepted")
+
+
+def test_set_scope_strips_needs_scope_review(tmp_repo):
+    _mk(tmp_repo, "kb-20261014-eeee", tags=["needs-scope-review", "vite"])
+    e = set_scope(tmp_repo, "kb-20261014-eeee", "project", today=TODAY)
+    assert e.fm["scope"] == "project" and e.fm["tags"] == ["vite"]
+
+
+def test_set_scope_rejects_bad_enum(tmp_repo):
+    _mk(tmp_repo, "kb-20261014-ffff")
+    with pytest.raises(ValueError):
+        set_scope(tmp_repo, "kb-20261014-ffff", "global")
+
+
+def test_export_moves_entry(tmp_repo, tmp_path):
+    kb2 = tmp_path / "agentkb"
+    (kb2 / "kb").mkdir(parents=True)
+    _mk(tmp_repo, "kb-20261014-0a0a", tags=["needs-scope-review"])
+    dst = export_entry(tmp_repo, kb2, "kb-20261014-0a0a", to_scope="stack", today=TODAY)
+    assert dst.exists() and not (tmp_repo / "kb" / "pitfall" / "frontend" / "kb-20261014-0a0a.md").exists()
+    e = parse_entry(dst)
+    assert e.fm["scope"] == "stack" and "needs-scope-review" not in e.fm.get("tags", [])
+
+
+def test_export_conflict_rejected(tmp_repo, tmp_path):
+    kb2 = tmp_path / "agentkb"
+    (kb2 / "kb" / "pitfall" / "frontend").mkdir(parents=True)
+    _mk(tmp_repo, "kb-20261014-0b0b")
+    (kb2 / "kb" / "pitfall" / "frontend" / "kb-20261014-0b0b.md").write_text(
+        make_entry(id="kb-20261014-0b0b", scope="stack"), encoding="utf-8")
+    with pytest.raises(GateViolation, match="exists"):
+        export_entry(tmp_repo, kb2, "kb-20261014-0b0b", to_scope="stack")
+
+
+def test_export_rejects_project_scope_target(tmp_repo, tmp_path):
+    kb2 = tmp_path / "agentkb"
+    (kb2 / "kb").mkdir(parents=True)
+    _mk(tmp_repo, "kb-20261014-0c0c")
+    with pytest.raises(ValueError):
+        export_entry(tmp_repo, kb2, "kb-20261014-0c0c", to_scope="project")

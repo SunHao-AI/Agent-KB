@@ -6,6 +6,7 @@ from pathlib import Path
 from kb.dedup import fingerprint, fingerprint_source, normalize
 from kb.entry import Entry, parse_entry, dump_entry
 from kb.new_entry import create_entry
+from kb.taxonomy import load_taxonomy
 
 _MIN_FP_LEN = 16
 
@@ -82,3 +83,98 @@ def create_draft(repo, *, type: str, domain: str, title: str, body: str | None =
         e.path.write_text(dump_entry(cur), encoding="utf-8")
         e = parse_entry(e.path)
     return e
+
+
+_TRANSITIONS: dict[str, set[str]] = {
+    "draft": {"proposed", "deprecated"},
+    "proposed": {"draft", "deprecated"},
+    "accepted": {"deprecated", "superseded"},
+    "deprecated": set(),
+    "superseded": set(),
+}
+
+
+def _find(repo, id: str) -> Path:
+    kb = Path(repo) / "kb"
+    for p in sorted(kb.rglob("*.md")) if kb.exists() else []:
+        if p.name in ("INDEX.md",):
+            continue
+        if parse_entry(p).fm.get("id") == id:
+            return p
+    raise FileNotFoundError(f"entry not found: {id}")
+
+
+def _save(p: Path, fm: dict, body: str, today: dt.date) -> Entry:
+    fm["updated"] = today.isoformat()
+    p.write_text(dump_entry(Entry(fm=fm, body=body, path=p)), encoding="utf-8")
+    return parse_entry(p)
+
+
+def update_draft(repo, id: str, *, title: str | None = None, body: str | None = None,
+                 tags: list[str] | None = None, severity: str | None = None,
+                 today: dt.date | None = None) -> Entry:
+    """人工 CLI: 仅 draft 可编辑正文/元数据."""
+    p = _find(repo, id)
+    e = parse_entry(p)
+    if e.fm.get("status") != "draft":
+        raise GateViolation(f"{id}: only draft entries are editable, current status={e.fm.get('status')}")
+    fm = dict(e.fm)
+    cur_body = e.body
+    h1 = e.h1() or fm.get("title", "")
+    if title:
+        fm["title"] = title
+        cur_body = cur_body.replace(f"# {h1}", f"# {title}", 1)
+    if body:
+        cur_body = f"\n# {fm.get('title', h1)}\n\n{body.strip()}\n"
+    if tags is not None:
+        fm["tags"] = list(tags)
+    if severity:
+        fm["severity"] = severity
+    return _save(p, fm, cur_body, today or dt.date.today())
+
+
+def review(repo, id: str, to: str, today: dt.date | None = None) -> Entry:
+    """人工 CLI: 按 _TRANSITIONS 流转 status; accepted 拒绝 speculative."""
+    p = _find(repo, id)
+    e = parse_entry(p)
+    frm = e.fm.get("status", "")
+    if to == "accepted" and e.fm.get("confidence") == "speculative":
+        raise GateViolation(f"{id}: confidence=speculative must be verified before accepted")
+    if to not in _TRANSITIONS.get(frm, set()):
+        raise GateViolation(f"{id}: illegal transition {frm} -> {to}")
+    e.fm["status"] = to
+    return _save(p, dict(e.fm), e.body, today or dt.date.today())
+
+
+def set_scope(repo, id: str, scope: str, today: dt.date | None = None) -> Entry:
+    """人工 CLI: 设置 scope 并移除 needs-scope-review tag."""
+    if scope not in load_taxonomy()["enums"]["scope"]:
+        raise ValueError(f"unknown scope: {scope}")
+    p = _find(repo, id)
+    e = parse_entry(p)
+    fm = dict(e.fm)
+    fm["scope"] = scope
+    fm["tags"] = [t for t in (fm.get("tags") or []) if t != "needs-scope-review"]
+    return _save(p, fm, e.body, today or dt.date.today())
+
+
+def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
+                 today: dt.date | None = None) -> Path:
+    """人工 CLI: 将项目库条目搬到 Agent-KB 库(stack/universal), 回填 source.project."""
+    if to_scope not in ("stack", "universal"):
+        raise ValueError(f"export target scope must be stack/universal, got {to_scope}")
+    src = _find(project_repo, id)
+    rel = src.relative_to(Path(project_repo) / "kb")
+    dst = Path(agent_kb_repo) / "kb" / rel
+    if dst.exists():
+        raise GateViolation(f"target already exists: {dst}")
+    e = parse_entry(src)
+    fm = dict(e.fm)
+    fm["scope"] = to_scope
+    fm["tags"] = [t for t in (fm.get("tags") or []) if t != "needs-scope-review"]
+    fm["source"] = {**(fm.get("source") or {}),
+                    "project": fm.get("source", {}).get("project") or Path(project_repo).resolve().name}
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(dump_entry(Entry(fm=fm, body=e.body, path=dst)), encoding="utf-8")
+    src.unlink()
+    return dst

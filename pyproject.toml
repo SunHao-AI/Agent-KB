@@ -10,7 +10,8 @@ requires-python = ">=3.10"
 dependencies = ["pyyaml>=6", "jsonschema>=4"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+mcp = ["mcp>=1.2,<2"]
 
 [project.scripts]
 kb = "kb.cli:main"
@@ -21,3 +22,4 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+asyncio_mode = "auto"

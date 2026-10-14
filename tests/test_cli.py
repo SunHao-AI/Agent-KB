@@ -1,5 +1,4 @@
 import json
-import datetime as dt
 from kb.cli import main
 from conftest import make_entry
 

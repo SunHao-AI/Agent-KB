@@ -6,8 +6,8 @@ domain:
 - devops
 tags: []
 scope: stack
-status: draft
-confidence: speculative
+status: accepted
+confidence: verified
 created: '2026-10-14'
 updated: '2026-10-14'
 severity: medium

@@ -26,39 +26,46 @@
 任务序即推荐执行序。里程碑见 §5。
 
 - [ ] **A1 台账 DDL 执行 + S2-S7 上线收口** ← (无)
+  - ✅ 2026-10-14 S1-S3 全部落库: DDL 四件套核实 (表×2 + export_releases.entitlement_ids + 菜单 9 节点) + 回填差异归零 (dry-run created=0/skipped=3, 10-12 已回填) + 全客户对账 SQL 实跑 — 14/16 号客户台账↔包完全一致; 1/FS016 missing=新台账行未重新导出 (预期不阻断); 13/FS017 extra=A3 已废弃行的包侧历史快照 (人工审放行)。**无 expiry_mismatch**。
+  - 剩余: S4-S7 (切读源/web G-1/G-2 observe→enforce 全量) 与 E2E 全链复验按 spec 序推进。
+  - ✅ 2026-10-14 Agent 侧交付完成: 一页纸执行包 `flysee-video-setting/docs/ops/2026-10-14-entitlement-ddl-execution-pack.md` (备份→S1 DDL→S3 回填+全客户 JSON_TABLE 对账 SQL 已在 mysql:8.0.46 实测四场景→回滚→失败模式速查); 两个 migration 文件尾注已按仓内规范补 `ROLLBACK:` 注释段。
   - 入口: `flysee-video-setting/docker/init/migrations/2026-10-12-entitlements.preview.sql`、`2026-10-12-entitlement-menu-perms.sql`、`flysee-video-setting/backend/scripts/entitlements_backfill.py` (幂等回填)、台账 spec §12 上线序 (`flysee-video-setting/docs/superpowers/specs/2026-10-12-algorithm-entitlement-ledger-design.md`)。
   - Agent 交付"一页纸执行包": DDL + 回滚 SQL + 对账脚本, 人工操作压到 10 分钟 (DDL 禁止 Agent 代执行)。
   - 无真实客户 → S3 双轨期缩短, 对账一次过即可; G-2 灰度开关 (`suite_gate_enabled`) 直接全量开。
   - 验收: 回填对账 100% 对齐; E2E 全链绿 — 台账下单 → 导出 → web 导入 → 建单闸门 G-1 → 引擎闸门 G-2 → 过期拒绝 (E_LICENSE_006)。
-- [ ] **A2 权威门 observe → enforce 切换** ← A1
-  - 入口: 权威门 spec 二期遗留 (`flysee-video-setting/docs/superpowers/specs/2026-10-13-license-online-authority-design.md` L174-179)、`flysee-video-setting/backend/services/license_attestation.py`; 气隙+enforce 组合语义评估; stale_after × enforce 交互回归。
-  - 验收: enforce 模式三场景 E2E 绿 — 在线续期 / 离线容差 / 吊销时效。**硬门禁: 三绿才发**。
-- [ ] **A3 算法库发布前清理: FS017-019 等 17 个 stale 模型处置** ← (无, 可与 A1 并行)
+- [x] **A2 权威门 observe → enforce 切换** ← A1 ✅ 2026-10-14 三场景 E2E 全绿, 生产已切 enforce
+  - 实测记录 (TTL 压缩 600s 加速, 收尾已还原 7200): **A 在线续期** — 同步 renewed+att_cached、断言 exp 随续期刷新; 篡改 JWS payload rev_epoch+99 → 探针 403 E_LICENSE_007 (读时重验签即废, attestation_present 翻 False) → 再同步自愈恢复。 **B 离线容差** — stop setting 后 fails 1→2→3 即 degraded 翻转; 等断言过期后探针仍放行 (401 非 007) = **气隙+enforce 组合零误伤坐实** (降级判定优先于断言过期); 恢复后 renewed、fails 复位 0。 **C 吊销时效** — revoke(epoch 16) 落审计 + web sync renewed=False + setting 落 renew_denied; TTL 窗口内探针明示残余放行; 断言过期后探针 **403 E_LICENSE_007 = 吊销实效上界 = 断言 TTL** (非 token 剩余寿命); restore→同步即自愈。
+  - 发布态验证: web `.env` `LICENSE_ONLINE_AUTHORITY=enforce`、setting TTL 还原 7200、最终 license-state `state=valid mode=enforce fails=0 degraded=False`。
+  - 执行包: `flysee-video-setting/docs/ops/2026-10-14-enforce-e2e-pack.md` (本轮按其执行, 结果即上条实测记录)。
+  - 验收: enforce 模式三场景 E2E 绿 — 在线续期 / 离线容差 / 吊销时效。**硬门禁: 三绿才发**。 — **三绿达成**。
+- [x] **A3 算法库发布前清理: FS017-019 等 17 个 stale 模型处置** ← (无, 可与 A1 并行) ✅ 2026-10-14 完成
+  - 处置记录: handoff §二.2 已改写为决策+落库凭证 (`flysee-video-setting/docs/handoff/2026-10-14-authorization-security-closeout-handoff.md`)。要点: 残留密文当日已物理清 (18:48 抽检全绿), `algorithm_library` FS017/018/019 软删 is_del=1 (备份+回滚语句在 handoff), 台账/审计行不动; 顺带发现 FS020/021 保留在售、目录补录挂 §6。
   - 入口: handoff 记录 (`flysee-video-setting/docs/handoff/`)。
-  - 验收: 每个模型有去留结论并落库。
+  - 验收: 每个模型有去留结论并落库。 — 17 个残留模型全部收敛为「废弃」结论并落库。
 - [ ] **A4 发布工件包** ← A1 A2 A3
   - 入口: `flysee-video-setting/docs/ops/deployment-checklist.md` (扩台账步骤)、`flysee-video-setting/scripts/secure/` + `docs/deploy/secure-delivery-deployment.md` (web/setting secure 镜像重建, 现缺 r3/r4)、flysee 仓根 `tmp_totp.txt` / `_new_totp_enc.txt` / `_final_bench.mjs` / `.it-tmp/` 清理、打 tag `v1.0`。
   - 验收: 按 checklist 从空机到可演示一次通过。
 - [ ] **A5 backlog 尾巴收口** ← (无, 穿插)
   - 入口: `flysee-video-setting/docs/backlog/2026-10-12-授权模块后续任务.md` — T2 气隙回执计数不清零 (方案 A/B 已列)、T4 algo 测试隔离、T5 Minor 备忘。
   - 验收: 三项关闭或有理由挂账入 §6。
-- [ ] **A6 最小工程门禁** ← (无, 建议最先做)
-  - pre-push hook 跑 lint + pytest 替代零 CI (gitee 无免费 Actions; GitHub 镜像方案挂账 §6); coverage 先出报告不设阈值。
+- [x] **A6 最小工程门禁** ← (无, 建议最先做) ✅ 2026-10-14 完成
+  - 落地: 母本 `scripts/pre-push-gate.sh` + 安装器 `scripts/install-gate.ps1` (本仓), 五仓全装 (web 仓原 LFS pre-push 保留为 `pre-push.chain` 由 launcher 串联); 增量 lint 硬门禁只查 push 范围 .py 且规则收窄 F+E9 (全仓存量 451/274/97 条挂账 §6, 全仓硬门禁会堵死 push), pytest 全量硬门禁, coverage 报告不设阈值, `PREPUSH_SKIP=1` 应急跳过。
+  - 验证: 带失败测试 hook 非零拦截 ✓ / 无变更 push 放行 ✓ / SKIP 跳过 ✓; 五仓 `.gitignore` 补 `.coverage`。
   - 入口: 四仓 `pyproject.toml` + git hooks。
-  - 验收: 带失败测试无法 push。
+  - 验收: 带失败测试无法 push。 — 已在 Agent-KB 仓实测 (业务仓 pytest 全链请在宿主机终端 push 时自然验证; Agent 沙箱会拦 pytest 写文件)。
 
 ## 3. Track B — Agent-KB 对外推广/多团队 (独立轨, 可与 A 交错)
 
 - [ ] **B1 接入体验先行** ← (无, 可即刻开工)
   - `kb init`: 为接入仓生成 `.mcp.json` (去绝对路径, 现四仓硬编码 `d:/WorkPlace/...python.exe`) + 引导 venv 装配。
-  - `kb doctor`: 自检命令, 收编全部已知失败模式 — venv 缺失 / submodule 悬空 / index 漂移 / `--repo-name` 大小写 / `.gitmodules` url 不可达。
-  - 修 `index --check` 目录名大小写环境问题 (本地 `Agent-KB` vs 规范名 `agent-kb` 恒 rc=1, fixwave-A 遗留偏差 1)。
+  - `kb doctor`: 自检命令, 收编全部已知失败模式 — venv 缺失 / submodule 悬空 / index 漂移 / `--repo-name` 大小写 / `.gitmodules` url 不可达。**并吸收 A6 门禁已实现的自检清单** (母本 `scripts/pre-push-gate.sh` §0 + 执行包 §6: venv 缺 pytest / 缺 ruff / pytest-cov 降级 / 容器 env 三件套), doctor 直接复用同一口径。
+  - ~~修 `index --check` 目录名大小写环境问题~~ ✅ 2026-10-14: repo 字段统一小写规范名 (cli/layers/mcp_server 三处 `.lower()` + 新回归测试 `test_index_repo_name_case_normalized`), 本地 `Agent-KB` 下 `index --check` rc=1→rc=0, 全仓 118 passed。
   - 对外 quickstart + 拿一个真实新仓 dogfood; README 同步 review/set-scope/export 三命令 (现缺)。
   - 验收: 新仓三步接入 clone → `kb init` → `kb doctor` 全绿。
 - [ ] **B2 内容质量门** ← (无, 天然穿插活, 每批 ~20 条)
   - 116 条占位回填: 验证段 69 / 适用边界段 40 / 背景 4 / 解决方案 3 (fixwave-A 官方口径)。web/algo 原 known-pitfalls 约 30 条有证据可搬, 其余如实降级 probable。
   - 复用 P2 已验证流程: 子代理提案表 → 批次认定 → 落地 (账本 `.superpowers/sdd/2026-10-14-p2-scope-review/`)。
-  - 完成前 `kb lint` 加 `--strict` 挡增量。
+  - ~~完成前 `kb lint` 加 `--strict` 挡增量~~ ✅ 2026-10-14: `kb lint --strict` + baseline 机制落地 (`.kb-lint-baseline` 116 条存量豁免; 新 warning 即拦、已修复条目提示收缩、`--update-baseline` 固化), pre-commit kb-lint 已切 `--strict`; 2 条行为测试, 全仓 118 passed。占位分布核实 = 验证 69 / 适用边界与反例 40 / 解决方案 3 / 背景 4 (含 root-cause 文案变体), 与 fixwave-A 官方口径一致。**剩余**: 116 条回填本体 (每批 ~20 条, 复用 P2 流程)。
   - 验收: 占位 warning 清零 + strict 门禁上线。
 - [ ] **B3 知识生命周期启用** ← B2
   - `review_by` 按 confidence 分级设到期 (verified 180d / probable 90d); `kb stat --due-review` 进周期例程 (代码链已就绪, 数据零启用)。
@@ -99,7 +106,9 @@
 | C2 真实凭证落盘 `.env.prod.bak` 整改 / C7 审计链外部锚定 / C10 密钥自动轮换 | 三仓分析 §4.2; 反破解 P3 receipt 解耦 (`flysee-video-setting/docs/security/anti-crack-hardening-roadmap-20261013.md` L97-102, 原文即"可长期挂起") | 安全中期项 |
 | 100+ 跨仓 pending 表 (AL-P0-2~5 / AL-P1-* / TASK-BOOT / B-17~B-21) | `flysee-video-setting/docs/superpowers/2026-09-09-cross-repo-pending-tasks.md` | 逐项复核时再激活 |
 | CI 完整方案 (GitHub 镜像 + Actions) | 四仓零 CI 现状 | A6 本地 hook 先顶 |
+| 全仓 ruff 存量欠账 (setting 451 / web 274 / algo 97, 过半可 `--fix`) | 2026-10-14 A6 实测 `ruff check` 全仓计数 | A6 增量门禁只挡新错 (F+E9); 存量清欠择日一次 `--fix` + 人工复核 |
 | spec/plan checkbox 回填 (setting 累计 753 处) | `flysee-video-setting/docs/uncompleted-work-2026-09-04.md` | 文档债 |
+| FS020/FS021 商品目录补录 (catalog_items 无行, 库保留在售) | A3 盘点 2026-10-14: `algorithm_library` is_del=0 但从未导出、无台账 | 发布面因无台账天然导不出, 无风险; 台账运营发布后再议 |
 
 ## 7. 关键风险与对策
 

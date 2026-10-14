@@ -3,7 +3,8 @@ repos:
     hooks:
       - id: kb-lint
         name: kb lint
-        entry: python -m kb.cli lint --scope agent-kb
+        # strict+baseline: 存量 116 条占位 warning 走 .kb-lint-baseline 豁免, 新增即拦 (B2)
+        entry: python -m kb.cli lint --scope agent-kb --strict
         language: system
         pass_filenames: false
       - id: kb-index

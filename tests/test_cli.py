@@ -38,10 +38,22 @@ def test_cli_index_records_repo_name(tmp_repo):
          make_entry(id="kb-20261012-aaaa", status="accepted"))
     assert main(["index", "--repo", str(tmp_repo)]) == 0
     rec = json.loads((tmp_repo / "kb" / "index.jsonl").read_text(encoding="utf-8"))
-    assert rec["repo"] == tmp_repo.name
+    assert rec["repo"] == tmp_repo.name.lower()
     assert main(["index", "--repo", str(tmp_repo), "--repo-name", "my-kb"]) == 0
     rec = json.loads((tmp_repo / "kb" / "index.jsonl").read_text(encoding="utf-8"))
     assert rec["repo"] == "my-kb"
+
+
+def test_index_repo_name_case_normalized(tmp_path):
+    # 目录显示名大小写不得影响 repo 字段: 本地克隆为 `Agent-KB` 而 index 以规范名
+    # `agent-kb` 提交时, 旧实现按目录名重算致 `index --check` 恒 stale (fixwave-A 偏差 1)
+    repo = tmp_path / "Agent-KB"
+    _put(repo, "kb/pitfall/frontend/a.md",
+         make_entry(id="kb-20261014-a1a1", status="accepted"))
+    assert main(["index", "--repo", str(repo)]) == 0
+    rec = json.loads((repo / "kb" / "index.jsonl").read_text(encoding="utf-8"))
+    assert rec["repo"] == "agent-kb"
+    assert main(["index", "--check", "--repo", str(repo)]) == 0
 
 
 def test_cli_lint_rejects_invalid_scope(tmp_repo):
@@ -50,6 +62,42 @@ def test_cli_lint_rejects_invalid_scope(tmp_repo):
     with pytest.raises(SystemExit) as exc:
         main(["lint", "--repo", str(tmp_repo), "--scope", "projekt"])
     assert exc.value.code == 2
+
+
+def _placeholder_entry(eid, root="真实机制说明文字内容且长度足够避免短源门槛"):
+    return (make_entry(id=eid, status="accepted", scope="stack",
+                       confidence="verified", severity="low")
+            + f"\n## 根因\n{root}\n"
+            + "\n## 验证\n<!-- TODO -->\n")
+
+
+# stack scope 条目必须配 --scope agent-kb lint, 否则触发 scope 硬错误而非本测试考察的 warning 路径
+_LINT = ["lint", "--scope", "agent-kb"]
+
+
+def test_cli_lint_strict_baseline_blocks_new_warning_only(tmp_repo):
+    # 存量 warning 入 baseline 后 strict 放行; 新增占位条目(不在 baseline)即拦截
+    _put(tmp_repo, "kb/pitfall/backend/a.md", _placeholder_entry("kb-20261014-b1b1", "机制甲说明文字内容且长度足够避免短源门槛"))
+    assert main(_LINT + ["--repo", str(tmp_repo), "--update-baseline"]) == 0
+    assert main(_LINT + ["--repo", str(tmp_repo), "--strict"]) == 0
+    _put(tmp_repo, "kb/pitfall/backend/b.md", _placeholder_entry("kb-20261014-b2b2", "机制乙说明文字内容且长度足够避免短源门槛"))
+    assert main(_LINT + ["--repo", str(tmp_repo), "--strict"]) == 1
+    # 非 strict 保持既有语义: warning 不阻断
+    assert main(_LINT + ["--repo", str(tmp_repo)]) == 0
+
+
+def test_cli_lint_update_baseline_shrinks_fixed(tmp_repo):
+    _put(tmp_repo, "kb/pitfall/backend/a.md", _placeholder_entry("kb-20261014-c1c1"))
+    assert main(_LINT + ["--repo", str(tmp_repo), "--update-baseline"]) == 0
+    # 回填后 baseline 剩 1 条过期豁免: lint 提示收缩但不阻断; 收缩后 strict 仍绿
+    (tmp_repo / "kb" / "pitfall" / "backend" / "a.md").write_text(
+        make_entry(id="kb-20261014-c1c1", status="accepted", scope="stack",
+                   confidence="verified", severity="low")
+        + "\n## 根因\n真实机制说明文字内容且长度足够避免短源门槛\n"
+        + "\n## 验证\n实测步骤文字内容。\n", encoding="utf-8")
+    assert main(_LINT + ["--repo", str(tmp_repo), "--strict"]) == 0
+    assert main(_LINT + ["--repo", str(tmp_repo), "--update-baseline"]) == 0
+    assert (tmp_repo / ".kb-lint-baseline").read_text(encoding="utf-8") == ""
 
 
 def test_cli_review_rejects_illegal_transition(tmp_repo, capsys):

@@ -5,7 +5,8 @@ from kb.search import search
 
 
 def _name(repo: Path) -> str:
-    return Path(repo).resolve().name
+    # 与 index 写入的 repo 字段同口径(小写规范名), 保证 search 行与 get 层标签一致
+    return Path(repo).resolve().name.lower()
 
 
 def search_layers(repos: list[Path], *, type=None, domain=None, tag=None, scope=None,

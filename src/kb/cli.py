@@ -36,6 +36,12 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_lint = sub.add_parser("lint", parents=[common])
     # choices 严格校验, 拼错立即 exit 2 而非静默关闭落位检查
     p_lint.add_argument("--scope", default="project", choices=["project", "agent-kb"])
+    p_lint.add_argument("--strict", action="store_true",
+                        help="warning 视为硬错误; 配合 baseline 只挡增量")
+    p_lint.add_argument("--baseline", default=None,
+                        help="存量 warning 豁免清单文件, 缺省 <repo>/.kb-lint-baseline")
+    p_lint.add_argument("--update-baseline", action="store_true",
+                        help="把当前全部 warning 固化进 baseline 文件后通过")
     p_idx = sub.add_parser("index", parents=[common])
     p_idx.add_argument("--check", action="store_true")
     p_idx.add_argument("--repo-name", default=None,
@@ -92,12 +98,39 @@ def _dispatch(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "lint":
         errs = lint_repo(repo, scope=args.scope, cross_repos=[Path(p) for p in args.agent_kb])
+        base_path = Path(args.baseline) if args.baseline else repo / ".kb-lint-baseline"
+        warns = [e for e in errs if e.startswith("warning: ")]
         hard = [e for e in errs if not e.startswith("warning: ")]
-        for e in errs:
-            print(e, file=sys.stdout if e.startswith("warning: ") else sys.stderr)
-        return 1 if hard else 0
+        if args.update_baseline:
+            base_path.write_text("".join(w + "\n" for w in sorted(warns)), encoding="utf-8")
+            print(f"baseline updated: {len(warns)} warnings -> {base_path}")
+            for e in hard:
+                print(e, file=sys.stderr)
+            return 1 if hard else 0
+        baseline: set[str] = set()
+        if base_path.exists():
+            baseline = {ln for ln in base_path.read_text(encoding="utf-8").splitlines() if ln}
+        # 基线只豁免 warning(存量债); 新 warning(不在基线)在 strict 下即硬错误。
+        # 基线内已修复的条目视为过期, 不阻断但提示收缩(--update-baseline 固化)
+        new_warns = [w for w in warns if w not in baseline]
+        fixed = sorted(baseline - set(warns))
+        if fixed:
+            print(f"baseline stale: {len(fixed)} 条已修复, 建议 --update-baseline 收缩")
+        for e in warns:
+            print(e)
+        for e in hard:
+            print(e, file=sys.stderr)
+        if hard:
+            return 1
+        if args.strict and new_warns:
+            for w in new_warns:
+                print(f"strict: {w}", file=sys.stderr)
+            return 1
+        return 0
     if args.cmd == "index":
-        repo_name = args.repo_name or repo.resolve().name
+        # 目录显示名统一小写: 仓库显示名大小写(本地克隆 Agent-KB)不得进入 repo 字段,
+        # 否则与已提交 index 的规范名(agent-kb)不一致, `index --check` 恒 stale
+        repo_name = args.repo_name or repo.resolve().name.lower()
         if args.check:
             ok = check_indexes(repo, repo_name=repo_name)
             print("index up to date" if ok else "index stale")

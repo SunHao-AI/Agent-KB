@@ -15,7 +15,7 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
     repo = Path(repo)
     kbs = [Path(p) for p in (agent_kbs or [])]
     layers = [repo] + kbs
-    name = repo_name or repo.resolve().name
+    name = repo_name or repo.resolve().name.lower()
     mcp = FastMCP(f"kb-{name}")
 
     @mcp.tool()

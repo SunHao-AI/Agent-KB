@@ -1,9 +1,14 @@
 from __future__ import annotations
+
 import json
+import time
 from pathlib import Path
+
 from mcp.server.fastmcp import FastMCP
+
+from kb import trace as kbtrace
 from kb.gate import DuplicateCandidate, create_draft, update_draft
-from kb.layers import get_layered, related_layers, search_layers
+from kb.layers import get_layered, related_layers, search_layers_report
 
 
 def _json(obj) -> str:
@@ -22,10 +27,18 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
     def kb_search(query: str | None = None, type: str | None = None,
                   domain: str | None = None, tag: str | None = None,
                   scope: str | None = None, limit: int = 10) -> str:
-        """检索知识库(项目层优先, 再通用层)。只返回元数据+摘要+路径, 不返回正文。
+        """检索知识库(项目层优先, 再通用层)。只返回元数据+摘要, 不返回正文。
         draft 条目永不返回。命中后再用 kb_get 读全文。"""
-        rows = search_layers(layers, type=type, domain=domain, tag=tag,
-                             scope=scope, query=query, limit=limit)
+        t0 = time.perf_counter()
+        rows, reports = search_layers_report(
+            layers, type=type, domain=domain, tag=tag, scope=scope, query=query, limit=limit)
+        if kbtrace.trace_enabled():
+            kbtrace.append_event(kbtrace.build_search_event(
+                trace_id=kbtrace.new_trace_id(), source="mcp", caller_repo=name,
+                query=query, filters={"type": type, "domain": domain, "tag": tag,
+                                      "scope": scope, "status": None, "confidence": None},
+                limit=limit, reports=reports, returned=[r["id"] for r in rows],
+                duration_ms=round((time.perf_counter() - t0) * 1000)))
         keep = ("id", "title", "type", "domain", "tags", "scope", "status",
                 "severity", "confidence", "path", "summary", "updated", "repo")
         return _json([{k: r.get(k) for k in keep} for r in rows])
@@ -34,6 +47,10 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
     def kb_get(id: str) -> str:
         """按 id 读取单条全文 markdown。"""
         got = get_layered(layers, id)
+        if kbtrace.trace_enabled():
+            kbtrace.append_event(kbtrace.build_get_event(
+                trace_id=kbtrace.latest_search_id(name), source="mcp", caller_repo=name,
+                id=id, layer=got[1] if got else None, ok=got is not None))
         if got is None:
             raise ValueError(f"not found: {id}")
         return got[0]

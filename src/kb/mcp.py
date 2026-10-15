@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import argparse
 from pathlib import Path
+
 from kb.mcp_server import build_server
 
 
@@ -9,7 +11,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--repo", default=".", help="repo root containing kb/")
     ap.add_argument("--agent-kb", action="append", default=[])
     ap.add_argument("--repo-name", default=None)
+    ap.add_argument("--trace", action="store_true", help="等价 KB_TRACE=1, 记录检索 trace")
     a = ap.parse_args(argv)
+    if a.trace:
+        import os
+        os.environ["KB_TRACE"] = "1"
     srv = build_server(Path(a.repo), [Path(p) for p in a.agent_kb], a.repo_name)
     srv.run(transport="stdio")
     return 0

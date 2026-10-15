@@ -112,7 +112,7 @@
 | 自建 `kb web` SVG 电影级回放页 | 转换器"导出→导入"仪式感不够用、或有损表达挡住深读时；线框与分镜 P0–P4 已评审存档于 spec §9 附注 |
 | 实时直播（轮询 trace 自动跟进最新检索） | 自建 web 落地后二期评估 |
 | 自建 `kb trace export --format html`（免起播放器，产物可分享） | 有对外分享需求时；注意"trace 不含正文"红线同样适用 |
-| B2 占位回填（handoff §3 记"116 条未做"） | **疑已完成待确认**：`index.jsonl` / `index.draft.jsonl` grep `待回填\|占位` 均 **0 命中**。请人工核对口径后在旧 handoff 关闭该条 |
+| B2 占位回填（handoff §3 记"116 条未做"） | **已确认完成并在旧 handoff 关闭（2026-10-15 晚）**：`index.jsonl` / `index.draft.jsonl` grep `待回填\|占位` 均 **0 命中** |
 
 ## 4. 交叉引用（不属本仓，仅提示依赖）
 

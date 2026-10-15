@@ -1,0 +1,131 @@
+"""检索埋点采集层 — 开关控制 / append-only JSONL / 失败静默。
+
+数据层唯一事实源: <Agent-KB 仓根>/traces/YYYY-MM-DD.jsonl。
+spec §4.2 红线: 事件只含元数据+摘要, 绝不含正文; 写失败静默放弃。
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+import os
+import uuid
+from pathlib import Path
+
+SCHEMA = 1
+_MARKER = ".kb-trace"
+_ENV = "KB_TRACE"
+_FALSY = ("", "0", "false", "False", "no")
+
+
+def kb_root() -> Path:
+    # src/kb/trace.py → parents[0]=kb, [1]=src, [2]=仓根(submodule 挂载点即仓根)
+    return Path(__file__).resolve().parents[2]
+
+
+def traces_dir(root: Path | None = None) -> Path:
+    return (Path(root) if root else kb_root()) / "traces"
+
+
+def trace_enabled(root: Path | None = None, cli_flag: bool | None = None) -> bool:
+    """优先级: CLI 显式 > KB_TRACE 环境变量 > 仓根 .kb-trace 标记 > 默认关闭。"""
+    if cli_flag is not None:
+        return cli_flag
+    env = os.environ.get(_ENV)
+    if env is not None:
+        return env.strip() not in _FALSY
+    base = Path(root) if root else kb_root()
+    return (base / _MARKER).exists()
+
+
+def new_trace_id(ts: dt.datetime | None = None) -> str:
+    ts = ts or dt.datetime.now()
+    return f"t-{ts:%Y%m%d}-{uuid.uuid4().hex[:4]}"
+
+
+def _today_file(root: Path | None) -> Path:
+    return traces_dir(root) / f"{dt.date.today():%Y-%m-%d}.jsonl"
+
+
+def append_event(event: dict, root: Path | None = None) -> None:
+    """行级 append, 新文件补 meta 行。任何 OSError 静默放弃。"""
+    try:
+        f = _today_file(root)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        lines = []
+        if not f.exists():
+            lines.append(json.dumps({"kind": "meta", "schema": SCHEMA},
+                                    ensure_ascii=False))
+        lines.append(json.dumps(event, ensure_ascii=False))
+        with f.open("a", encoding="utf-8") as fh:
+            fh.write("".join(ln + "\n" for ln in lines))
+    except OSError:
+        return
+
+
+def _iter_raw(root: Path) -> tuple[list[dict], list[dict], list[str]]:
+    searches: list[dict] = []
+    gets: list[dict] = []
+    warns: list[str] = []
+    d = traces_dir(root)
+    if not d.exists():
+        return searches, gets, warns
+    for f in sorted(d.glob("*.jsonl")):
+        lines = [ln for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        if not lines:
+            warns.append(f"{f.name}: 空文件, 跳过")
+            continue
+        try:
+            meta = json.loads(lines[0])
+        except json.JSONDecodeError:
+            meta = {}
+        if meta.get("kind") != "meta":
+            warns.append(f"{f.name}: 缺 meta 首行, 跳过")
+            continue
+        if int(meta.get("schema", 0)) > SCHEMA:
+            warns.append(f"{f.name}: schema={meta.get('schema')} "
+                         f"高于本地 {SCHEMA}, 跳过")
+            continue
+        for ln in lines[1:]:
+            try:
+                ev = json.loads(ln)
+            except json.JSONDecodeError:
+                warns.append(f"{f.name}: bad line 跳过")
+                continue
+            if ev.get("kind") == "search":
+                searches.append(ev)
+            elif ev.get("kind") == "get":
+                gets.append(ev)
+    return searches, gets, warns
+
+
+def _newest_first(events: list[dict]) -> list[dict]:
+    return sorted(events, key=lambda e: str(e.get("ts", "")), reverse=True)
+
+
+def read_traces(root: Path | None = None, *, caller: str | None = None,
+                since: str | None = None, zero_hit: bool = False,
+                limit: int | None = None) -> tuple[list[dict], list[dict], list[str]]:
+    base = Path(root) if root else kb_root()
+    searches, gets, warns = _iter_raw(base)
+    if caller:
+        searches = [s for s in searches if s.get("caller_repo") == caller]
+        gets = [g for g in gets if g.get("caller_repo") == caller]
+    if since:
+        searches = [s for s in searches if str(s.get("ts", ""))[:10] >= since]
+    if zero_hit:
+        searches = [s for s in searches if not s.get("returned")]
+    searches, gets = _newest_first(searches), _newest_first(gets)
+    if limit is not None:
+        searches = searches[:limit]
+    return searches, gets, warns
+
+
+def find_trace(trace_id: str, root: Path | None = None) -> dict | None:
+    searches, _, _ = _iter_raw(Path(root) if root else kb_root())
+    return next((s for s in searches if s.get("trace_id") == trace_id), None)
+
+
+def latest_search_id(caller_repo: str, root: Path | None = None) -> str | None:
+    searches, _, _ = _iter_raw(Path(root) if root else kb_root())
+    hits = _newest_first([s for s in searches if s.get("caller_repo") == caller_repo])
+    return hits[0].get("trace_id") if hits else None

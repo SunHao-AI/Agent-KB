@@ -13,6 +13,12 @@
 #   3. coverage 报告: 只输出不设阈值 (无 --cov-fail-under)
 #   Node 仓 (无 pyproject.toml 仅 package.json): npm test 硬门禁。
 # 应急跳过: $env:PREPUSH_SKIP='1'; git push ...
+#
+# 判定对象 = 被推 ref 的内容, 不是工作区 (2026-10-14 首验踩坑修正):
+#   - lint 用 `git show <tip>:<file>` 喂 ruff stdin, 未提交的 WIP 不会污染判定;
+#   - pytest/npm test 只能就地跑 (需 .venv 与 gitignore 的 .env, 临时 worktree 复现不了),
+#     故先校验"测试面"在工作区与待推 tip 之间完全一致, 不一致直接拦截并给出可操作提示,
+#     避免"跑的是工作区、推的是 HEAD"这种假绿/假红。
 set -u
 
 if [ "${PREPUSH_SKIP:-0}" = "1" ]; then
@@ -22,6 +28,43 @@ fi
 
 ROOT=$(git rev-parse --show-toplevel) || exit 1
 cd "$ROOT" || exit 1
+
+# stdin (ref 行) 只有一份, 先缓冲下来复用
+refs=$(cat)
+
+# 待推 tip 清单 (删除 ref 的全 0 sha 不算)
+ZERO="0000000000000000000000000000000000000000"
+tips=$(printf '%s\n' "$refs" | awk '{print $2}' | grep -v "^${ZERO}$" | sort -u)
+
+# 测试面一致性: pytest/npm test 只能就地跑, 若工作区的测试相关文件与待推 tip 不一致,
+# 就地跑出来的结果不代表被推内容 → 拦下并给可操作处置, 不做"假绿"放行。
+# 只看测试面 (py/config 或 js 源), 前端 WIP、文档 WIP 不阻塞 push。
+assert_test_face_clean() {
+    [ -n "$tips" ] || return 0
+    dirty=""
+    for t in $tips; do
+        d=$(git diff --name-only "$t" -- "$@" 2>/dev/null) || continue
+        dirty="$dirty
+$d"
+    done
+    dirty=$(printf '%s\n' "$dirty" | sed '/^$/d' | sort -u)
+    # 未跟踪的同类文件会改变就地跑的收集结果, 只提示不拦截 (临时脚本很常见)
+    untracked=$(git ls-files --others --exclude-standard -- "$@" 2>/dev/null | sed '/^$/d')
+    [ -n "$dirty" ] || return 0
+    echo "pre-push-gate: FAIL - 工作区测试面与待推内容不一致, 就地跑的测试不代表被推内容。" >&2
+    printf '%s\n' "$dirty" | sed 's/^/    /' >&2
+    [ -n "$untracked" ] && {
+        echo "  (另: 未跟踪的同类文件也会参与就地跑, 仅供确认)" >&2
+        printf '%s\n' "$untracked" | sed 's/^/    /' >&2
+    }
+    cat >&2 <<'HINT'
+  处置(任选其一):
+    a) 提交这批改动后重推:  git add -u; git commit -m "..."; git push
+    b) 临时隔离 WIP 再推:   git stash push -m wip -- <上述文件>; git push; git stash pop
+    c) 确知与测试无关:      $env:PREPUSH_SKIP='1'; git push   (跳过整套门禁)
+HINT
+    exit 1
+}
 
 # ---- 仓型探测: python(pyproject.toml) / node(package.json) ----
 if [ -f pyproject.toml ]; then
@@ -35,6 +78,7 @@ fi
 
 if [ "$FLAVOR" = node ]; then
     command -v npm >/dev/null 2>&1 || { echo "pre-push-gate: FAIL - 未找到 npm" >&2; exit 1; }
+    assert_test_face_clean src package.json package-lock.json
     echo "pre-push-gate: npm test ..." >&2
     npm test --silent || {
         echo "pre-push-gate: FAIL - npm test 未过, 禁止 push。修复后重试, 或 PREPUSH_SKIP=1 应急跳过。" >&2
@@ -76,9 +120,8 @@ fi
 COV_ARGS=""
 "$VENV_PY" -c "import pytest_cov" 2>/dev/null && COV_ARGS="--cov=$COV_TARGET --cov-report=term"
 
-# ---- 收集本次 push 涉及的 .py (增量 lint 范围) ----
-ZERO="0000000000000000000000000000000000000000"
-py_files=""
+# ---- 收集本次 push 涉及的 .py (增量 lint 范围, 记 "tip<TAB>file" 便于按被推内容取正文) ----
+py_pairs=""
 while read -r local_ref local_sha remote_ref remote_sha; do
     [ "$local_sha" = "$ZERO" ] && continue  # 删除远端 ref, 无新内容
     if [ "$remote_sha" = "$ZERO" ]; then
@@ -89,28 +132,35 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         base=$(git merge-base "$remote_sha" "$local_sha" 2>/dev/null) || base="$remote_sha"
     fi
     files=$(git diff --name-only "$base" "$local_sha" -- '*.py' 2>/dev/null) || continue
-    py_files="$py_files
-$files"
-done
-
-# ---- 1. 增量 lint 硬门禁 (F + E9) ----
-changed=$(printf '%s\n' "$py_files" | sed '/^$/d' | sort -u)
-to_lint=""
-if [ -n "$changed" ]; then
-    # 只保留工作区仍存在的文件 (本 push 内已删除的无需 lint); 仓内路径无空格, 单词拆分安全
-    for f in $changed; do
-        [ -f "$f" ] && to_lint="$to_lint $f"
+    for f in $files; do
+        py_pairs="$py_pairs
+$local_sha	$f"
     done
-fi
-if [ -n "$to_lint" ]; then
+done <<EOF
+$refs
+EOF
+
+# ---- 1. 增量 lint 硬门禁 (F + E9) —— 判定对象是被推 tip 里的正文, 不是工作区 ----
+changed=$(printf '%s\n' "$py_pairs" | sed '/^[ \t]*$/d' | cut -f2 | sort -u)
+lint_fail=0
+if [ -n "$changed" ]; then
     if "$VENV_PY" -m ruff --version >/dev/null 2>&1; then
         n=$(printf '%s\n' "$changed" | wc -l | tr -d ' ')
-        echo "pre-push-gate: ruff check --select F,E9 (增量 ${n} 个 .py) ..." >&2
-        # shellcheck disable=SC2086
-        "$VENV_PY" -m ruff check --select F,E9 $to_lint || {
-            echo "pre-push-gate: FAIL - 增量 lint 未过 (F/E9 真错误类)。修复后再 push, 或 PREPUSH_SKIP=1 应急跳过。" >&2
+        echo "pre-push-gate: ruff check --select F,E9 (增量 ${n} 个 .py, 取被推 ref 内容) ..." >&2
+        for f in $changed; do
+            # 取该文件最后一次出现的 tip 正文 (多 tip 时以最后一个为准, 常规单 tip 无歧义)
+            tip=$(printf '%s\n' "$py_pairs" | sed '/^[ \t]*$/d' | awk -F'\t' -v F="$f" '$2==F {t=$1} END{print t}')
+            [ -n "$tip" ] || continue
+            content=$(git show "$tip:$f" 2>/dev/null) || continue   # 本次 push 内已删除 → 不查
+            if ! printf '%s\n' "$content" | "$VENV_PY" -m ruff check --select F,E9 \
+                    --stdin-filename "$f" - ; then
+                lint_fail=1
+            fi
+        done
+        if [ "$lint_fail" -ne 0 ]; then
+            echo "pre-push-gate: FAIL - 增量 lint 未过 (F/E9 真错误类, 已按被推内容判定)。修复后重新 commit 再 push, 或 PREPUSH_SKIP=1 应急跳过。" >&2
             exit 1
-        }
+        fi
     else
         echo "pre-push-gate: WARN - venv 缺 ruff, 增量 lint 跳过 (pytest 仍硬门禁)" >&2
     fi
@@ -119,6 +169,8 @@ else
 fi
 
 # ---- 2. 全量 pytest 硬门禁 + 3. coverage 报告 (不设阈值) ----
+# 就地跑前先确认测试面与工作区一致 (pytest 收集 tests/, 受后端源码与配置影响)
+assert_test_face_clean '*.py' pyproject.toml pytest.ini setup.cfg tox.ini conftest.py
 echo "pre-push-gate: pytest 全量 (coverage 报告: ${COV_TARGET}, 无阈值) ..." >&2
 # shellcheck disable=SC2086
 "$VENV_PY" -m pytest -q $COV_ARGS || {

@@ -52,16 +52,21 @@ kb search --query "x" --repo docs --agent-kb .agent-kb   # 双层检索
 
 ## 沉淀门控红线(强制)
 
-> P1 起红线已由工具面强制: `kb new --generated` 与 MCP `kb_create` 只可能产出
-> draft/project/speculative, 违规直接报错退出。
+> 红线由工具面强制: `kb new --generated` 与 MCP `kb_create` 只可能产出
+> draft/project/speculative; MCP `kb_review` 让 agent **自主终审本项目条目的状态**,
+> 但 scope 上提仍人工。违规直接报错退出。
 
-1. Agent **永远不能**直接写 `status: accepted`, 只能产出 `draft`, 生效必经人工 PR 审核。
-2. Agent **永远不能**直接写 `scope != project` 的条目; 认为值得上提 Agent-KB 时,
-   只做 `kb promote <id> --to stack|universal` 式的**建议**, 由人确认。
+1. Agent 沉淀只产出 `draft`; **可自行终审状态**(`kb_review` 走
+   draft→proposed→accepted), 无需等人工。但 accepted **必须**: (a) 已完成自行验证并附
+   `evidence`, (b) 同时把 `confidence` 提升为 verified/probable——否则被拒
+   (`speculative` 永不 accepted)。自审 accepted 自动打 `auto-reviewed` 标签 +
+   `verified_by: agent` + `verification.evidence` 留痕, 供事后抽查回滚。
+2. Agent **永远不能**改 `scope`(非 project); 认为值得上提 Agent-KB 时只做
+   `kb promote <id> --to stack|universal` 式**建议**, 由人 `kb set-scope`/`kb export` 落地。
 3. 沉淀前**必须**先 `kb search` 去重; 命中既有条目则更新(追加"新发现"), 不新建。
 4. 无实测证据的结论**必须**标 `confidence: speculative`; 采信时默认只信 verified/probable,
    `speculative` 结论须自行验证后才可依据(检索本身不做 confidence 过滤)。
-5. 单次任务最多沉淀 **3 条**, 防刷噪音。
+5. 单次任务最多沉淀 **3 条**, 自主终审 accepted 单会话也**最多 3 条**, 防刷噪音。
 
 ## 收录标准
 

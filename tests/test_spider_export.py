@@ -182,10 +182,10 @@ def test_cli_export_latest(env, tmp_path, capsys):
     out = tmp_path / "r.json"
     assert main(["trace", "export", "--latest", "-o", str(out)]) == 0
     import json
-    assert json.loads(out.read_text(encoding="utf-8"))["trace_id"] == "t-new"
+    assert json.loads(out.read_text(encoding="utf-8"))["id"] == "t-new"
     assert main(["trace", "export", "--latest", "--caller", "web",
                  "-o", str(out)]) == 0
-    assert json.loads(out.read_text(encoding="utf-8"))["trace_id"] == "t-old"
+    assert json.loads(out.read_text(encoding="utf-8"))["id"] == "t-old"
 
 
 def test_cli_export_latest_empty_is_error(env, tmp_path, capsys):

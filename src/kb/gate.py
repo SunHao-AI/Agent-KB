@@ -131,17 +131,34 @@ def update_draft(repo, id: str, *, title: str | None = None, body: str | None = 
     return _save(p, fm, cur_body, today or dt.date.today())
 
 
-def review(repo, id: str, to: str, today: dt.date | None = None) -> Entry:
-    """人工 CLI: 按 _TRANSITIONS 流转 status; accepted 拒绝 speculative."""
+def review(repo, id: str, to: str, today: dt.date | None = None, *,
+           by: str | None = None, confidence: str | None = None,
+           evidence: str | None = None) -> Entry:
+    """状态流转, 按 _TRANSITIONS; accepted 拒绝 speculative。
+
+    by="agent" 为自审: accepted 时写 verified_by=agent + auto-reviewed 标签 +
+    verification 留痕(供事后抽查回滚)。confidence 仅随 accepted 提升生效。
+    """
     p = _find(repo, id)
     e = parse_entry(p)
+    fm = dict(e.fm)
+    if to == "accepted" and confidence in ("verified", "probable"):
+        fm["confidence"] = confidence
     frm = e.fm.get("status", "")
     if to not in _TRANSITIONS.get(frm, set()):
         raise GateViolation(f"{id}: illegal transition {frm} -> {to}")
-    if to == "accepted" and e.fm.get("confidence") == "speculative":
+    if to == "accepted" and fm.get("confidence") == "speculative":
         raise GateViolation(f"{id}: confidence=speculative must be verified before accepted")
-    e.fm["status"] = to
-    return _save(p, dict(e.fm), e.body, today or dt.date.today())
+    fm["status"] = to
+    if to == "accepted" and by == "agent":
+        fm["verified_by"] = "agent"
+        tags = list(fm.get("tags") or [])
+        if "auto-reviewed" not in tags:
+            tags.append("auto-reviewed")
+        fm["tags"] = tags
+        d = (today or dt.date.today()).isoformat()
+        fm["verification"] = {"evidence": (evidence or "").strip(), "reviewed_at": d}
+    return _save(p, fm, e.body, today or dt.date.today())
 
 
 def set_scope(repo, id: str, scope: str, today: dt.date | None = None) -> Entry:

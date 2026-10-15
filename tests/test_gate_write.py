@@ -63,6 +63,27 @@ def test_review_accept_requires_non_speculative(tmp_repo):
         review(tmp_repo, "kb-20261014-dddd", "accepted")
 
 
+def test_review_agent_accept_adds_audit_trail(tmp_repo):
+    _mk(tmp_repo, "kb-20261014-a1a1", status="draft", conf="verified")
+    e = review(tmp_repo, "kb-20261014-a1a1", "accepted", by="agent", today=TODAY)
+    assert e.fm["status"] == "accepted"
+    assert "auto-reviewed" in e.fm.get("tags", [])
+    assert e.fm.get("verified_by") == "agent"
+
+
+def test_review_human_accept_has_no_audit_trail(tmp_repo):
+    _mk(tmp_repo, "kb-20261014-a2a2", status="draft", conf="verified")
+    e = review(tmp_repo, "kb-20261014-a2a2", "accepted", today=TODAY)
+    assert "auto-reviewed" not in (e.fm.get("tags") or [])
+    assert "verified_by" not in e.fm
+
+
+def test_review_agent_accept_still_blocks_speculative(tmp_repo):
+    _mk(tmp_repo, "kb-20261014-a3a3", status="draft", conf="speculative")
+    with pytest.raises(GateViolation, match="speculative"):
+        review(tmp_repo, "kb-20261014-a3a3", "accepted", by="agent")
+
+
 def test_set_scope_strips_needs_scope_review(tmp_repo):
     _mk(tmp_repo, "kb-20261014-eeee", tags=["needs-scope-review", "vite"])
     e = set_scope(tmp_repo, "kb-20261014-eeee", "project", today=TODAY)

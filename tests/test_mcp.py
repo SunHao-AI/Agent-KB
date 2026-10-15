@@ -73,3 +73,81 @@ async def test_update_non_draft_rejected(layers):
     srv = build_server(proj, agent_kbs=[kb], repo_name="docs")
     err, out = await _call(srv, "kb_update", {"id": "kb-20261014-e1e1", "body": "x"})
     assert err is True and "only draft" in out
+
+
+# --- kb_review: agent 自审终审(保守放开: 仅状态流转, scope 仍人工) ---
+
+async def _create(srv, title):
+    """body 内嵌唯一 title, 避免多条 create 因指纹相同被查重拒建."""
+    body = (f"## 根因\n{title}: Redis 连接池默认上限过低, "
+            f"高并发下请求排队超时, 调大后恢复。\n")
+    err, out = await _call(srv, "kb_create", {
+        "type": "pitfall", "domain": "backend", "title": title, "body": body})
+    assert err is False, out
+    return out["id"]
+
+
+async def test_review_agent_accept_with_evidence(layers):
+    proj, _ = layers
+    srv = build_server(proj, repo_name="docs")
+    eid = await _create(srv, "Redis 连接池耗尽 独立验证")
+    err, out = await _call(srv, "kb_review", {
+        "id": eid, "to": "accepted", "confidence": "verified",
+        "evidence": "压测复现: pool=10 时 p99>5s, 调至 50 后恢复"})
+    assert err is False
+    assert out["status"] == "accepted" and out["confidence"] == "verified"
+    assert "auto-reviewed" in out["tags"] and out["verified_by"] == "agent"
+    assert out["verification"]["evidence"].startswith("压测复现")
+
+
+async def test_review_accept_without_evidence_blocked(layers):
+    proj, _ = layers
+    srv = build_server(proj, repo_name="docs")
+    eid = await _create(srv, "Redis 慢查询 独立验证二")
+    err, out = await _call(srv, "kb_review", {"id": eid, "to": "accepted"})
+    assert err is True and "speculative" in out
+
+
+async def test_review_accept_evidence_without_confidence_blocked(layers):
+    proj, _ = layers
+    srv = build_server(proj, repo_name="docs")
+    eid = await _create(srv, "Redis 慢查询 独立验证三")
+    err, out = await _call(srv, "kb_review", {
+        "id": eid, "to": "accepted", "evidence": "有证据但不提升 confidence"})
+    assert err is True and "speculative" in out
+
+
+async def test_review_illegal_to(layers):
+    proj, _ = layers
+    srv = build_server(proj, repo_name="docs")
+    eid = await _create(srv, "Redis 慢查询 独立验证四")
+    err, out = await _call(srv, "kb_review", {"id": eid, "to": "stack"})
+    assert err is True
+
+
+async def test_review_session_cap_three(layers):
+    proj, _ = layers
+    srv = build_server(proj, repo_name="docs")  # 每 server 实例即一次 agent 会话
+    ok_ids = [await _create(srv, f"Redis 池耗尽 独立验证{i}") for i in range(3)]
+    for eid in ok_ids:
+        err, _ = await _call(srv, "kb_review", {
+            "id": eid, "to": "accepted", "confidence": "verified",
+            "evidence": "实测复现并通过"})
+        assert err is False
+    fourth = await _create(srv, "Redis 池耗尽 独立验证9")
+    err, out = await _call(srv, "kb_review", {
+        "id": fourth, "to": "accepted", "confidence": "verified",
+        "evidence": "实测复现并通过"})
+    assert err is True and "上限" in out
+
+
+async def test_review_proposed_needs_no_evidence(layers):
+    proj, _ = layers
+    srv = build_server(proj, repo_name="docs")
+    eid = await _create(srv, "Redis 慢日志 独立验证五")
+    err, out = await _call(srv, "kb_review", {"id": eid, "to": "proposed"})
+    assert err is False and out["status"] == "proposed"
+    err, out = await _call(srv, "kb_review", {
+        "id": eid, "to": "accepted", "confidence": "probable",
+        "evidence": "两处项目实测一致"})
+    assert err is False and out["status"] == "accepted"

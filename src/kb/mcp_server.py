@@ -7,8 +7,11 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from kb import trace as kbtrace
-from kb.gate import DuplicateCandidate, create_draft, update_draft
+from kb.gate import (DuplicateCandidate, GateViolation, create_draft, review,
+                     update_draft)
 from kb.layers import get_layered, related_layers, search_layers_report
+
+AUTO_ACCEPT_CAP = 3  # 单次会话(每 server 实例) agent 自审 accepted 上限
 
 
 def _json(obj) -> str:
@@ -22,6 +25,7 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
     layers = [repo] + kbs
     name = repo_name or repo.resolve().name.lower()
     mcp = FastMCP(f"kb-{name}")
+    auto_accepted = 0  # 本会话已自审 accepted 计数
 
     @mcp.tool()
     def kb_search(query: str | None = None, type: str | None = None,
@@ -84,6 +88,35 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
             e = update_draft(repo, id, title=title, body=body, tags=tags, severity=severity)
         except FileNotFoundError:
             raise ValueError(f"not found in project layer: {id}") from None
+        return _json({**e.fm, "path": str(e.path)})
+
+    @mcp.tool()
+    def kb_review(id: str, to: str, confidence: str | None = None,
+                  evidence: str | None = None) -> str:
+        """自主终审本项目条目(状态流转: draft→proposed→accepted / deprecated)。
+
+        规则: 流转必须沿合法路径(draft→accepted 或 proposed→accepted);
+        accepted 必须带实测 evidence 并把 confidence 提升为 verified/probable,
+        否则被拒(speculative 不可 accepted)。自审 accepted 会打 auto-reviewed
+        留痕, 单会话最多 3 条。scope 上提(stack/universal)仍只能人工 CLI。"""
+        nonlocal auto_accepted
+        try:
+            if to == "accepted":
+                if not (evidence and evidence.strip()):
+                    raise GateViolation(
+                        f"{id}: accepted 需先完成自行验证并附 evidence"
+                        f"(当前 confidence=speculative 不可 accepted)")
+                if auto_accepted >= AUTO_ACCEPT_CAP:
+                    raise GateViolation(
+                        f"{id}: 单次会话自主终审已达上限 {AUTO_ACCEPT_CAP} 条")
+            e = review(repo, id, to, by="agent", confidence=confidence,
+                       evidence=evidence)
+        except GateViolation as exc:
+            raise ValueError(str(exc)) from None
+        except FileNotFoundError:
+            raise ValueError(f"not found in project layer: {id}") from None
+        if to == "accepted":
+            auto_accepted += 1
         return _json({**e.fm, "path": str(e.path)})
 
     return mcp

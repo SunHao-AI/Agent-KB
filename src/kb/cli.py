@@ -86,6 +86,10 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_tl.add_argument("--limit", type=int, default=30)
     p_ts = tr_sub.add_parser("show")
     p_ts.add_argument("id")
+    p_te = tr_sub.add_parser("export")
+    p_te.add_argument("id")
+    p_te.add_argument("--format", default="spider", choices=["spider"])
+    p_te.add_argument("-o", "--out", default=None, help="输出文件, 默认 <trace_id>.json")
 
     args = ap.parse_args(argv)
     repo = Path(args.repo)
@@ -216,6 +220,20 @@ def _dispatch(argv: list[str] | None = None) -> int:
             print(json.dumps(stat(repo), ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "trace":
+        if args.trace_cmd == "export":
+            from kb.spider_export import to_record
+            ev = kbtrace.find_trace(args.id)
+            if ev is None:
+                print(f"trace not found: {args.id}", file=sys.stderr)
+                return 1
+            _, gets, _ = kbtrace.read_traces()
+            rec = to_record(ev, [g for g in gets
+                                 if g.get("trace_id") == args.id])
+            out = Path(args.out) if args.out else Path(f"{args.id}.json")
+            out.write_text(json.dumps(rec, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            print(out)
+            return 0
         if args.trace_cmd == "show":
             ev = kbtrace.find_trace(args.id)
             if ev is None:

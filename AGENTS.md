@@ -45,6 +45,8 @@ kb review kb-20261012-7f3a --to proposed --repo .   # 人工流转(draft→propo
 kb set-scope kb-20261012-7f3a stack --repo .        # scope 终审落地(清 needs-scope-review)
 kb export kb-20261012-7f3a --to-repo ../Agent-KB --to-scope stack --repo docs  # 跨仓上提(人工)
 kb search --query "x" --repo docs --agent-kb .agent-kb   # 双层检索
+kb init --repo docs --agent-kb .agent-kb        # 接入: 生成去绝对路径的 .mcp.json
+kb doctor --repo docs --agent-kb .agent-kb      # 接入自检(FAIL 才退 1)
 ```
 
 `kb new` 的 `<type>` ∈ decision/spec/plan/pitfall/rca/howto/reference/retrospective;

@@ -58,10 +58,19 @@
 ## 3. Track B — Agent-KB 对外推广/多团队 (独立轨, 可与 A 交错)
 
 - [ ] **B1 接入体验先行** ← (无, 可即刻开工)
-  - `kb init`: 为接入仓生成 `.mcp.json` (去绝对路径, 现四仓硬编码 `d:/WorkPlace/...python.exe`) + 引导 venv 装配。
-  - `kb doctor`: 自检命令, 收编全部已知失败模式 — venv 缺失 / submodule 悬空 / index 漂移 / `--repo-name` 大小写 / `.gitmodules` url 不可达。**并吸收 A6 门禁已实现的自检清单** (母本 `scripts/pre-push-gate.sh` §0 + 执行包 §6: venv 缺 pytest / 缺 ruff / pytest-cov 降级 / 容器 env 三件套), doctor 直接复用同一口径。
+  - ~~`kb init`: 为接入仓生成 `.mcp.json` (去绝对路径)~~ ✅ 2026-10-15: `src/kb/bootstrap.py`
+    + cli 注册。command 写标志模板 `{interpreter}`(运行时按 Agent-KB 根解析
+    `.venv/bin/python` 或 `.venv/Scripts/python.exe`), cwd=仓内相对 `.agent-kb`,
+    repo-name 统一小写; 已存在拒覆盖(`--force`), agent-kb 须在仓内校验。
+  - ~~`kb doctor`: 自检命令, 收编已知失败模式 + 吸收 A6 门禁自检清单~~ ✅ 2026-10-15:
+    检查项 = Agent-KB venv(mcp) / 门禁 venv pytest(FAIL)+ruff/pytest_cov(WARN) /
+    `--current-python` 双环境 / submodule 悬空 / index 漂移 / kb lint(仅 error 判 FAIL) /
+    已装钩子与母本 diff 新鲜度 / `.mcp.json` 可解析+绝对路径告警。FAIL→rc=1, WARN 不拦。
+    实弹: setting 仓 0 fail(如实 WARN 旧绝对路径 .mcp.json), Agent-KB 自身 0 fail
+    (如实 WARN 自身钩子落后母本)。7 例单测, 全仓 201 passed。
+    **剩余**: 对外 quickstart + 真实新仓 dogfood; README 补 review/set-scope/export
+    与 init/doctor 两新命令; venv 自动装配(现仅指引)。
   - ~~修 `index --check` 目录名大小写环境问题~~ ✅ 2026-10-14: repo 字段统一小写规范名 (cli/layers/mcp_server 三处 `.lower()` + 新回归测试 `test_index_repo_name_case_normalized`), 本地 `Agent-KB` 下 `index --check` rc=1→rc=0, 全仓 118 passed。
-  - 对外 quickstart + 拿一个真实新仓 dogfood; README 同步 review/set-scope/export 三命令 (现缺)。
   - 验收: 新仓三步接入 clone → `kb init` → `kb doctor` 全绿。
 - [ ] **B2 内容质量门** ← (无, 天然穿插活, 每批 ~20 条)
   - 116 条占位回填: 验证段 69 / 适用边界段 40 / 背景 4 / 解决方案 3 (fixwave-A 官方口径)。web/algo 原 known-pitfalls 约 30 条有证据可搬, 其余如实降级 probable。

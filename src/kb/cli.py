@@ -77,6 +77,16 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_ex.add_argument("id"); p_ex.add_argument("--to-repo", required=True)
     p_ex.add_argument("--to-scope", required=True, choices=["stack", "universal"])
 
+    p_init = sub.add_parser("init", parents=[common])
+    p_init.add_argument("--kb-dir", default="docs", help="仓内知识库目录(生成物含 kb/)")
+    p_init.add_argument("--repo-name", default=None, help="写入 --repo-name 的名字, 默认仓目录名小写")
+    p_init.add_argument("--mcp-name", default="kb", help=".mcp.json 中 server 键名")
+    p_init.add_argument("--force", action="store_true", help="覆盖已存在的 .mcp.json")
+
+    p_doc = sub.add_parser("doctor", parents=[common])
+    p_doc.add_argument("--current-python", action="store_true",
+                       help="追加检查当前解释器(kb CLI 自身运行环境)")
+
     # trace 独立解析: 不用 parents=[common](其 --repo 默认 "." 会静默失效);
     # 各子命令自定义 --repo, 缺省 None = 集中读 Agent-KB 仓根 kb_root()
     p_tr = sub.add_parser("trace")
@@ -130,6 +140,22 @@ def _dispatch(argv: list[str] | None = None) -> int:
     if args.cmd == "export":
         print(export_entry(repo, Path(args.to_repo), args.id, to_scope=args.to_scope))
         return 0
+    if args.cmd == "init":
+        from kb.bootstrap import init_repo
+        ak = Path(args.agent_kb[0]) if args.agent_kb else None
+        info = init_repo(repo, ak, args.kb_dir, repo_name=args.repo_name,
+                         mcp_name=args.mcp_name, force=args.force)
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+        print("next: 让 Agent 重载 MCP 配置; 复核 `kb doctor --repo <仓> --agent-kb <Agent-KB根>",
+              file=sys.stderr)
+        return 0
+    if args.cmd == "doctor":
+        from kb.bootstrap import doctor as run_doctor
+        from kb.bootstrap import doctor_exit_code, render_doctor
+        ak = Path(args.agent_kb[0]) if args.agent_kb else None
+        checks = run_doctor(repo, agent_kb=ak, current_python=args.current_python)
+        print(render_doctor(checks))
+        return doctor_exit_code(checks)
     if args.cmd == "lint":
         errs = lint_repo(repo, scope=args.scope, cross_repos=[Path(p) for p in args.agent_kb])
         base_path = Path(args.baseline) if args.baseline else repo / ".kb-lint-baseline"
@@ -305,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": "duplicate", "candidates": exc.entries},
                          ensure_ascii=False, indent=2), file=sys.stderr)
         return 1
-    except (GateViolation, FileNotFoundError, ValueError) as exc:
+    except (GateViolation, FileNotFoundError, FileExistsError, ValueError) as exc:
         print(f"kb error: {exc}", file=sys.stderr)
         return 1
 

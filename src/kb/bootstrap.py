@@ -1,0 +1,229 @@
+"""B1 接入体验: `kb init` 生成去绝对路径的 .mcp.json; `kb doctor` 环境自检。
+
+.mcp.json 的 command 用相对 Agent-KB 根的标志性解释器路径(`.venv/bin/python`
+或 `.venv/Scripts/python.exe`), 运行时由 Agent 侧结合 `"cwd": "<Agent-KB 根>"`
+解析 —— 换机器/换克隆位置不必改配置(roadmap B1: 去绝对路径)。
+
+doctor 检查项吸收 A6 门禁自检口径(母本 scripts/pre-push-gate.sh §0 环境自检 +
+执行包 §6): venv 存在 / 缺 pytest / 缺 ruff / pytest-cov 降级; 另加 submodule
+悬空 / index 漂移 / kb lint / 已装 pre-push 门禁新鲜度 / .mcp.json 可解析。
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+INTERPRETERS = (".venv/bin/python", ".venv/Scripts/python.exe")
+
+
+def _agent_kb_root(repo: Path, agent_kb: Path | None = None) -> Path:
+    """Agent-KB 主仓根定位: 候选 = [显式 --agent-kb, 业务仓自身, 同级克隆
+    repo/../Agent-KB]。须自证 src/kb 包存在; 其中优先带 venv 的(主仓约定 venv
+    在根; submodule 检出 .agent-kb 同样自证但不带 venv, 落选)。都不中回退 repo。"""
+    repo = Path(repo)
+    biz = _git_root(repo) or repo
+    cands = [Path(agent_kb)] if agent_kb is not None else []
+    cands += [biz, biz.resolve().parent / "Agent-KB"]
+    cands = [c for c in cands if (c / "src" / "kb").exists()]
+    for c in cands:
+        if resolve_interpreter(c):
+            return c
+    return cands[0] if cands else repo
+
+
+def _git_root(p: Path) -> Path | None:
+    """git 仓根(业务仓根): doctor 用它区分 kb 载体目录(--repo docs)与仓根(.git/
+    .venv/.mcp.json/.gitmodules 所在)。非 git 环境回退 None。"""
+    try:
+        r = subprocess.run(["git", "-C", str(p), "rev-parse", "--show-toplevel"],
+                           check=False, capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            return Path(r.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def resolve_interpreter(root: Path) -> str | None:
+    root = Path(root)
+    for rel in INTERPRETERS:
+        if (root / rel).exists():
+            return rel
+    return None
+
+
+def render_mcp_json(repo_name: str, kb_dir: str, agent_kb_rel: str,
+                    mcp_name: str = "kb") -> str:
+    # repo 字段规范名统一小写(同 index 口径), 防大小写漂移致检索 caller_repo 对不上
+    payload = {
+        "mcpServers": {
+            mcp_name: {
+                "command": "{interpreter}",
+                "args": ["-m", "kb.mcp", "--repo", kb_dir,
+                         "--agent-kb", agent_kb_rel, "--repo-name", repo_name.lower()],
+                "cwd": agent_kb_rel,
+            }
+        }
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
+def init_repo(repo: Path, agent_kb: Path | None, kb_dir: str,
+              repo_name: str | None = None, mcp_name: str = "kb",
+              force: bool = False) -> dict:
+    """写入接入仓 .mcp.json 并返回引导信息(下一步指引由调用方打印)。"""
+    repo = Path(repo)
+    root = _agent_kb_root(repo, agent_kb)
+    interp = resolve_interpreter(root)
+    if interp is None:
+        raise FileNotFoundError(
+            f"Agent-KB venv 未装配: {root} 下无 {' / '.join(INTERPRETERS)} "
+            f"(先建 venv 并 pip install -e .)")
+    if not (repo / kb_dir).is_dir():
+        raise FileNotFoundError(f"知识库目录不存在: {repo / kb_dir}")
+    ak = Path(agent_kb) if agent_kb else repo / ".agent-kb"
+    try:
+        ak_rel = ak.resolve().relative_to(repo.resolve()).as_posix()
+    except ValueError:
+        raise FileNotFoundError(
+            f"--agent-kb 必须位于接入仓内(写进 .mcp.json 的相对 cwd): {ak}") from None
+    out = repo / ".mcp.json"
+    if out.exists() and not force:
+        raise FileExistsError(f"{out} 已存在(覆盖请加 --force)")
+    name = (repo_name or repo.resolve().name).lower()
+    out.write_text(render_mcp_json(name, kb_dir, ak_rel, mcp_name), encoding="utf-8")
+    return {"mcp_json": str(out), "agent_kb_root": str(root),
+            "interpreter": interp, "repo_name": name}
+
+
+# ---------------- doctor ----------------
+
+def _mod_ok(root: Path, interp: str, mod: str) -> bool:
+    try:
+        r = subprocess.run([str(root / interp), "-c", f"import {mod}"],
+                           check=False, capture_output=True, timeout=60)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def doctor(repo: Path, agent_kb: Path | None = None,
+           current_python: bool = False) -> list[tuple[str, str, str]]:
+    """返回 [(级别, 检查名, 说明)]; 级别 ∈ PASS/WARN/FAIL。永不抛异常。
+
+    `repo` = kb 载体目录(与 lint/index 的 --repo 约定一致: 其下有 kb/), 业务仓
+    即 docs/、Agent-KB 仓自身即仓根; 业务仓根(钩子/.venv/.mcp.json/.gitmodules
+    所在)经 git toplevel 解析。
+    """
+    from kb.index import check_indexes
+    from kb.lint import lint_repo
+
+    checks: list[tuple[str, str, str]] = []
+    kb_base = Path(repo)
+    add = checks.append
+
+    biz = _git_root(kb_base) or (kb_base if (kb_base / ".git").exists()
+                                 or not (kb_base / "kb").is_dir()
+                                 else kb_base.parent)
+    is_agent_kb_repo = biz.resolve() == kb_base.resolve()
+    root = _agent_kb_root(kb_base, Path(agent_kb) if agent_kb else None)
+
+    interp = resolve_interpreter(root)
+    if interp:
+        add(("PASS", "agent-kb venv (mcp)", f"{root} → {interp}"))
+    else:
+        add(("FAIL", "agent-kb venv (mcp)",
+             f"{root} 缺 venv(.venv/bin/python 或 .venv/Scripts/python.exe)"))
+
+    # 门禁环境 = 业务仓自身 .venv(A6 pre-push 就地跑 pytest/ruff 用的那套)
+    ginterp = resolve_interpreter(biz) or (interp if is_agent_kb_repo else None)
+    gate_root = biz if resolve_interpreter(biz) else (root if is_agent_kb_repo else biz)
+    if ginterp:
+        for mod, lvl, hint in (("pytest", "FAIL", "门禁硬依赖: pip install -e '.[dev]'"),
+                               ("ruff", "WARN", "门禁 lint 依赖, 缺失时 lint 环节降级"),
+                               ("pytest_cov", "WARN", "缺失时 coverage 报告降级(非门禁项)")):
+            ok = _mod_ok(gate_root, ginterp, mod)
+            add((("PASS" if ok else lvl), f"gate {mod}", "ok" if ok else hint))
+    else:
+        add(("FAIL", "gate venv", f"{biz} 缺 .venv, 门禁无法运行"))
+
+    if current_python:
+        add(("PASS", "current interpreter", sys.executable))
+        for mod in ("pytest", "ruff", "pytest_cov"):
+            try:
+                __import__(mod)
+                add(("PASS", f"current {mod}", "importable"))
+            except ImportError:
+                lvl = "FAIL" if mod == "pytest" else "WARN"
+                add((lvl, f"current {mod}", f"当前解释器缺 {mod}"))
+
+    # submodule: 声明了 .agent-kb 但目录不存在/空 = 悬空指针
+    gm = biz / ".gitmodules"
+    if gm.exists() and ".agent-kb" in gm.read_text(encoding="utf-8", errors="replace"):
+        sub = biz / ".agent-kb"
+        if sub.is_dir() and any(sub.iterdir()):
+            add(("PASS", "submodule .agent-kb", "已 checkout"))
+        else:
+            add(("WARN", "submodule .agent-kb", "悬空指针: git submodule update --init"))
+
+    # index 漂移(生成物与正文一致性); kb_base = kb 载体目录(--repo 入参本身)
+    repo_name = biz.resolve().name.lower()
+    try:
+        ok = check_indexes(kb_base, repo_name=repo_name)
+        add(("PASS" if ok else "WARN", "index fresh",
+             "up to date" if ok else f"stale: kb index --repo {kb_base} 重建"))
+    except (FileNotFoundError, OSError):
+        add(("FAIL", "index fresh", f"索引缺失: {kb_base / 'kb'} 不存在?"))
+
+    # lint(仅 error 级算 FAIL; warning 常为存量豁免债)
+    try:
+        errs = lint_repo(kb_base, scope="agent-kb" if is_agent_kb_repo else "project")
+        hard = [e for e in errs if not e.startswith("warning: ")]
+        warns = len(errs) - len(hard)
+        add((("FAIL" if hard else "PASS"), "kb lint",
+             f"{len(hard)} errors" + (f", {warns} warnings" if warns else "")))
+    except Exception as exc:  # noqa: BLE001 - doctor 永不因单项崩
+        add(("WARN", "kb lint", f"lint 执行异常: {exc}"))
+
+    # 已装 pre-push 门禁与母本一致性(A6)
+    hook = biz / ".git" / "hooks" / "pre-push-gate.sh"
+    master = root / "scripts" / "pre-push-gate.sh"
+    if not hook.exists():
+        add(("WARN", "pre-push gate", "未安装: powershell -File <agent-kb>/scripts/install-gate.ps1"))
+    elif master.exists() and hook.read_text(encoding="utf-8", errors="replace").replace(
+            "\r\n", "\n") != master.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n"):
+        add(("WARN", "pre-push gate", "落后母本: 重跑 install-gate.ps1 刷新"))
+    else:
+        add(("PASS", "pre-push gate", "已装且与母本一致"))
+
+    # .mcp.json 可解析且解释器标志路径存在
+    mcp = biz / ".mcp.json"
+    if mcp.exists():
+        try:
+            cfg = json.loads(mcp.read_text(encoding="utf-8"))
+            cmd = next(iter(cfg["mcpServers"].values()))["command"]
+            if cmd == "{interpreter}":
+                ok = resolve_interpreter(root) is not None
+                add(("PASS" if ok else "FAIL", ".mcp.json",
+                     "模板 OK(相对解释器)" if ok else "模板 OK 但 Agent-KB venv 缺失"))
+            else:
+                add(("WARN", ".mcp.json", f"绝对路径解释器(建议 kb init 重生成): {cmd}"))
+        except (json.JSONDecodeError, KeyError, StopIteration) as exc:
+            add(("FAIL", ".mcp.json", f"解析失败: {exc}"))
+    return checks
+
+
+def render_doctor(checks: list[tuple[str, str, str]]) -> str:
+    icon = {"PASS": "[ok]", "WARN": "[warn]", "FAIL": "[fail]"}
+    width = max((len(n) for _, n, _ in checks), default=0)
+    lines = [f"{icon[lvl]:<7}{n.ljust(width)}  {msg}" for lvl, n, msg in checks]
+    n_fail = sum(1 for lvl, _, _ in checks if lvl == "FAIL")
+    n_warn = sum(1 for lvl, _, _ in checks if lvl == "WARN")
+    verdict = "all green" if not n_fail and not n_warn else f"{n_fail} fail / {n_warn} warn"
+    return "\n".join(lines) + f"\n=> {verdict}"
+
+
+def doctor_exit_code(checks: list[tuple[str, str, str]]) -> int:
+    return 1 if any(lvl == "FAIL" for lvl, _, _ in checks) else 0

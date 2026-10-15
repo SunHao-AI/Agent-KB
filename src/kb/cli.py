@@ -77,6 +77,16 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_ex.add_argument("id"); p_ex.add_argument("--to-repo", required=True)
     p_ex.add_argument("--to-scope", required=True, choices=["stack", "universal"])
 
+    p_tr = sub.add_parser("trace", parents=[common])
+    tr_sub = p_tr.add_subparsers(dest="trace_cmd", required=True)
+    p_tl = tr_sub.add_parser("list")
+    p_tl.add_argument("--caller", default=None)
+    p_tl.add_argument("--since", default=None, help="YYYY-MM-DD")
+    p_tl.add_argument("--zero-hit", action="store_true")
+    p_tl.add_argument("--limit", type=int, default=30)
+    p_ts = tr_sub.add_parser("show")
+    p_ts.add_argument("id")
+
     args = ap.parse_args(argv)
     repo = Path(args.repo)
 
@@ -204,6 +214,30 @@ def _dispatch(argv: list[str] | None = None) -> int:
             print(json.dumps(due_review(repo, dt.date.today()), ensure_ascii=False, indent=2))
         else:
             print(json.dumps(stat(repo), ensure_ascii=False, indent=2))
+        return 0
+    if args.cmd == "trace":
+        if args.trace_cmd == "show":
+            ev = kbtrace.find_trace(args.id)
+            if ev is None:
+                print(f"trace not found: {args.id}", file=sys.stderr)
+                return 1
+            print(json.dumps(ev, ensure_ascii=False, indent=2))
+            return 0
+        searches, _, warns = kbtrace.read_traces(caller=args.caller, since=args.since,
+                                                 zero_hit=args.zero_hit, limit=args.limit)
+        for w in warns:
+            print(f"warning: {w}", file=sys.stderr)
+        if not searches:
+            print("暂无 trace 记录。开启方式: kb search --trace / 环境变量 KB_TRACE=1 / "
+                  "仓根放置 .kb-trace 标记文件")
+            return 0
+        print(f"{'时间':<20} {'来源':<5} {'caller':<22} {'命中':>4}  query / trace_id")
+        for s in searches:
+            hits = len(s.get("returned", []))
+            flag = " 0命中" if hits == 0 else f" {hits:>4}"
+            print(f"{str(s.get('ts', ''))[:19]:<20} {s.get('source', ''):<5} "
+                  f"{s.get('caller_repo', ''):<22}{flag}  "
+                  f"{s.get('query') or '-'} / {s.get('trace_id')}")
         return 0
     if args.cmd == "promote":
         fm = promote(repo, args.id, args.to)

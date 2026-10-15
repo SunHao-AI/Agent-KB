@@ -141,6 +141,11 @@ src/kb/cli.py          # 新增 `kb trace` 子命令组; search 加 --trace
 保证导入后回放顺序确定。**有损项**(渲染原语缺失, 接受): 扫描线动画、字段高亮、截断
 弹回 — 均降级为文字元信息。
 
+> **实现期修订(2026-10-15 终审)**: 转换器按 `unit:"task"`(每命中条目一事件)实现, 未做
+> `unit:"word"` 分词与 `prompt`/`tokenIndex` 字段; record 尚未经 prompt-spider-ui 真机
+> 导入校准(需 Node 20+ 克隆对端仓库)。校准预期只动 `spider_export.py` 顶部常量区与
+> config 组装, 不动 trace 数据层。真机校准列为显式延期项(见 §9)。
+
 ## 7. 错误处理汇总
 
 | 场景 | 行为 |
@@ -172,6 +177,7 @@ pytest(基线 118 → 预计 +15 左右), 全部走 tmp_path, 不碰真实 trace
 
 | 项 | 触发条件 |
 | --- | --- |
+| spider record 真机校准(prompt-spider-ui 导入验证, 含 unit/prompt/tokenIndex 对齐评估) | 首次实际观看回放时(需 Node 20+ 克隆对端仓) |
 | 自建 `kb web` SVG 电影级回放页(扫描光束/爬虫精灵/发光蛛丝, 线框与分镜 P0–P4 已评审) | 转换器"导出→导入"仪式感不够用、或有损表达挡住深读时 |
 | 实时直播(轮询 trace 自动跟进最新) | 自建 web 落地后二期评估 |
 | 统计报表(命中率/热门条目/零命中 query 榜) | 积累 ≥2 周真实 trace 后 |

@@ -167,3 +167,40 @@ def test_cli_export(env, tmp_path, capsys):
     import json
     rec = json.loads(out.read_text(encoding="utf-8"))
     assert rec["format"] == "prompt-spider-session/v1"
+
+
+def test_cli_export_latest(env, tmp_path, capsys):
+    """--latest 免手输 id; --caller 限定取该 agent 的最近一次。"""
+    from kb import trace as tr
+    from kb.cli import main
+    a = _trace()
+    a["trace_id"], a["caller_repo"], a["ts"] = "t-old", "web", "2026-10-14T10:00:00+08:00"
+    b = _trace()
+    b["trace_id"], b["caller_repo"], b["ts"] = "t-new", "algo", "2026-10-15T10:00:00+08:00"
+    for ev in (a, b):
+        tr.append_event(ev, root=env)
+    out = tmp_path / "r.json"
+    assert main(["trace", "export", "--latest", "-o", str(out)]) == 0
+    import json
+    assert json.loads(out.read_text(encoding="utf-8"))["trace_id"] == "t-new"
+    assert main(["trace", "export", "--latest", "--caller", "web",
+                 "-o", str(out)]) == 0
+    assert json.loads(out.read_text(encoding="utf-8"))["trace_id"] == "t-old"
+
+
+def test_cli_export_latest_empty_is_error(env, tmp_path, capsys):
+    from kb.cli import main
+    assert main(["trace", "export", "--latest",
+                 "-o", str(tmp_path / "x.json")]) == 1
+    assert "no trace" in capsys.readouterr().err
+
+
+def test_cli_export_requires_id_or_latest(env, capsys):
+    from kb.cli import main
+    assert main(["trace", "export"]) == 2
+    assert main(["trace", "export", "t-1", "--latest"]) == 2
+
+
+def test_cli_export_id_and_caller_is_error(env, capsys):
+    from kb.cli import main
+    assert main(["trace", "export", "t-1", "--caller", "web"]) == 2

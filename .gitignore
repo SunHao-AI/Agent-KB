@@ -5,6 +5,7 @@ __pycache__/
 .superpowers/
 .venv/
 traces/
+.kb-trace
 build/
 dist/
 

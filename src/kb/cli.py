@@ -93,7 +93,10 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_ts.add_argument("--repo", default=None,
                       help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
     p_te = tr_sub.add_parser("export")
-    p_te.add_argument("id")
+    p_te.add_argument("id", nargs="?", help="trace id; 与 --latest 二选一")
+    p_te.add_argument("--latest", action="store_true",
+                      help="自动取最近一次检索(可配 --caller 限定 agent)")
+    p_te.add_argument("--caller", default=None, help="仅与 --latest 联用")
     p_te.add_argument("--repo", default=None,
                       help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
     p_te.add_argument("--format", default="spider", choices=["spider"])
@@ -233,6 +236,20 @@ def _dispatch(argv: list[str] | None = None) -> int:
         root = Path(args.repo) if args.repo else None
         if args.trace_cmd == "export":
             from kb.spider_export import to_record
+            if bool(args.id) == bool(args.latest):
+                print("export: 需指定 <id> 或 --latest 之一(不可同给)", file=sys.stderr)
+                return 2
+            if args.id and args.caller:
+                print("export: --caller 仅与 --latest 联用", file=sys.stderr)
+                return 2
+            if args.latest:
+                newest, _, _ = kbtrace.read_traces(root=root, caller=args.caller,
+                                                   limit=1)
+                if not newest:
+                    print("no trace records" + (f" for caller={args.caller}"
+                                                if args.caller else ""), file=sys.stderr)
+                    return 1
+                args.id = newest[0]["trace_id"]
             ev = kbtrace.find_trace(args.id, root=root)
             if ev is None:
                 print(f"trace not found: {args.id}", file=sys.stderr)

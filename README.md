@@ -73,6 +73,38 @@ kb lint --scope project --repo .
 查询已有知识: `kb search --query "关键词" --repo .`(只返回元数据+摘要),
 命中后 `kb show <id> --repo .` 读全文。
 
+## 接入新仓(Quickstart, 三步)
+
+前提: 本机已按同级克隆约定放置 Agent-KB 主仓并装好 venv(与业务仓同一父目录;
+`kb init` 依赖此约定定位解释器)。
+
+```powershell
+# ① clone 业务仓后, 在业务仓根生成 .mcp.json(相对路径, 跨机可移植):
+#    kb_dir 不存在时自动创建骨架, 未挂 submodule 时自动降级为单层配置
+<Agent-KB>\.venv\Scripts\python.exe -m kb.cli init --repo docs --kb-dir docs
+
+# ② 自检: venv/门禁依赖/index/lint/已装钩子/.mcp.json 可执行性, FAIL 才退 1
+<Agent-KB>\.venv\Scripts\python.exe -m kb.cli doctor --repo docs
+
+# ③ 重载 Agent 的 MCP 配置(重启会话), 即得 kb_search/kb_get/kb_create 工具面
+```
+
+可选(获得双层检索与通用知识库):
+
+```powershell
+git submodule add <Agent-KB-url> .agent-kb   # 挂只读 submodule
+# 重跑 init --force + doctor, 即变双层(project 优先 + stack/universal)
+powershell -File <Agent-KB>\scripts\install-gate.ps1 -RepoRoot .   # 装 push 门禁
+```
+
+## 审核与流转命令(人用)
+
+```powershell
+kb review <id> --to proposed --repo docs    # draft→proposed→accepted(speculative 被门禁拒)
+kb set-scope <id> stack --repo docs         # scope 终审落地(清 needs-scope-review 标签)
+kb export <id> --to-repo ../Agent-KB --to-scope stack --repo docs   # 项目库→通用库跨仓上提
+```
+
 ## 贡献流程
 
 1. **查重先行**: 新建前 `kb search` 确认没有重复条目; 命中则更新既有条目而非新建。

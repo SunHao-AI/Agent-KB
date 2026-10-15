@@ -146,7 +146,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
         info = init_repo(repo, ak, args.kb_dir, repo_name=args.repo_name,
                          mcp_name=args.mcp_name, force=args.force)
         print(json.dumps(info, ensure_ascii=False, indent=2))
-        print("next: 让 Agent 重载 MCP 配置; 复核 `kb doctor --repo <仓> --agent-kb <Agent-KB根>",
+        print("next: 复核 `kb doctor --repo <kb载体目录>`; 再让 Agent 重载 MCP 配置",
               file=sys.stderr)
         return 0
     if args.cmd == "doctor":

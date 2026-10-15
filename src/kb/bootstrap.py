@@ -11,6 +11,7 @@ doctor 检查项吸收 A6 门禁自检口径(母本 scripts/pre-push-gate.sh §0
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +24,7 @@ def _agent_kb_root(repo: Path, agent_kb: Path | None = None) -> Path:
     repo/../Agent-KB]。须自证 src/kb 包存在; 其中优先带 venv 的(主仓约定 venv
     在根; submodule 检出 .agent-kb 同样自证但不带 venv, 落选)。都不中回退 repo。"""
     repo = Path(repo)
-    biz = _git_root(repo) or repo
+    biz = _biz_root(repo)
     cands = [Path(agent_kb)] if agent_kb is not None else []
     cands += [biz, biz.resolve().parent / "Agent-KB"]
     cands = [c for c in cands if (c / "src" / "kb").exists()]
@@ -54,48 +55,85 @@ def resolve_interpreter(root: Path) -> str | None:
     return None
 
 
-def render_mcp_json(repo_name: str, kb_dir: str, agent_kb_rel: str,
-                    mcp_name: str = "kb") -> str:
-    # repo 字段规范名统一小写(同 index 口径), 防大小写漂移致检索 caller_repo 对不上
+def render_mcp_json(repo_name: str, kb_dir: str, agent_kb_rel: str | None,
+                    interpreter_rel: str, mcp_name: str = "kb") -> str:
+    # repo 字段规范名统一小写(同 index 口径), 防大小写漂移致检索 caller_repo 对不上。
+    # 不写 cwd: 客户端默认 cwd = .mcp.json 所在目录(业务仓根), args 里的相对
+    # --repo/--agent-kb 即按此解析; command 写仓根相对的 venv 解释器路径
+    # (同级克隆约定下形如 ../Agent-KB/.venv/...), 跨机可移植且直接可执行。
+    args = ["-m", "kb.mcp", "--repo", kb_dir]
+    if agent_kb_rel:
+        args += ["--agent-kb", agent_kb_rel]
+    args += ["--repo-name", repo_name.lower()]
     payload = {
         "mcpServers": {
             mcp_name: {
-                "command": "{interpreter}",
-                "args": ["-m", "kb.mcp", "--repo", kb_dir,
-                         "--agent-kb", agent_kb_rel, "--repo-name", repo_name.lower()],
-                "cwd": agent_kb_rel,
+                "command": interpreter_rel,
+                "args": args,
             }
         }
     }
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
-def init_repo(repo: Path, agent_kb: Path | None, kb_dir: str,
+def _biz_root(kb_base: Path) -> Path:
+    """业务仓根(写 .mcp.json、放 .git/.venv 的目录)。kb_base = kb 载体目录
+    (与 lint/index/doctor 的 --repo 约定一致: 业务仓即 docs/、Agent-KB 仓即仓根)。"""
+    kb_base = Path(kb_base)
+    g = _git_root(kb_base)
+    if g:
+        return g
+    return kb_base if (kb_base / ".git").exists() or not (kb_base / "kb").is_dir() \
+        else kb_base.parent
+
+
+def init_repo(kb_base: Path, agent_kb: Path | None, kb_dir: str,
               repo_name: str | None = None, mcp_name: str = "kb",
               force: bool = False) -> dict:
-    """写入接入仓 .mcp.json 并返回引导信息(下一步指引由调用方打印)。"""
-    repo = Path(repo)
-    root = _agent_kb_root(repo, agent_kb)
+    """写入接入仓 .mcp.json 并返回引导信息(下一步指引由调用方打印)。
+
+    `kb_base` = kb 载体目录(同 doctor); 业务仓根经 git toplevel 推导。
+    首次接入友好: kb_dir 不存在则创建骨架(可直接 `kb new`); 仓内无 .agent-kb
+    submodule 时生成单层配置(不挂 --agent-kb), 提示可后补 submodule。
+    """
+    kb_base = Path(kb_base)
+    repo = _biz_root(kb_base)
+    root = _agent_kb_root(kb_base, agent_kb)
     interp = resolve_interpreter(root)
     if interp is None:
         raise FileNotFoundError(
             f"Agent-KB venv 未装配: {root} 下无 {' / '.join(INTERPRETERS)} "
             f"(先建 venv 并 pip install -e .)")
-    if not (repo / kb_dir).is_dir():
-        raise FileNotFoundError(f"知识库目录不存在: {repo / kb_dir}")
+    created = False
+    if not (repo / kb_dir / "kb").is_dir():
+        # lint/index 的遍历约定是 <kb载体>/kb/<type>/...; 缺 kb/ 时补骨架
+        (repo / kb_dir / "kb").mkdir(parents=True, exist_ok=True)
+        created = True
     ak = Path(agent_kb) if agent_kb else repo / ".agent-kb"
-    try:
-        ak_rel = ak.resolve().relative_to(repo.resolve()).as_posix()
-    except ValueError:
-        raise FileNotFoundError(
-            f"--agent-kb 必须位于接入仓内(写进 .mcp.json 的相对 cwd): {ak}") from None
+    ak_rel: str | None = None
+    if ak.exists():
+        try:
+            ak_rel = ak.resolve().relative_to(repo.resolve()).as_posix()
+        except ValueError:
+            if agent_kb is not None:  # 显式指定的必须在仓内(要写进相对 args)
+                raise FileNotFoundError(
+                    f"--agent-kb 必须位于接入仓内(写进 .mcp.json 的相对 args): {ak}") from None
+            ak_rel = None  # 仓外的 Agent-KB: 不作为 submodule 相对路径写入
+    elif agent_kb is not None:
+        raise FileNotFoundError(f"--agent-kb 不存在(先 git submodule update --init): {ak}")
+    # 未显式指定且缺省位置不存在 = 尚未挂 submodule → 单层降级
+    # command 必须相对仓根(.mcp.json 所在目录 = 客户端默认 cwd)可直接执行
+    cmd_rel = Path(os.path.relpath(root.resolve() / interp,
+                                   repo.resolve())).as_posix()
     out = repo / ".mcp.json"
     if out.exists() and not force:
         raise FileExistsError(f"{out} 已存在(覆盖请加 --force)")
     name = (repo_name or repo.resolve().name).lower()
-    out.write_text(render_mcp_json(name, kb_dir, ak_rel, mcp_name), encoding="utf-8")
+    out.write_text(render_mcp_json(name, kb_dir, ak_rel, cmd_rel, mcp_name),
+                   encoding="utf-8")
     return {"mcp_json": str(out), "agent_kb_root": str(root),
-            "interpreter": interp, "repo_name": name}
+            "command": cmd_rel, "repo_name": name,
+            "layered": ak_rel is not None, "kb_dir_created": created}
 
 
 # ---------------- doctor ----------------
@@ -124,9 +162,7 @@ def doctor(repo: Path, agent_kb: Path | None = None,
     kb_base = Path(repo)
     add = checks.append
 
-    biz = _git_root(kb_base) or (kb_base if (kb_base / ".git").exists()
-                                 or not (kb_base / "kb").is_dir()
-                                 else kb_base.parent)
+    biz = _biz_root(kb_base)
     is_agent_kb_repo = biz.resolve() == kb_base.resolve()
     root = _agent_kb_root(kb_base, Path(agent_kb) if agent_kb else None)
 
@@ -204,12 +240,13 @@ def doctor(repo: Path, agent_kb: Path | None = None,
         try:
             cfg = json.loads(mcp.read_text(encoding="utf-8"))
             cmd = next(iter(cfg["mcpServers"].values()))["command"]
-            if cmd == "{interpreter}":
-                ok = resolve_interpreter(root) is not None
-                add(("PASS" if ok else "FAIL", ".mcp.json",
-                     "模板 OK(相对解释器)" if ok else "模板 OK 但 Agent-KB venv 缺失"))
-            else:
+            if Path(cmd).is_absolute():
                 add(("WARN", ".mcp.json", f"绝对路径解释器(建议 kb init 重生成): {cmd}"))
+            elif (biz / cmd).exists() or (biz / cmd.replace("\\", "/")).exists():
+                add(("PASS", ".mcp.json", f"相对解释器可执行: {cmd}"))
+            else:
+                add(("FAIL", ".mcp.json",
+                     f"相对解释器不可执行(venv 缺失或布局变化): {biz / cmd}"))
         except (json.JSONDecodeError, KeyError, StopIteration) as exc:
             add(("FAIL", ".mcp.json", f"解析失败: {exc}"))
     return checks

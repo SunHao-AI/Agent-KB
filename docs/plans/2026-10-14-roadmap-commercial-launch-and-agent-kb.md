@@ -70,6 +70,19 @@
     (如实 WARN 自身钩子落后母本)。7 例单测, 全仓 201 passed。
     **剩余**: 对外 quickstart + 真实新仓 dogfood; README 补 review/set-scope/export
     与 init/doctor 两新命令; venv 自动装配(现仅指引)。
+  - ~~对外 quickstart + 拿一个真实新仓 dogfood~~ ✅ 2026-10-15:
+    quickstart 并入 README("接入新仓(Quickstart, 三步)" + "审核与流转命令"两节,
+    review/set-scope/export 一并补齐)。dogfood = **pyarmor 真实仓**(github
+    SunHao-AI/pyarmor, 首次接入): init 生成单层相对配置(command
+    `../Agent-KB/.venv/Scripts/python.exe` 仓根直接可执行) → doctor 如实抓出
+    3 处接入缺口(uv venv 无 pip 致门禁依赖缺 / index 未建 / 钩子未装) → 按提示
+    `uv pip install --python` + `kb index` + `install-gate.ps1` 补齐 → doctor
+    **all green** → `kb new --generated` 沉淀真实条目 `kb-20261015-046f`
+    (uv venv 无 pip 坑, lint 抓到双 H1 修正后 0 errors) → draft 不进检索、
+    draft 索引含该条, MCP 面冒烟通过。dogfood 反推 init 修 3 处: kb/ 骨架自动
+    创建条件、command 改相对仓根直接可执行(弃 `{interpreter}` 占位与错误 cwd)、
+    kb_base/业务仓根解析统一(`_biz_root`)。10 例单测, 全仓 204 passed。
+    **剩余**: venv 自动装配(现仅指引)。
   - ~~修 `index --check` 目录名大小写环境问题~~ ✅ 2026-10-14: repo 字段统一小写规范名 (cli/layers/mcp_server 三处 `.lower()` + 新回归测试 `test_index_repo_name_case_normalized`), 本地 `Agent-KB` 下 `index --check` rc=1→rc=0, 全仓 118 passed。
   - 验收: 新仓三步接入 clone → `kb init` → `kb doctor` 全绿。
 - [ ] **B2 内容质量门** ← (无, 天然穿插活, 每批 ~20 条)

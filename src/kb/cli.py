@@ -77,22 +77,31 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_ex.add_argument("id"); p_ex.add_argument("--to-repo", required=True)
     p_ex.add_argument("--to-scope", required=True, choices=["stack", "universal"])
 
-    p_tr = sub.add_parser("trace", parents=[common])
+    # trace 独立解析: 不用 parents=[common](其 --repo 默认 "." 会静默失效);
+    # 各子命令自定义 --repo, 缺省 None = 集中读 Agent-KB 仓根 kb_root()
+    p_tr = sub.add_parser("trace")
     tr_sub = p_tr.add_subparsers(dest="trace_cmd", required=True)
     p_tl = tr_sub.add_parser("list")
+    p_tl.add_argument("--repo", default=None,
+                      help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
     p_tl.add_argument("--caller", default=None)
     p_tl.add_argument("--since", default=None, help="YYYY-MM-DD")
     p_tl.add_argument("--zero-hit", action="store_true")
     p_tl.add_argument("--limit", type=int, default=30)
     p_ts = tr_sub.add_parser("show")
     p_ts.add_argument("id")
+    p_ts.add_argument("--repo", default=None,
+                      help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
     p_te = tr_sub.add_parser("export")
     p_te.add_argument("id")
+    p_te.add_argument("--repo", default=None,
+                      help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
     p_te.add_argument("--format", default="spider", choices=["spider"])
     p_te.add_argument("-o", "--out", default=None, help="输出文件, 默认 <trace_id>.json")
 
     args = ap.parse_args(argv)
-    repo = Path(args.repo)
+    # trace 子命令 --repo 缺省 None(= kb_root()); 其余命令经 common 恒有默认 "."
+    repo = Path(args.repo) if args.repo is not None else None
 
     if args.cmd == "new":
         if args.generated or args.body_file:
@@ -220,13 +229,15 @@ def _dispatch(argv: list[str] | None = None) -> int:
             print(json.dumps(stat(repo), ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "trace":
+        # 未传 --repo 时 root=None → trace 层落到 kb_root(); 显式传入则生效
+        root = Path(args.repo) if args.repo else None
         if args.trace_cmd == "export":
             from kb.spider_export import to_record
-            ev = kbtrace.find_trace(args.id)
+            ev = kbtrace.find_trace(args.id, root=root)
             if ev is None:
                 print(f"trace not found: {args.id}", file=sys.stderr)
                 return 1
-            _, gets, _ = kbtrace.read_traces()
+            _, gets, _ = kbtrace.read_traces(root=root)
             rec = to_record(ev, [g for g in gets
                                  if g.get("trace_id") == args.id])
             out = Path(args.out) if args.out else Path(f"{args.id}.json")
@@ -235,14 +246,16 @@ def _dispatch(argv: list[str] | None = None) -> int:
             print(out)
             return 0
         if args.trace_cmd == "show":
-            ev = kbtrace.find_trace(args.id)
+            ev = kbtrace.find_trace(args.id, root=root)
             if ev is None:
                 print(f"trace not found: {args.id}", file=sys.stderr)
                 return 1
             print(json.dumps(ev, ensure_ascii=False, indent=2))
             return 0
-        searches, _, warns = kbtrace.read_traces(caller=args.caller, since=args.since,
-                                                 zero_hit=args.zero_hit, limit=args.limit)
+        searches, _, warns = kbtrace.read_traces(root=root, caller=args.caller,
+                                                 since=args.since,
+                                                 zero_hit=args.zero_hit,
+                                                 limit=args.limit)
         for w in warns:
             print(f"warning: {w}", file=sys.stderr)
         if not searches:

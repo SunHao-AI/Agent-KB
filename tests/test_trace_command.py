@@ -46,3 +46,16 @@ def test_show_found_and_missing(env, capsys):
     assert main(["trace", "show", "t-10"]) == 0
     assert json.loads(capsys.readouterr().out)["trace_id"] == "t-10"
     assert main(["trace", "show", "nope"]) == 1
+
+
+def test_list_repo_flag(tmp_path, monkeypatch, capsys):
+    # --repo 显式指定时从该根读 traces; 默认根(kb_root)保持无关且为空
+    root = tmp_path / "other-agent-kb"
+    root.mkdir()
+    unused = tmp_path / "unused-root"
+    unused.mkdir()
+    monkeypatch.setattr(trace, "kb_root", lambda: unused)
+    _seed(root)
+    assert main(["trace", "list", "--repo", str(root)]) == 0
+    out = capsys.readouterr().out
+    assert "t-10" in out and "t-11" in out

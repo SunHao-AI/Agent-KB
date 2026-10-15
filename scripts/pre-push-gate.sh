@@ -29,6 +29,30 @@ fi
 ROOT=$(git rev-parse --show-toplevel) || exit 1
 cd "$ROOT" || exit 1
 
+# ---- 单实例锁 (kb-20261015-bee9 根治): 同仓并发门禁会让多株 pytest 互踩共享 ----
+# ---- SQLite 测试库, 产生随机瞬态失败误报。锁放 git-dir 下, mkdir 原子创建;    ----
+# ---- 持锁进程已死(陈旧锁)才接管; PREPUSH_SKIP 提前退出, 不进锁不残留。        ----
+GITDIR=$(git rev-parse --git-dir) || exit 1
+GATE_LOCK="$GITDIR/pre-push-gate.lock"
+if ! mkdir "$GATE_LOCK" 2>/dev/null; then
+    other=$(cat "$GATE_LOCK/pid" 2>/dev/null)
+    if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+        echo "pre-push-gate: FAIL - 本仓已有门禁实例在跑 (pid $other), 拒绝并发。" >&2
+        echo "  并发 pytest 会互踩测试库产生假红 (kb-20261015-bee9)。等其结束或用" >&2
+        echo "  Get-CimInstance Win32_Process 匹配 pytest 确认后再推。" >&2
+        echo "  确知旧门禁已僵死: Stop-Process -Id $other; 后重推 (陈旧锁会被自动接管)。" >&2
+        exit 1
+    fi
+    echo "pre-push-gate: WARN - 发现陈旧锁 (pid=${other:-?} 已死), 接管" >&2
+    rm -rf "$GATE_LOCK" 2>/dev/null
+    mkdir "$GATE_LOCK" || {
+        echo "pre-push-gate: FAIL - 陈旧锁接管失败, 请手工删除 $GATE_LOCK 后重推。" >&2
+        exit 1
+    }
+fi
+echo $$ > "$GATE_LOCK/pid"
+trap 'rm -rf "$GATE_LOCK"' EXIT INT TERM
+
 # stdin (ref 行) 只有一份, 先缓冲下来复用
 refs=$(cat)
 

@@ -18,26 +18,33 @@ def _parts(rec: dict) -> list[tuple[str, str]]:
             ("summary", str(rec.get("summary", "")).lower())]
 
 
-def _hit(parts, q: str) -> tuple[list[str], list[list[int]]]:
-    """q 在拼接文本中的全部出现位置 + 反解命中的字段名(顺序按字段首现)。
+def _hit(parts, tokens: list[str]) -> tuple[list[str], list[list[int]]]:
+    """AND 分词匹配: 每个 token 都须出现在拼接文本中(不要求连续)。
 
-    hay 与旧实现逐字节一致: 三段无条件空格拼接(空段同样产生分隔空格)。
-    字段归属用区间相交判定(span 覆盖到分隔符即计入相邻字段)。
+    任一 token 缺位 → 返回空(整条不命中)。spans 收集全部 token 的全部
+    出现位置并按起点排序; hit_fields 按字段首现顺序。hay 拼接与旧实现一致
+    (三段无条件空格拼接, 空段同样产生分隔空格)。
     """
     hay, bounds, pos = " ".join(text for _, text in parts), [], 0
     for name, text in parts:
         bounds.append((name, pos, pos + len(text)))
         pos += len(text) + 1
-    fields: list[str] = []
     spans: list[list[int]] = []
-    i = hay.find(q)
-    while i >= 0:
-        j = i + len(q)
-        spans.append([i, j])
+    for tok in tokens:
+        tok_spans = []
+        i = hay.find(tok)
+        while i >= 0:
+            tok_spans.append([i, i + len(tok)])
+            i = hay.find(tok, i + 1)
+        if not tok_spans:
+            return [], []
+        spans.extend(tok_spans)
+    spans.sort()
+    fields: list[str] = []
+    for i, j in spans:
         for name, s, e in bounds:
             if i < e and j > s and name not in fields:
                 fields.append(name)
-        i = hay.find(q, i + 1)
     return fields, spans
 
 
@@ -63,7 +70,7 @@ def evaluate(repo_root: Path, *, type=None, domain=None, tag=None, scope=None,
     report 供 trace 埋点消费; rows 与改造前 search() 元素同形同序。
     """
     recs = _load(repo_root)
-    q = query.lower() if query else None
+    tokens = query.lower().split() if query else []
     rows: list[dict] = []
     matched: list[dict] = []
     n_filter = n_query = 0
@@ -71,8 +78,8 @@ def evaluate(repo_root: Path, *, type=None, domain=None, tag=None, scope=None,
         if _filtered_out(rec, type, domain, tag, scope, status, confidence):
             n_filter += 1
             continue
-        fields, spans = ([], []) if q is None else _hit(_parts(rec), q)
-        if q is not None and not fields:
+        fields, spans = ([], []) if not tokens else _hit(_parts(rec), tokens)
+        if tokens and not fields:
             n_query += 1
             continue
         rows.append(rec)

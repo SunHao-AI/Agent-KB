@@ -82,34 +82,71 @@ def test_case_insensitive(tmp_path):
     assert rep["matched"][0]["hit_fields"] == ["title"]
 
 
-def test_leading_space_query_hits_tags_segment(tmp_path):
-    # 发现1: query 带前导空格且唯一出现恰从 title/tags 分隔符开始, 旧实现应命中
+def test_leading_space_query_is_tokenized(tmp_path):
+    # AND 分词语义: 前后空白是分词符, " vite" 视为单 token "vite"
     _mk(tmp_path, [_rec(1, title="a", tags=("vite",), summary="")])
     _, rep = search.evaluate(tmp_path, query=" vite")
     assert rep["rejected"] == {"filter": 0, "query": 0}
     m = rep["matched"][0]
-    # hay = "a vite "(无条件拼接), 旧实现 " vite" in hay → span [1, 6], 归 tags
-    assert m["hit_spans"] == [[1, 6]]
+    # hay = "a vite "; token "vite" → span [2, 6], 归 tags
+    assert m["hit_spans"] == [[2, 6]]
     assert m["hit_fields"] == ["tags"]
 
 
-def test_empty_title_boundary_space_matches_legacy(tmp_path):
-    # 发现2: title 为空串时 hay 须与旧实现无条件拼接逐字节一致(" vite ")
+def test_empty_title_token_still_matches(tmp_path):
+    # title 为空串不影响分词匹配; token 在 tags 段命中
     _mk(tmp_path, [_rec(1, title="", tags=("vite",), summary="")])
     _, rep = search.evaluate(tmp_path, query=" vite")
     m = rep["matched"][0]
-    assert m["hit_spans"] == [[0, 5]]
+    assert m["hit_spans"] == [[1, 5]]
     assert m["hit_fields"] == ["tags"]
 
 
 def test_span_across_fields_counts_both(tmp_path):
-    # 跨字段 span: query 横跨 title→tags 边界, 两个字段都计入 hit_fields
+    # AND 分词: 两 token 都命中才算; spans 按位置排序合并
     _mk(tmp_path, [_rec(1, title="vite hmr", tags=("guide",), summary="")])
     _, rep = search.evaluate(tmp_path, query="hmr gui")
     m = rep["matched"][0]
-    # hay = "vite hmr guide "; title [0,8) tags [9,14); span [5,12) 横跨边界
-    assert m["hit_spans"] == [[5, 12]]
+    # hay = "vite hmr guide "; "hmr"[5,8) title, "gui"[9,12) tags
+    assert m["hit_spans"] == [[5, 8], [9, 12]]
     assert m["hit_fields"] == ["title", "tags"]
+
+
+def test_multiword_and_semantics(tmp_path):
+    # 核心新语义: 多词须全部命中(不要求连续)——原零命中场景现在可命中
+    _mk(tmp_path, [
+        _rec(1, title="license 授权服务", tags=("license",), summary="设备授权"),
+        _rec(2, title="license 校验", tags=("license",), summary="签名校验"),
+        _rec(3, title="无关", tags=("x",), summary="两个词都没提到"),
+    ])
+    _, rep = search.evaluate(tmp_path, query="license 授权")
+    assert [m["id"] for m in rep["matched"]] == ["kb-x1"]  # 仅同时含两词的
+    assert rep["rejected"] == {"filter": 0, "query": 2}
+
+
+def test_token_missing_means_no_match(tmp_path):
+    # AND: 任一词不出现即整条不命中
+    _mk(tmp_path, [_rec(1, title="vite hmr 抖动", tags=("vite",), summary="")])
+    _, rep = search.evaluate(tmp_path, query="vite webpack")
+    assert rep["matched"] == [] and rep["rejected"]["query"] == 1
+
+
+def test_multiword_spans_cover_all_tokens(tmp_path):
+    _mk(tmp_path, [_rec(1, title="redis 连接池", tags=("redis",), summary="池耗尽告警")])
+    _, rep = search.evaluate(tmp_path, query="redis 告警")
+    m = rep["matched"][0]
+    # "redis" 同时出现在 title 与 tags 两段 → 三字段全计入
+    assert m["hit_fields"] == ["title", "tags", "summary"]
+    assert m["hit_spans"][0] == [0, 5]   # "redis" title 段
+    assert m["hit_spans"][-1][0] > m["hit_spans"][0][1]  # "告警"在后
+
+
+def test_whitespace_only_query_matches_all(tmp_path):
+    # 空白 query 分词后无 token → 视同无 query, 全通过
+    _mk(tmp_path, [_rec(1), _rec(2)])
+    _, rep = search.evaluate(tmp_path, query="   ")
+    assert rep["rejected"] == {"filter": 0, "query": 0}
+    assert len(rep["matched"]) == 2
 
 
 def test_missing_index_returns_empty(tmp_path):

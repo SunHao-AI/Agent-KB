@@ -295,6 +295,10 @@ def _dispatch(argv: list[str] | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows 控制台默认 GBK, 条目含 emoji 时 print 直接崩; 统一切 UTF-8。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     try:
         return _dispatch(argv)
     except DuplicateCandidate as exc:

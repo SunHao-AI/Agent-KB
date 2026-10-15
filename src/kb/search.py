@@ -18,18 +18,23 @@ def _parts(rec: dict) -> list[tuple[str, str]]:
 
 
 def _hit(parts, q: str) -> tuple[list[str], list[list[int]]]:
-    """q 在拼接文本中的全部出现位置 + 反解命中的字段名(顺序按字段首现)。"""
-    hay, bounds = "", []
+    """q 在拼接文本中的全部出现位置 + 反解命中的字段名(顺序按字段首现)。
+
+    hay 与旧实现逐字节一致: 三段无条件空格拼接(空段同样产生分隔空格)。
+    字段归属用区间相交判定(span 覆盖到分隔符即计入相邻字段)。
+    """
+    hay, bounds, pos = " ".join(text for _, text in parts), [], 0
     for name, text in parts:
-        hay = text if not hay else hay + " " + text
-        bounds.append((name, len(hay) - len(text), len(hay)))
+        bounds.append((name, pos, pos + len(text)))
+        pos += len(text) + 1
     fields: list[str] = []
     spans: list[list[int]] = []
     i = hay.find(q)
     while i >= 0:
-        spans.append([i, i + len(q)])
+        j = i + len(q)
+        spans.append([i, j])
         for name, s, e in bounds:
-            if s <= i < e and name not in fields:
+            if i < e and j > s and name not in fields:
                 fields.append(name)
         i = hay.find(q, i + 1)
     return fields, spans

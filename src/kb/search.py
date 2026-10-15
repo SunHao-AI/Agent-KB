@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import json
 from pathlib import Path
 
@@ -51,9 +52,7 @@ def _filtered_out(rec, type, domain, tag, scope, status, confidence) -> bool:
         return True
     if status and rec["status"] != status:
         return True
-    if confidence and rec["confidence"] != confidence:
-        return True
-    return False
+    return bool(confidence and rec["confidence"] != confidence)
 
 
 def evaluate(repo_root: Path, *, type=None, domain=None, tag=None, scope=None,

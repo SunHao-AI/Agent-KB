@@ -27,7 +27,7 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
     def kb_search(query: str | None = None, type: str | None = None,
                   domain: str | None = None, tag: str | None = None,
                   scope: str | None = None, limit: int = 10) -> str:
-        """检索知识库(项目层优先, 再通用层)。只返回元数据+摘要, 不返回正文。
+        """检索知识库(项目层优先, 再通用层)。只返回元数据+摘要+路径, 不返回正文。
         draft 条目永不返回。命中后再用 kb_get 读全文。"""
         t0 = time.perf_counter()
         rows, reports = search_layers_report(

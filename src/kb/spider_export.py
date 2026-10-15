@@ -37,11 +37,14 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
     layers_note = " · ".join(
         f"{l['repo']} 扫描{l['scanned']} 过滤-{l['rejected']['filter']} 词-{l['rejected']['query']}"
         for l in search_ev.get("layers", []))
+    truncated = next((l["repo"] for l in search_ev.get("layers", [])
+                      if l.get("truncated_at_limit")), None)
     n = len(events)
     config = {
         "title": f"KB 命中回放 {search_ev['trace_id']}",
         "subtitle": (f"query: {search_ev.get('query') or '-'} | {layers_note} | "
                      f"limit={search_ev.get('limit')}"
+                     + (f" | 截断于{truncated}层" if truncated else "")
                      + (" | 0 命中" if n == 0 else "")),
         "modelName": f"{search_ev.get('caller_repo', '?')} · {ts}",
         "layout": "landscape", "unit": "task", "routes": ROUTES,

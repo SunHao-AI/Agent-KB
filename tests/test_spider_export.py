@@ -69,6 +69,15 @@ def test_zero_hit_trace_valid():
     assert "0 命中" in rec["config"]["subtitle"]
 
 
+def test_subtitle_truncation_note():
+    tr = _trace()
+    tr["layers"][1]["truncated_at_limit"] = True
+    rec = spider_export.to_record(tr, _gets())
+    assert " | 截断于kb层" in rec["config"]["subtitle"]
+    # 无截断层时不追加注记
+    assert "截断于" not in spider_export.to_record(_trace(), _gets())["config"]["subtitle"]
+
+
 def test_unrelated_get_ignored():
     rec = spider_export.to_record(_trace(), _gets())   # kb-z/t-9 不在本 trace
     assert {e["id"] for e in rec["events"]} == {"kb-a", "kb-b"}

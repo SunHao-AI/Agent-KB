@@ -1,19 +1,22 @@
 from __future__ import annotations
+
 import argparse
 import datetime as dt
 import json
 import sys
+import time
 from pathlib import Path
-from kb.new_entry import create_entry
-from kb.gate import (create_draft, review as gate_review,
-                     set_scope as gate_set_scope, export_entry,
-                     DuplicateCandidate, GateViolation)
-from kb.layers import search_layers, get_layered, related_layers
-from kb.lint import lint_repo
+
+from kb import trace as kbtrace
+from kb.gate import DuplicateCandidate, GateViolation, create_draft, export_entry
+from kb.gate import review as gate_review
+from kb.gate import set_scope as gate_set_scope
 from kb.index import build_indexes, check_indexes
-from kb.search import search
-from kb.query import get_entry, related, stat, due_review, needs_scope
+from kb.layers import get_layered, related_layers, search_layers_report
+from kb.lint import lint_repo
+from kb.new_entry import create_entry
 from kb.promote import promote
+from kb.query import due_review, get_entry, needs_scope, related, stat
 
 
 def _dispatch(argv: list[str] | None = None) -> int:
@@ -51,6 +54,11 @@ def _dispatch(argv: list[str] | None = None) -> int:
     for flag in ("type", "domain", "tag", "scope", "status", "confidence", "query"):
         p_s.add_argument(f"--{flag}", default=None)
     p_s.add_argument("--limit", type=int, default=20)
+    g = p_s.add_mutually_exclusive_group()
+    g.add_argument("--trace", dest="trace_on", action="store_true", default=None,
+                   help="本次强制记录检索 trace")
+    g.add_argument("--no-trace", dest="trace_on", action="store_false",
+                   help="本次强制不记录检索 trace")
 
     p_show = sub.add_parser("show", parents=[common]); p_show.add_argument("id")
     p_rel = sub.add_parser("related", parents=[common]); p_rel.add_argument("id")
@@ -139,15 +147,23 @@ def _dispatch(argv: list[str] | None = None) -> int:
         print(f"wrote {md}\nwrote {jl}\nwrote {dj}")
         return 0
     if args.cmd == "search":
-        if args.agent_kb:
-            layers = [repo] + [Path(p) for p in args.agent_kb]
-            res = search_layers(layers, type=args.type, domain=args.domain, tag=args.tag,
-                                scope=args.scope, status=args.status,
-                                confidence=args.confidence, query=args.query, limit=args.limit)
-        else:
-            res = search(repo, type=args.type, domain=args.domain, tag=args.tag,
-                         scope=args.scope, status=args.status, confidence=args.confidence,
-                         query=args.query, limit=args.limit)
+        t0 = time.perf_counter()
+        layers_list = [repo] + [Path(p) for p in args.agent_kb]
+        res, reports = search_layers_report(
+            layers_list, type=args.type, domain=args.domain, tag=args.tag,
+            scope=args.scope, status=args.status, confidence=args.confidence,
+            query=args.query, limit=args.limit)
+        if kbtrace.trace_enabled(cli_flag=args.trace_on):
+            ev = kbtrace.build_search_event(
+                trace_id=kbtrace.new_trace_id(), source="cli",
+                caller_repo=repo.resolve().name.lower(), query=args.query,
+                filters={"type": args.type, "domain": args.domain, "tag": args.tag,
+                         "scope": args.scope, "status": args.status,
+                         "confidence": args.confidence},
+                limit=args.limit, reports=reports,
+                returned=[r["id"] for r in res],
+                duration_ms=round((time.perf_counter() - t0) * 1000))
+            kbtrace.append_event(ev)
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "show":

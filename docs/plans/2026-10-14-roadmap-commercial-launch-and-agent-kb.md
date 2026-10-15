@@ -81,8 +81,13 @@
     (uv venv 无 pip 坑, lint 抓到双 H1 修正后 0 errors) → draft 不进检索、
     draft 索引含该条, MCP 面冒烟通过。dogfood 反推 init 修 3 处: kb/ 骨架自动
     创建条件、command 改相对仓根直接可执行(弃 `{interpreter}` 占位与错误 cwd)、
-    kb_base/业务仓根解析统一(`_biz_root`)。10 例单测, 全仓 204 passed。
-    **剩余**: venv 自动装配(现仅指引)。
+    kb_base/业务仓根解析统一(`_biz_root`)。第二轮 dogfood = **FastAPI-Hao**
+    (内网 remote 日常仓, 验证 quickstart 可复制性): 又一 uv venv(uv=0.7.11,
+    有 pytest 无 ruff), 印证 uv 是本机普遍场景 → doctor 装包引导按 venv 类型
+    精准化(`_is_uv_venv` 探 pyvenv.cfg `uv =` 行, uv 给 `uv pip install
+    --python`, 标准 venv 给 `python -m pip`; 即"venv 装配引导"落地)。12 例单测,
+    全仓 206 passed。
+    **剩余**: 无(venv 自动装配以 doctor 精准命令形态落地)。
   - ~~修 `index --check` 目录名大小写环境问题~~ ✅ 2026-10-14: repo 字段统一小写规范名 (cli/layers/mcp_server 三处 `.lower()` + 新回归测试 `test_index_repo_name_case_normalized`), 本地 `Agent-KB` 下 `index --check` rc=1→rc=0, 全仓 118 passed。
   - 验收: 新仓三步接入 clone → `kb init` → `kb doctor` 全绿。
 - [ ] **B2 内容质量门** ← (无, 天然穿插活, 每批 ~20 条)

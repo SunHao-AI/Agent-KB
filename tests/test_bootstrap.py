@@ -3,7 +3,14 @@ import pathlib
 
 import pytest
 
-from kb.bootstrap import doctor, doctor_exit_code, init_repo, render_mcp_json
+from kb.bootstrap import (
+    _install_cmd,
+    _is_uv_venv,
+    doctor,
+    doctor_exit_code,
+    init_repo,
+    render_mcp_json,
+)
 
 
 @pytest.fixture
@@ -115,3 +122,30 @@ def test_doctor_dead_relative_command_fails(fake_layout):
         encoding="utf-8")
     checks = doctor(biz / "docs", agent_kb=ak)
     assert any(lvl == "FAIL" and n == ".mcp.json" for lvl, n, _ in checks)
+
+
+def test_install_cmd_uv_vs_std(tmp_path):
+    biz = tmp_path / "biz"
+    (biz / ".venv").mkdir(parents=True)
+    # 标准 venv → python -m pip
+    (biz / ".venv" / "pyvenv.cfg").write_text("home = x\n", encoding="utf-8")
+    assert _is_uv_venv(biz) is False
+    assert "-m pip install" in _install_cmd(biz, ".venv/bin/python", "pytest")
+    # uv venv → uv pip install --python (uv venv 无 pip, 给 pip 是死路)
+    (biz / ".venv" / "pyvenv.cfg").write_text("home = x\nuv = 0.9.17\n", encoding="utf-8")
+    assert _is_uv_venv(biz) is True
+    cmd = _install_cmd(biz, ".venv/Scripts/python.exe", "pytest ruff")
+    assert cmd.startswith("uv pip install pytest ruff --python ")
+    assert cmd.endswith("biz/.venv/Scripts/python.exe")  # 绝对解释器路径, 可直接粘贴
+
+
+def test_doctor_gate_missing_dep_hints_uv_command(fake_layout, monkeypatch):
+    biz, ak = fake_layout
+    from kb import bootstrap
+    monkeypatch.setattr(bootstrap, "_mod_ok", lambda *a, **k: False)  # 全缺依赖
+    (biz / ".venv" / "Scripts").mkdir(parents=True)
+    (biz / ".venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+    (biz / ".venv" / "pyvenv.cfg").write_text("uv = 0.7.11\n", encoding="utf-8")
+    checks = doctor(biz / "docs", agent_kb=ak)
+    pytest_line = next(msg for lvl, n, msg in checks if n == "gate pytest")
+    assert "uv pip install" in pytest_line and "pip install -e" not in pytest_line

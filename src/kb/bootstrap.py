@@ -147,6 +147,23 @@ def _mod_ok(root: Path, interp: str, mod: str) -> bool:
         return False
 
 
+def _is_uv_venv(venv_root: Path) -> bool:
+    """uv 创建的 venv 默认不 bootstrap pip(pyvenv.cfg 带 `uv = <ver>` 行),
+    装包必须走 `uv pip install --python`; 给 pip 命令会把人引向死路。"""
+    cfg = Path(venv_root) / ".venv" / "pyvenv.cfg"
+    if not cfg.exists():
+        return False
+    return "uv" in cfg.read_text(encoding="utf-8", errors="replace")
+
+
+def _install_cmd(venv_root: Path, interp: str, pkgs: str) -> str:
+    """缺失依赖的装包命令, 按 venv 装配通道(uv/标准)给出可直接复制的形态。"""
+    py = (Path(venv_root) / interp).as_posix()
+    if _is_uv_venv(venv_root):
+        return f"uv pip install {pkgs} --python {py}"
+    return f"{py} -m pip install {pkgs}"
+
+
 def doctor(repo: Path, agent_kb: Path | None = None,
            current_python: bool = False) -> list[tuple[str, str, str]]:
     """返回 [(级别, 检查名, 说明)]; 级别 ∈ PASS/WARN/FAIL。永不抛异常。
@@ -177,11 +194,15 @@ def doctor(repo: Path, agent_kb: Path | None = None,
     ginterp = resolve_interpreter(biz) or (interp if is_agent_kb_repo else None)
     gate_root = biz if resolve_interpreter(biz) else (root if is_agent_kb_repo else biz)
     if ginterp:
-        for mod, lvl, hint in (("pytest", "FAIL", "门禁硬依赖: pip install -e '.[dev]'"),
-                               ("ruff", "WARN", "门禁 lint 依赖, 缺失时 lint 环节降级"),
-                               ("pytest_cov", "WARN", "缺失时 coverage 报告降级(非门禁项)")):
+        dev = _install_cmd(gate_root, ginterp, "-e '.[dev]'") \
+            if gate_root.resolve() == root.resolve() \
+            else _install_cmd(gate_root, ginterp, "pytest ruff pytest-cov")
+        for mod, lvl, why in (("pytest", "FAIL", "门禁硬依赖"),
+                              ("ruff", "WARN", "门禁 lint 依赖, 缺失时 lint 环节降级"),
+                              ("pytest_cov", "WARN", "coverage 报告降级(非门禁项)")):
             ok = _mod_ok(gate_root, ginterp, mod)
-            add((("PASS" if ok else lvl), f"gate {mod}", "ok" if ok else hint))
+            add((("PASS" if ok else lvl), f"gate {mod}",
+                 "ok" if ok else f"{why}; 补装: {dev}"))
     else:
         add(("FAIL", "gate venv", f"{biz} 缺 .venv, 门禁无法运行"))
 

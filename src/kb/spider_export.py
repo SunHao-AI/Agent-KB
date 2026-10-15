@@ -10,11 +10,20 @@ ROUTES = {"code": {"label": "项目层命中", "color": "#42D6A4"},
           "model": {"label": "通用层命中", "color": "#F28A76"},
           "you": {"label": "已读消费", "color": "#F0CA57"}}
 _LAYER_ROUTE = {0: "code", 1: "model"}   # reports 顺序: 项目层在前(spec §7)
+# 对端 lib/replay.js + lib/config.js 硬限制(真机校准 2026-10-15):
+# log 批 1..100 事件; subtitle≤160; duration=末条 at。
+_BATCH = 100
+_SUBTITLE_MAX = 160
+_T_CONFIG, _T_RUNNING, _T_DONE, _T_END = 0.0, 0.5, 1.5, 2.5
 
 
 def _detail(m: dict) -> str:
     fields = "+".join(m["hit_fields"]) or "filter"
     return f"hit: {fields} @ {m['hit_spans']}"
+
+
+def _chunks(xs: list) -> list[list]:
+    return [xs[i:i + _BATCH] for i in range(0, len(xs), _BATCH)]
 
 
 def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
@@ -41,23 +50,33 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
                       if l.get("truncated_at_limit")), None)
     n = len(events)
     config = {
-        "title": f"KB 命中回放 {search_ev['trace_id']}",
-        "subtitle": (f"query: {search_ev.get('query') or '-'} | {layers_note} | "
-                     f"limit={search_ev.get('limit')}"
-                     + (f" | 截断于{truncated}层" if truncated else "")
-                     + (" | 0 命中" if n == 0 else "")),
-        "modelName": f"{search_ev.get('caller_repo', '?')} · {ts}",
+        "title": f"KB 命中回放 {search_ev['trace_id']}"[:80],
+        "subtitle": ((f"query: {search_ev.get('query') or '-'} | {layers_note} | "
+                      f"limit={search_ev.get('limit')}"
+                      + (f" | 截断于{truncated}层" if truncated else "")
+                      + (" | 0 命中" if n == 0 else ""))[:_SUBTITLE_MAX]),
+        "modelName": f"{search_ev.get('caller_repo', '?')} · {ts}"[:80],
         "layout": "landscape", "unit": "task", "routes": ROUTES,
     }
-    log = [{"revision": 1, "at": 0.0, "kind": "config", "config": config}]
+    # 对端契约: log 项用 type; configure/events/complete; events 批 1..100;
+    # revision 严格递增, at 非递减; 空批非法。
+    log = [{"revision": 1, "at": _T_CONFIG, "type": "configure", "config": config}]
+    rev = 1
     if events:
-        log.append({"revision": 2, "at": 0.5, "kind": "events",
-                    "events": [dict(e, status="running") for e in events
-                               if e["route"] != "you"]})
-        log.append({"revision": 3, "at": 1.5, "kind": "events",
-                    "events": [dict(e, status="completed") for e in events]})
-    log.append({"revision": len(log) + 1, "at": 2.5, "kind": "complete",
+        running = [dict(e, status="running") for e in events if e["route"] != "you"]
+        for batch in _chunks(running):
+            rev += 1
+            log.append({"revision": rev, "at": _T_RUNNING, "type": "events",
+                        "events": batch})
+        for batch in _chunks(events):
+            rev += 1
+            log.append({"revision": rev, "at": _T_DONE, "type": "events",
+                        "events": [dict(e, status="completed") for e in batch]})
+    rev += 1
+    log.append({"revision": rev, "at": _T_END, "type": "complete",
                 "status": "completed"})
-    return {"format": FORMAT, "initialConfig": config, "config": config,
+    return {"format": FORMAT, "version": 1, "id": search_ev["trace_id"],
+            "status": "completed", "duration": _T_END,
+            "initialConfig": config, "config": config,
             "events": events, "log": log,
             "consumed": sorted(consumed)}

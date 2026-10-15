@@ -98,6 +98,64 @@ def env(tmp_path, monkeypatch):
     return root
 
 
+def test_record_matches_validator_contract():
+    """对端 validateRecord 硬要求: version/duration/status + log type 字段。"""
+    rec = spider_export.to_record(_trace(), _gets())
+    assert rec["version"] == 1
+    assert rec["status"] == "completed"
+    assert isinstance(rec["duration"], (int, float))
+    assert rec["duration"] >= max(e["at"] for e in rec["log"])
+    assert {e["type"] for e in rec["log"]} <= {"configure", "events", "complete"}
+    assert rec["log"][0]["type"] == "configure"
+    assert rec["log"][-1]["type"] == "complete"
+    # 每条 events 批 1..100
+    for e in rec["log"]:
+        if e["type"] == "events":
+            assert 1 <= len(e["events"]) <= 100
+
+
+def test_subtitle_within_160():
+    tr = _trace()
+    tr["layers"][0]["repo"] = "R" * 200
+    rec = spider_export.to_record(tr, _gets())
+    assert len(rec["config"]["subtitle"]) <= 160
+
+
+def test_all_consumed_no_empty_running_batch():
+    tr = _trace()
+    tr["returned"] = ["kb-a", "kb-b"]
+    gets = [{"kind": "get", "trace_id": "t-1", "id": "kb-a", "caller_repo": "w",
+             "layer": "docs", "ok": True, "source": "mcp", "ts": "x"},
+            {"kind": "get", "trace_id": "t-1", "id": "kb-b", "caller_repo": "w",
+             "layer": "kb", "ok": True, "source": "mcp", "ts": "x"}]
+    rec = spider_export.to_record(tr, gets)
+    # 无 running 事件时不得产生空 events 批
+    for e in rec["log"]:
+        if e["type"] == "events":
+            assert len(e["events"]) >= 1
+
+
+def test_events_chunked_over_100():
+    tr = _trace()
+    ids = [f"kb-{i}" for i in range(150)]
+    tr["returned"] = ids
+    tr["layers"] = [{"repo": "docs", "scanned": 400,
+                     "rejected": {"filter": 0, "query": 250},
+                     "matched": [{"id": i, "title": f"t{i}", "scope": "project",
+                                   "confidence": "verified", "hit_fields": ["title"],
+                                   "hit_spans": [[0, 1]], "rank": n}
+                                  for n, i in enumerate(ids)],
+                     "taken": 150, "truncated_at_limit": False}]
+    rec = spider_export.to_record(tr, [])
+    assert len(rec["events"]) == 150
+    ev_batches = [e for e in rec["log"] if e["type"] == "events"]
+    assert all(len(b["events"]) <= 100 for b in ev_batches)
+    # completed 批合计覆盖 150 个唯一 id
+    done = [b for b in ev_batches if all(x["status"] == "completed" for x in b["events"])]
+    seen = {x["id"] for b in done for x in b["events"]}
+    assert seen == set(ids)
+
+
 def test_cli_export(env, tmp_path, capsys):
     from kb import trace as tr
     from kb.cli import main

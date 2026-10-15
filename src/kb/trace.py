@@ -129,3 +129,32 @@ def latest_search_id(caller_repo: str, root: Path | None = None) -> str | None:
     searches, _, _ = _iter_raw(Path(root) if root else kb_root())
     hits = _newest_first([s for s in searches if s.get("caller_repo") == caller_repo])
     return hits[0].get("trace_id") if hits else None
+
+
+def _now() -> str:
+    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def build_search_event(*, trace_id: str, source: str, caller_repo: str,
+                       query: str | None, filters: dict, limit: int,
+                       reports: list[dict], returned: list[str],
+                       duration_ms: int, ts: str | None = None) -> dict:
+    """逐层报告 → search 事件(字段序即 spec §4.4 schema)。只取元数据, 不带正文。"""
+    return {
+        "kind": "search", "trace_id": trace_id, "ts": ts or _now(), "source": source,
+        "caller_repo": caller_repo, "query": query,
+        "filters": {k: filters.get(k) for k in
+                    ("type", "domain", "tag", "scope", "status", "confidence")},
+        "limit": limit, "duration_ms": duration_ms,
+        "layers": [{"repo": r["repo"], "scanned": r["scanned"],
+                    "rejected": r["rejected"], "matched": r["matched"],
+                    "taken": r["taken"], "truncated_at_limit": r["truncated_at_limit"]}
+                   for r in reports],
+        "returned": list(returned),
+    }
+
+
+def build_get_event(*, trace_id: str | None, source: str, caller_repo: str, id: str,
+                    layer: str | None, ok: bool, ts: str | None = None) -> dict:
+    return {"kind": "get", "trace_id": trace_id, "ts": ts or _now(), "source": source,
+            "caller_repo": caller_repo, "id": id, "layer": layer, "ok": ok}

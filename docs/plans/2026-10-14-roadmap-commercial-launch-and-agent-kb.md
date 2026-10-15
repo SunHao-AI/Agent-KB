@@ -48,11 +48,12 @@
 - [ ] **A5 backlog 尾巴收口** ← (无, 穿插)
   - 入口: `flysee-video-setting/docs/backlog/2026-10-12-授权模块后续任务.md` — T2 气隙回执计数不清零 (方案 A/B 已列)、T4 algo 测试隔离、T5 Minor 备忘。
   - 验收: 三项关闭或有理由挂账入 §6。
-- [x] **A6 最小工程门禁** ← (无, 建议最先做) ✅ 2026-10-14 完成
+- [x] **A6 最小工程门禁** ← (无, 建议最先做) ✅ 2026-10-14 完成 + 首验闭环
   - 落地: 母本 `scripts/pre-push-gate.sh` + 安装器 `scripts/install-gate.ps1` (本仓), 五仓全装 (web 仓原 LFS pre-push 保留为 `pre-push.chain` 由 launcher 串联); 增量 lint 硬门禁只查 push 范围 .py 且规则收窄 F+E9 (全仓存量 451/274/97 条挂账 §6, 全仓硬门禁会堵死 push), pytest 全量硬门禁, coverage 报告不设阈值, `PREPUSH_SKIP=1` 应急跳过。
-  - 验证: 带失败测试 hook 非零拦截 ✓ / 无变更 push 放行 ✓ / SKIP 跳过 ✓; 五仓 `.gitignore` 补 `.coverage`。
+  - 首验 (五仓 push 全绿): 门禁连拦三案 — ① Agent-KB test_cli F401; ② web 生产 `.env=enforce` 泄漏测试面 (180+ 用例 403, 修 conftest 钉 off, `ffbee7ff`); ③ 用户 S1 信封 WIP 与旧契约测试冲突 → 由此暴露设计缺陷并修正 (下条)。web 全量 729→732 passed / coverage 87%。
+  - 设计缺陷修正 (`16e083d`): lint 判定对象改为**被推 ref 内容** (`git show tip:file` 喂 ruff stdin), 工作区 WIP 不再污染; pytest/npm test 就地跑前校验测试面 (py/config) 工作区↔待推 tip 一致, 不一致即拦并给三条处置 (提交/stash/SKIP), 杜绝假绿。零风险 plumbing 合成 commit 三场景自检通过。
   - 入口: 四仓 `pyproject.toml` + git hooks。
-  - 验收: 带失败测试无法 push。 — 已在 Agent-KB 仓实测 (业务仓 pytest 全链请在宿主机终端 push 时自然验证; Agent 沙箱会拦 pytest 写文件)。
+  - 验收: 带失败测试无法 push。 ✅ 宿主机五仓 push 实测 (拦截×3 + 放行×5)。
 
 ## 3. Track B — Agent-KB 对外推广/多团队 (独立轨, 可与 A 交错)
 

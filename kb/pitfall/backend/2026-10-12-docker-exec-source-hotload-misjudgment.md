@@ -14,6 +14,7 @@ severity: medium
 confidence: verified
 created: '2026-10-12'
 updated: '2026-10-18'
+review_by: '2027-04-16'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/授权与台账.md

@@ -14,6 +14,7 @@ severity: medium
 confidence: verified
 created: '2026-09-10'
 updated: '2026-10-12'
+review_by: '2027-04-10'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/SSE与测试基建.md

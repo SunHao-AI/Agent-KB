@@ -15,6 +15,7 @@ severity: high
 confidence: verified
 created: '2026-10-11'
 updated: '2026-10-18'
+review_by: '2027-04-16'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/登录鉴权与keep-alive.md

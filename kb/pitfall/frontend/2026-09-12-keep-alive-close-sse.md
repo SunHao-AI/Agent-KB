@@ -11,6 +11,7 @@ severity: high
 confidence: verified
 created: '2026-09-12'
 updated: '2026-10-13'
+review_by: '2027-04-11'
 source:
   project: flysee_video_web
   ref: docs/known-pitfalls/frontend/SSE实时化与重连.md

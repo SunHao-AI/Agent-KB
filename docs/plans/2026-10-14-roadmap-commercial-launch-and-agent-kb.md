@@ -94,11 +94,12 @@
   - 116 条占位回填: 验证段 69 / 适用边界段 40 / 背景 4 / 解决方案 3 (fixwave-A 官方口径)。web/algo 原 known-pitfalls 约 30 条有证据可搬, 其余如实降级 probable。
   - 复用 P2 已验证流程: 子代理提案表 → 批次认定 → 落地 (账本 `.superpowers/sdd/2026-10-14-p2-scope-review/`)。
   - ~~完成前 `kb lint` 加 `--strict` 挡增量~~ ✅ 2026-10-14: `kb lint --strict` + baseline 机制落地 (`.kb-lint-baseline` 116 条存量豁免; 新 warning 即拦、已修复条目提示收缩、`--update-baseline` 固化), pre-commit kb-lint 已切 `--strict`; 2 条行为测试, 全仓 118 passed。占位分布核实 = 验证 69 / 适用边界与反例 40 / 解决方案 3 / 背景 4 (含 root-cause 文案变体), 与 fixwave-A 官方口径一致。**剩余**: 116 条回填本体 (每批 ~20 条, 复用 P2 流程)。
-  - 验收: 占位 warning 清零 + strict 门禁上线。
-- [ ] **B3 知识生命周期启用** ← B2
+  - 验收: 占位 warning 清零 + strict 门禁上线。 ✅ **2026-10-18 达成**: 两批收口(23 段真实回填 + 93 段带源锚点如实声明, 逐条回溯 flysee 源记录证实源头即无验证/边界内容), placeholder 116→0, baseline 清空, strict 通过。详见 `2026-10-18-uncompleted-tasks-inventory.md` A-12。
+- [x] **B3 知识生命周期启用** ← B2 ✅ 2026-10-18
   - `review_by` 按 confidence 分级设到期 (verified 180d / probable 90d); `kb stat --due-review` 进周期例程 (代码链已就绪, 数据零启用)。
   - 非 pitfall 七类至少启用 decision + howto 两类试点, 破 195 条单类单薄感。
   - 验收: due-review 队列非空且每周期有人清; 两类新 type 各有真实条目。
+  - **完成记录 (2026-10-18)**: ① 197 条全量 `review_by` = updated + 分级(verified 180d / probable 90d), 另从「验证段无源记载」probable 池(54 条)等距抽 **10 条设 review_by=2026-11-01 作首批复核样本**——启用即满足"队列非空"(首批 10 条已入队); ② 周期例程 = **cron 每周一 09:00 自动跑 `kb stat --due-review` 并报告/提示处理**(schedule id `e936cd30`), 处置口径: 有效→刷 updated+重设 review_by, 失效→`kb review --to deprecated`; ③ **decision 试点首条** `kb-20261019-b0f6`「MCP 传输选 stdio 无鉴权的信任域边界与重开条件」(正文全部取自 P1 spec §13 既有决策与 B4 触发器语境, proposed→accepted 经用户会话内授权代行终审, review_by=2027-01-17); howto 侧已有真实条目 `kb-20261015-9e2c`(kb trace)。lint --strict / index --check / 206 tests 全绿。
 - [ ] **B4 多团队协作套件** ← **触发器: 第一个真实外部用户出现** (设触发器不设日历)
   - MCP HTTP 传输 + token 鉴权 (多团队远端使用打破 P0 spec §13 "同信任域"前提, 届时重开该决策)。
   - 多团队 proposed 双阶审批流设计 (先 spec 后码, 走 SDD)。

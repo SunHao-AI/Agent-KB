@@ -14,6 +14,7 @@ severity: medium
 confidence: probable
 created: '2026-09-12'
 updated: '2026-10-18'
+review_by: '2027-01-16'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/上传与文件处理.md

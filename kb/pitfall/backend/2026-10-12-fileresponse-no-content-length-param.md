@@ -16,6 +16,7 @@ severity: high
 confidence: verified
 created: '2026-09-12'
 updated: '2026-10-13'
+review_by: '2027-04-11'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/性能与容错优化.md

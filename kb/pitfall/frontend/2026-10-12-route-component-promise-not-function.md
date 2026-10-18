@@ -14,6 +14,7 @@ severity: medium
 confidence: probable
 created: '2026-09-01'
 updated: '2026-10-18'
+review_by: '2026-11-01'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/路由与导航.md

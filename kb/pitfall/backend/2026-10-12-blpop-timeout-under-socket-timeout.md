@@ -15,6 +15,7 @@ severity: medium
 confidence: probable
 created: '2026-10-11'
 updated: '2026-10-18'
+review_by: '2027-01-16'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/任务通道与密钥自检.md

@@ -10,6 +10,7 @@ status: accepted
 confidence: verified
 created: '2026-10-14'
 updated: '2026-10-14'
+review_by: '2027-04-12'
 severity: medium
 source:
   project: agent-kb

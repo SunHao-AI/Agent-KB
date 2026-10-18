@@ -14,6 +14,7 @@ severity: high
 confidence: verified
 created: '2026-09-01'
 updated: '2026-10-12'
+review_by: '2027-04-10'
 related:
 - kb-20261012-367e
 source:

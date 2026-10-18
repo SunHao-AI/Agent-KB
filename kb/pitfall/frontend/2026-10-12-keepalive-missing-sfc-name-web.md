@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/登录鉴权与keep-alive.md
@@ -38,7 +38,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段第 4 点提取）构建后 `grep 'name:"Dashboard"' dist/static/js` 确认 setup-extend 已把 name 编译进组件选项（KeepAlive 的 `getComponentName` 读 `Component.name`）；`grep 'el-loading-mask{background-color:transparent' dist/static/css` 确认样式入包。
 
 ## 适用边界与反例
 

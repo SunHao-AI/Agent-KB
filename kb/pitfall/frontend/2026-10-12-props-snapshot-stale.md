@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-07'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/表单交互与数据绑定.md
@@ -40,7 +40,7 @@ Vue `<script setup>` 里 `props.classNames` 是**只读 snapshot**；组件内 `
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条背景段与边界段提取）双写场景下点选后 UI 表格行内英文名与 `form.models.first_model.EN_name` 实时一致（不再出现"UI 显示 `main_road`、store 已是 `main_road2`"）；评审时 grep 子组件内 snapshot 字段赋值来源，确认无"emit 依赖回滚 snapshot"的路径。
 
 ## 适用边界与反例
 

@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: verified
 created: '2026-09-10'
-updated: '2026-10-13'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/性能与容错优化.md
@@ -31,7 +31,11 @@ uvicorn `--reload` 的 WatchFiles 检测到后端文件变更即重启 worker, �
 
 ## 解决方案
 
-<!-- 待补: 原始记录未含解决方案 -->
+（自本条边界段提取）
+
+- 看到 dev 环境 `ERR_ABORTED` 先查两件事：后端日志该 URL 的状态码 + 是否有 `Reloading...`。两者同时满足就是热重载噪声，不用改代码。
+- 不要在验收期间随手编辑 backend 文件；要做埋点就一次性改完再测，否则每写一次盘都会制造一批假失败。
+- 想彻底消噪：把验收请求挪到不活跃改码的时段，或临时把 backend 起成无 reload（`uvicorn backend.main:app`）。
 
 ## 验证
 

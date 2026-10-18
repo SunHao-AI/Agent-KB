@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: verified
 created: '2026-10-12'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/授权与台账.md
@@ -23,7 +23,7 @@ source:
 
 ## 背景 / 现象
 
-<!-- 待补: 原始记录未含背景/现象(原文以根因开篇) -->
+（自本条根因段提取）web 签名侧与 setting 校验侧各自单测全绿，但端到端一拼即全红：对端上报的真实履历链全部被判 `chain_broken`；链首 prev 的取值两侧也不一致（`""` vs `"0"*64`）。
 
 ## 根因
 

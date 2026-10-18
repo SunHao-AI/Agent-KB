@@ -14,7 +14,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-22'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/构建工具与开发流程.md
@@ -45,7 +45,7 @@ docker run --rm -v flysee-video-setting_flysee-video-setting-node_modules:/mnt/n
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段提取）两方案均已实测：方案 1 `npm ci` 691 包 2 分钟成功，`docker start` 后 vite 2.8s ready；方案 2 宿主 `npm run dev` 起 vite 经代理访问后端正常。
 
 ## 适用边界与反例
 

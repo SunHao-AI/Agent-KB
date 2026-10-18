@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-12'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/应用包闭环形态.md
@@ -37,7 +37,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条背景段与方案段提取）`npm run build:prod` exit 0 且产物含 `suites-*.js` 即为实证（reviewer 担心的 `Setting is not defined` 并未发生）；替换图标后全局 grep 旧图标名确认仓内引用已全部处理。
 
 ## 适用边界与反例
 

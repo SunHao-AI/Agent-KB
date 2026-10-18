@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: verified
 created: '2026-09-03'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/密钥与授权轮换.md
@@ -23,7 +23,7 @@ source:
 
 ## 背景 / 现象
 
-<!-- 待补: 原始记录未含背景/现象(原文以根因开篇) -->
+（自本条根因段提取）v1 授权体系下签名密钥是单文件，轮换密钥会让全网已分发客户端 token 立即全部验签失败，等于"换密钥 = 全网断服"；验签侧（algorithm 引擎、Phase 2 客户端）也只持有单公钥，无任何过渡语义。
 
 ## 根因
 

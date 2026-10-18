@@ -14,7 +14,7 @@ status: accepted
 severity: medium
 confidence: verified
 created: '2026-09-12'
-updated: '2026-10-13'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/测试与开发环境.md
@@ -37,7 +37,11 @@ Docker Desktop(WSL2 后端)的容器并不直接受自身设置约束, 而是跑
 
 ## 解决方案
 
-<!-- 待补: 原始记录未含解决方案 -->
+（自本条其余段落提取）
+
+- 调资源上限改 `C:\Users\<user>\.wslconfig` 的 `[wsl2]` 段（不是 Docker Desktop 设置面板），改后 `wsl --shutdown` 生效；先按边界段判据确认瓶颈确在上限。
+- Resource Saver 卡死时：强杀 DD 相关进程 → `wsl --shutdown` → 停-改-起顺序把 `settings-store.json` 的 `UseResourceSaver=false`（CLI 无此开关），改完回读确认未被回写。
+- 沙箱内备份文件改存仓库内（写工作区外被限）、用 `explorer.exe "…Docker Desktop.exe"` 拉起 GUI、引擎就绪判定查 `wsl -l -v` 与命名管道而非 `docker version` 轮询。
 
 ## 验证
 

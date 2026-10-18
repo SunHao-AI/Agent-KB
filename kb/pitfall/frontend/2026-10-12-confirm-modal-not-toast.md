@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/表单交互与数据绑定.md
@@ -35,7 +35,7 @@ toast 只是通知不阻断流程，与"确认后才可提交"的交互语义不
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段提取）点提交后出现阻断式弹窗，选"取消"流程中止、不发出提交请求；确认后才提交成功；catch 分支区分 'cancel'/'close'（静默）与真实异常（提示错误）各自验证一次。
 
 ## 适用边界与反例
 

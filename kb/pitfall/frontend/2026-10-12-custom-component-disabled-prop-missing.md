@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/表单交互与数据绑定.md
@@ -35,7 +35,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段提取）只读模式下组件内按钮/输入全部禁用；尝试交互后检查表单数据未被改写（emit 守卫生效，修改不随上传提交）。
 
 ## 适用边界与反例
 

@@ -14,7 +14,7 @@ status: accepted
 severity: medium
 confidence: verified
 created: '2026-09-05'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/性能与容错优化.md
@@ -24,7 +24,7 @@ source:
 
 ## 背景 / 现象
 
-<!-- 待补: 原始记录未含背景/现象(原文以根因开篇) -->
+（自本条根因段提取）生产首请求 p99 明显偏高（测试环境同款接口在加 warm-up 前测得 389.54ms），部署/重启后的第一批请求最慢，后续请求恢复正常。
 
 ## 根因
 

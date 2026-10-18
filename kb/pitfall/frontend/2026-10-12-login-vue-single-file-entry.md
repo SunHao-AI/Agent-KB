@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/路由与导航.md
@@ -35,7 +35,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段提取）`grep -r "@/views/login" src/router` 确认路由入口实际指向的文件与改造目标一致；打开登录/2FA/强改密页渲染的是新代码（必要时看 Vite dev 网络面板命中哪个模块路径）。
 
 ## 适用边界与反例
 

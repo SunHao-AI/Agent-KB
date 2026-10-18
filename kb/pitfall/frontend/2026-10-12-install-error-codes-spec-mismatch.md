@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-12'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/应用包闭环形态.md
@@ -44,7 +44,7 @@ spec 初稿基于口头描述而非代码事实；编写者未读 `algorithm_sui
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段第 1/3 点提取）spec 顶部「对 spec 的事实修正」与 `algorithm_suites.py` / `suite_service.py` 实际抛错逐码对照一致；`pytest tests/test_suite_install.py` 关键断言通过（`inst.error` 文本 = `E_INSTALL_xxx: 人话` 前缀）。
 
 ## 适用边界与反例
 

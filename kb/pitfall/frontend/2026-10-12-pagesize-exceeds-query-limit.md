@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/表单交互与数据绑定.md
@@ -35,7 +35,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条背景段与方案段提取）后端日志不再出现该接口 422；用户管理页角色下拉正常出数。
 
 ## 适用边界与反例
 

@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: verified
 created: '2026-10-11'
-updated: '2026-10-13'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/密钥与授权轮换.md
@@ -33,7 +33,11 @@ source:
 
 ## 解决方案
 
-<!-- 待补: 原始记录未含解决方案 -->
+（自本条边界段提取）
+
+- 处置密钥泄露备份文件必须**三查**：工作区（删除/移出）、当前索引（`git ls-files`）、全历史（`git log --all --stat -- <file>`）。
+- 历史已暴露时，实质缓解只有**轮换该密钥**（本项目 `flysee_secret_key1` 已入三仓黑名单强制拒绝）；改写历史（filter-repo/BFG）仅在仓库对外泄露或读权限面失控时考虑，代价 = 全员强推。
+- 泄露判定永远基于历史而非 HEAD：`git rm --cached` 后文件"消失"于 `git status`，历史 blob 仍在。
 
 ## 验证
 

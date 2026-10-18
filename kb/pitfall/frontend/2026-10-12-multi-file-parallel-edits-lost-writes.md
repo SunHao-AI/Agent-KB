@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/构建工具与开发流程.md
@@ -39,7 +39,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段提取）每文件改完 Read 回读一次；跨文件小批量改完用"改动符号"（模块顶部 import、新挂依赖等）grep 全量核对；一切以 Read/Grep 从磁盘读到的内容为准，不采信工具返回的 diff 子集。
 
 ## 适用边界与反例
 

@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/构建工具与开发流程.md
@@ -37,7 +37,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段提取）去掉/改正断言后浏览器不再报 `Unexpected identifier`；排查时优先检查最近改动或当前路由对应的 `.vue` 文件是否混用了 TS 语法。
 
 ## 适用边界与反例
 

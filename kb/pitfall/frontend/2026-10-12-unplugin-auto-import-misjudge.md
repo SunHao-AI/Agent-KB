@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/构建工具与开发流程.md
@@ -35,7 +35,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段提取）先确认项目 unplugin-auto-import 配置及其 imports 覆盖范围；对 Element Plus JS API（`ElMessage`/`ElMessageBox` 等）核对文件顶部存在显式 import——运行时不再抛 `ReferenceError`、功能不静默失效即确认修复。
 
 ## 适用边界与反例
 

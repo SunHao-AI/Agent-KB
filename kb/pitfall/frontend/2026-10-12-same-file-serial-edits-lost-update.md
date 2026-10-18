@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/构建工具与开发流程.md
@@ -35,7 +35,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段提取）批量修改完成后用特征标识符（新组件名、新增函数名）全局检索逐条确认在位；注意构建通过不能替代此核对——被丢失的改动若不影响语法仍可能编译成功。
 
 ## 适用边界与反例
 

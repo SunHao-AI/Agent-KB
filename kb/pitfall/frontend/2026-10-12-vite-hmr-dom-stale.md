@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/构建工具与开发流程.md
@@ -37,7 +37,7 @@ Windows + Docker bind mount 下 Vite 的 `usePolling` 周期长（`WATCHFILES_FO
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段提取）`fetch('/xyz?<newQuery>')` 拿到的 JS 已含新代码即为编译成功；渲染层用截图或 `browser_evaluate` 读 `.app-container.<scope>` DOM 内容比对；硬刷新一次后 HMR 恢复正常即确认是客户端 stale state。
 
 ## 适用边界与反例
 

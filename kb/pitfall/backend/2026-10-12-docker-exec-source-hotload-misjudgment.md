@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: verified
 created: '2026-10-12'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/授权与台账.md
@@ -23,7 +23,7 @@ source:
 
 ## 背景 / 现象
 
-<!-- 待补: 原始记录未含背景/现象(原文以根因开篇) -->
+（自本条根因段提取）T3 改完后端代码 5 小时后跑联调，签发请求全链静默走旧代码（审计 detail 缺 `expires_in_days`），但 `docker exec` 探针却报 `FORWARD_OK`，一度把排查引向"前端没传字段"的歧途（实际 UI 两次提交都带了）。
 
 ## 根因
 

@@ -14,7 +14,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-18'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/构建工具与开发流程.md
@@ -38,7 +38,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+（自本条方案段与边界段提取）单测 `sse.spec.js` 断言 `{ url: '/sse/ticket', method: 'post' }`（相对路径）作为回归哨兵；`docker compose build frontend && up -d frontend` 后看后端日志不再出现 `/v1/v1/` 双前缀 404、SSE 可连上。
 
 ## 适用边界与反例
 

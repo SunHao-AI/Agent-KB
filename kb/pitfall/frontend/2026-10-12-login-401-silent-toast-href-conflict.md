@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: verified
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/路由与导航.md
@@ -44,7 +44,9 @@ source:
 
 ## 适用边界与反例
 
-<!-- 待补: 原始记录未含边界说明 -->
+
+
+源记录无边界/反例记载（2026-10-18 回溯核对 `docs/known-pitfalls/frontend/路由与导航.md` :: 「初次登录 401 兜底路径静默无提示，且 `location.href` 会打断 toast」）。上述结论适用范围以「根因」与「解决方案」段所载机制为限；换项目/版本使用前先在最小场景验证机制成立。
 
 ## 参考
 

@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-23'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/流媒体播放与预览.md
@@ -39,7 +39,9 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+
+
+源记录无验证记载（2026-10-18 回溯核对 `docs/known-pitfalls/frontend/流媒体播放与预览.md` :: 「flv.js play() AbortError「interrupted by a call to pause()」是 teardown 竞态, 不能当错误弹」：原文仅现象/根因/解决，无验证步骤或命令输出）。采信前由使用者按「根因/解决方案」段自行复现验证。
 
 ## 适用边界与反例
 

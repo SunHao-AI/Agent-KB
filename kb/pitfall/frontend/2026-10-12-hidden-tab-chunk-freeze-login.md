@@ -14,7 +14,7 @@ status: accepted
 severity: high
 confidence: verified
 created: '2026-10-11'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/登录鉴权与keep-alive.md
@@ -45,7 +45,9 @@ getInfo 之后前端路由守卫还要 `router.push` → 懒加载目标路由 c
 
 ## 适用边界与反例
 
-<!-- 待补: 原始记录未含边界说明 -->
+
+
+源记录无边界/反例记载（2026-10-18 回溯核对 `docs/known-pitfalls/frontend/登录鉴权与keep-alive.md`（未匹配到源段））。上述结论适用范围以「根因」与「解决方案」段所载机制为限；换项目/版本使用前先在最小场景验证机制成立。
 
 ## 参考
 

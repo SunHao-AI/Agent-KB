@@ -14,7 +14,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-12'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/应用包闭环形态.md
@@ -43,7 +43,7 @@ proxy_request_buffering off;    # 大文件不在 nginx 整包缓冲，流式转
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+源记录未单列"验证"段（2026-10-18 回溯核对 `docs/known-pitfalls/frontend/应用包闭环形态.md`），验证方法已并入「适用边界与反例」段首：`docker exec flysee-video-web-frontend nginx -T | Select-String client_max_body_size` 确认配置生效（改 `nginx.conf` 须重建镜像才生效）；行为侧判据为后端日志出现该请求（413 拦截时后端零痕迹）。
 
 ## 适用边界与反例
 

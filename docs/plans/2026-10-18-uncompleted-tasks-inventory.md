@@ -46,7 +46,7 @@
 | A-9 | **A4 发布工件包 = 里程碑 M2 商用发布 v1** | web/setting secure 镜像重建（评估结论已出：web 必建、setting 必建、algo/media 不建）+ 四仓打 `v1.0` annotated tag + roadmap 回填。暂缓原因：当时并行会话持续改动基线，**基线冻结后即可执行**；tag 属对外动作需逐项人工确认 | ← A1 A2 A3（A2/A3 已 ✅） |
 | A-10 | **A5 授权 backlog 尾巴收口** | T2 气隙回执计数不清零（方案 A/B 需选型实施）、T4 algo 测试隔离、T5 Minor 备忘；入口 `flysee-video-setting/docs/backlog/2026-10-12-授权模块后续任务.md` | 可穿插 |
 | A-11 | **B1 接入体验（剩余部分）** | `kb init`/`kb doctor` 已落地 ✅；剩余：① 对外 quickstart + 真实新仓 dogfood（已有 pyarmor / FastAPI-Hao 两轮，需按 roadmap 收口确认）；② **README 补 `kb review` / `set-scope` / `export` / `init` / `doctor` 命令文档**（实测 README 均无）；③ venv 自动装配（现仅输出指引） | M3 组成部分 |
-| A-12 | **B2 占位回填 — 部分完成（2026-10-18）** | 矛盾口径已澄清：followup 的"清零"只 grep 索引字样，lint 实际检测空段。当日**真实回填 23 条**（解决方案 3 + 背景 4 + 验证 16，从条目自身正文提取、标注来源），**116 → 93 条**，baseline 已收缩、strict 通过。剩余 93 条（验证 53 / 边界 40 等）无源可提取，需回溯 flysee 源记录或如实降级 | 每批 ~20 条，复用 P2 流程 |
+| A-12 | **B2 占位回填 — 已收口（2026-10-18 两批）** | 第一批：23 段从条目自身正文真实回填（解决方案 3 + 背景 4 + 验证 16）。第二批：剩余 68 文件/93 段逐条回溯 flysee 源记录（源仓本机在位，66/68 段匹配到源 H2），**核实源本身均为三段式（现象/根因/解决），验证/边界内容在源头就不存在**，A 类"增量"经逐条核对均为迁移格式噪音。处置：每段写入带源锚点的如实核查声明（"源记录无验证记载+采信指引"），**placeholder warning 归零，baseline 清空，`lint --strict` 通过**。"无实测证据"信号由 confidence=probable 继续承载 | ✅ 完成 |
 | A-13 | B3 知识生命周期启用 | `review_by` 按 confidence 分级设到期（verified 180d / probable 90d）零启用，`kb stat --due-review` 未进周期例程；非 pitfall 类型仅 howto 起步（2 条），decision 试点未动 | ← B2；M4 |
 | A-14 | B4 多团队套件（触发器制） | MCP HTTP 传输 + token 鉴权、双阶审批流 spec、I-3 token 查重 deadlock、cross-repo related 设计——触发条件"第一个真实外部用户"，未触发则不动 | 触发器 |
 | A-15 | §6 显式挂账 10 项（发布后再议） | 上帝文件拆分、flysee-shared 抽包、前端死代码 ~42%、去共享库/Redis Stream 架构项、C2/C7/C10 安全中期项、100+ 跨仓 pending 表、CI 完整方案、ruff 存量欠账（setting 451/web 274/algo 97）、spec checkbox 回填 753 处、FS020/021 目录补录 | 多数在 flysee 仓（本环境外） |

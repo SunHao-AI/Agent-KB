@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-03'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/鉴权与会话.md
@@ -59,12 +59,15 @@ pk = int(AESSIV(key).decrypt(base64.b32decode(padded), [kind.encode()]))
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+
+
+源记录无验证记载（2026-10-18 回溯核对 `docs/known-pitfalls/backend/鉴权与会话.md` :: 「用 HMAC 生成"对外 ID 令牌"是错的：不可逆所以无法还原主键」：原文仅现象/根因/解决，无验证步骤或命令输出）。采信前由使用者按「根因/解决方案」段自行复现验证。
 
 ## 适用边界与反例
 
 
 
-## 参考
 
-- 源记录: `docs/known-pitfalls/backend/鉴权与会话.md`
+
+源记录无边界/反例记载（2026-10-18 回溯核对 `docs/known-pitfalls/backend/鉴权与会话.md` :: 「用 HMAC 生成"对外 ID 令牌"是错的：不可逆所以无法还原主键」）。上述结论适用范围以「根因」与「解决方案」段所载机制为限；换项目/版本使用前先在最小场景验证机制成立。
+

@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 related:
 - kb-20261012-961c
 source:
@@ -41,7 +41,9 @@ PowerShell 默认对 stdin 用系统 code page 编码(中文环境 cp936)。`get
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+
+
+源记录无验证记载（2026-10-18 回溯核对 `docs/known-pitfalls/database/编码与字符集.md` :: 「PowerShell 管道 `docker exec -i mysql` 把 SQL 中的中文算作 clause 名截断」：原文仅现象/根因/解决，无验证步骤或命令输出）。采信前由使用者按「根因/解决方案」段自行复现验证。
 
 ## 适用边界与反例
 

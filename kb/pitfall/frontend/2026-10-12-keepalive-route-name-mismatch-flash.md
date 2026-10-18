@@ -13,7 +13,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/登录鉴权与keep-alive.md
@@ -39,11 +39,15 @@ TagsView 页签间切换（如"规则"/"算法库"）时，内容区先出现一
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+
+
+源记录无验证记载（2026-10-18 回溯核对 `docs/known-pitfalls/frontend/登录鉴权与keep-alive.md` :: 「页签切换白色矩形闪烁：route.name 与组件 name 不一致导致 keep-alive 失效」：原文仅现象/根因/解决，无验证步骤或命令输出）。采信前由使用者按「根因/解决方案」段自行复现验证。
 
 ## 适用边界与反例
 
-<!-- 待补: 原始记录未含边界说明 -->
+
+
+源记录无边界/反例记载（2026-10-18 回溯核对 `docs/known-pitfalls/frontend/登录鉴权与keep-alive.md` :: 「页签切换白色矩形闪烁：route.name 与组件 name 不一致导致 keep-alive 失效」）。上述结论适用范围以「根因」与「解决方案」段所载机制为限；换项目/版本使用前先在最小场景验证机制成立。
 
 ## 参考
 

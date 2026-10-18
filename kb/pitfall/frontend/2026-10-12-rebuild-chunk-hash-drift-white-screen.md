@@ -15,7 +15,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-25'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/构建工具与开发流程.md
@@ -47,7 +47,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+源记录未单列"验证"段（2026-10-18 回溯核对），但验证手段已完整并入本条：取证三件套见「根因」段（容器内 chunk 404 + 入口 hash 对不上 `index.html` + 缓存头 no-cache 即可定性），快速判据见「适用边界与反例」段首（`ERR_ABORTED` + 懒加载白屏 → 对 hash 分流版本漂移 vs 编译问题）。
 
 ## 适用边界与反例
 

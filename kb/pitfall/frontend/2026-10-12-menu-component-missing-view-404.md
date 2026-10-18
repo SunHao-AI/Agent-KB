@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-03'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/路由与导航.md
@@ -39,7 +39,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+源记录未单列"验证"段（2026-10-18 回溯核对 `docs/known-pitfalls/frontend/路由与导航.md`）。验证判据已并入「适用边界与反例」段：浏览器冒烟验收是唯一能兜住"视图缺失"的手段（接口测试全绿也可能页面 404），新增/修改 Seed 菜单按四件事清单逐项核对。
 
 ## 适用边界与反例
 

@@ -14,7 +14,7 @@ status: accepted
 severity: medium
 confidence: probable
 created: '2026-09-25'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/frontend/表单交互与数据绑定.md
@@ -42,7 +42,7 @@ source:
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+源记录未单列"验证"段（2026-10-18 回溯核对 `docs/known-pitfalls/frontend/表单交互与数据绑定.md`）。本条结论的验证方式即「根因」段标注的 **EP 源码实测**（逐组件查 `useFormDisabled()` 消费与源码行号，勿凭记忆）；落地后按「适用边界与反例」段先 grep 级联盲区组件清单，再在锁定态逐个点验。
 
 ## 适用边界与反例
 

@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-18'
-updated: '2026-10-12'
+updated: '2026-10-18'
 source:
   project: flysee-video-setting
   ref: docs/known-pitfalls/backend/鉴权与会话.md
@@ -43,7 +43,9 @@ urllib.request.urlopen(BASE + f"/v1/licenses/status?app_key={ak}")
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+
+
+源记录无验证记载（2026-10-18 回溯核对 `docs/known-pitfalls/backend/鉴权与会话.md` :: 「HMAC 签名 canonical 的 path 必须不含 query string（2026-09-18）」：原文仅现象/根因/解决，无验证步骤或命令输出）。采信前由使用者按「根因/解决方案」段自行复现验证。
 
 ## 适用边界与反例
 

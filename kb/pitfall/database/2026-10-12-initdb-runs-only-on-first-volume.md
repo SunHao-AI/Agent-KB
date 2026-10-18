@@ -13,7 +13,7 @@ status: accepted
 severity: high
 confidence: probable
 created: '2026-09-01'
-updated: '2026-10-12'
+updated: '2026-10-18'
 related:
 - kb-20261012-795e
 source:
@@ -46,7 +46,9 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.ym
 
 ## 验证
 
-<!-- 待补: 原始记录未含验证步骤 -->
+
+
+源记录无验证记载（2026-10-18 回溯核对 `docs/known-pitfalls/database/约束与迁移.md` :: 「MySQL 数据卷为旧 Schema 时，新增建表语句不会自动补建」：原文仅现象/根因/解决，无验证步骤或命令输出）。采信前由使用者按「根因/解决方案」段自行复现验证。
 
 ## 适用边界与反例
 

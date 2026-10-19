@@ -9,7 +9,7 @@ scope: stack
 status: accepted
 confidence: verified
 created: '2026-09-04'
-updated: '2026-10-13'
+updated: '2026-10-19'
 severity: medium
 source:
   project: flysee_video_web
@@ -95,6 +95,26 @@ command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "${FLYSE
 - 别把"内容相同的重复保存"当无害：`WATCHFILES_FORCE_POLLING` 下它照样触发 reload。怀疑有隐形写入时用 hash + mtime 双观察（间隔采样 `Get-FileHash` / `LastWriteTime`），再配合 `git status`（内容未变则 git 干净）区分"真改动"与"空写回"。
 
 - 改 `.py` 生效依赖 reload，但 `.env` / `Settings` 字段改动不触发 reload，须见本文件「修改 `.env` / Settings 字段不会触发热重载」条。
+
+## 新发现（2026-10-19 登录后报错排查会话，人工落地）
+
+- **症状映射补强（管理平台首屏形态，flysee_video_web）**：登录成功（`POST /v1/login`、
+  `GET /v1/getInfo`、`GET /v1/system/license-state` 均 200）后，任务列表与 SSE 链路撞进
+  reload 窗口 → toast「系统接口请求超时」+「任务列表加载失败，请点击「查询」重试」+
+  控制台 `[useTaskSSE] SSE 连接失败... AxiosError: timeout of 10000ms exceeded`。登录链路
+  本身无恙，报错全在登录成功后的并发初始化请求，易误判为"登录报错"。
+- **nginx 侧证据链（HTTP/2 形态指纹）**：`POST /v1/sse/ticket` duration 由 ~300ms 飙至
+  5183~5297ms（≈ 恰撞 `--timeout-graceful-shutdown 5` 上限 + 新 worker 启动），access log
+  记 499（axios 10s abort 侧为 `net::ERR_ABORTED`）；SSE 长连被硬取消后 nginx error log 记
+  `upstream prematurely closed connection while reading upstream`，浏览器 HTTP/2 侧表现为
+  `net::ERR_HTTP2_PROTOCOL_ERROR`。**499 + HTTP2 协议错误**是本形态的指纹，可与真接口故障
+  区分。日志中 `Cancel 2 running task(s), timeout graceful shutdown exceeded` 即本条修复
+  参数的预期输出（前文已注明"属预期而非异常"），ticket 5.2s 级 duration 恰可反证参数在生效。
+- **前端"未捕获 AxiosError"来源澄清**：非 use-task-events（其 `acquire().then().catch()`
+  链完备），而是 `frontend/src/views/tasks/detail.vue` `watchLaunchResult()` 中
+  `dispatch.finally(...)` 派生的**新** Promise 无 catch——`finally()` 不吞拒绝，派生链在
+  start 失败（含超时）时独立抛 `Uncaught (in promise) AxiosError`，与本坑症状混在同屏出现。
+  修复 = 尾随 `.catch(() => {})`。再次印证前文"调大前端 timeout 是治标"的结论。
 
 ## 参考
 

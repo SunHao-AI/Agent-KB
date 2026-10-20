@@ -102,6 +102,10 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--token", default=None)
     p_serve.add_argument("--default-caller", default=None,
                          help="单项目视图默认项目名(小写目录名)")
+    p_serve.add_argument("--install-autostart", action="store_true",
+                         help="注册系统服务常驻(Windows 计划任务/systemd 用户 unit, 幂等)")
+    p_serve.add_argument("--uninstall-autostart", action="store_true",
+                         help="撤销 --install-autostart 注册的系统服务")
     p_web = sub.add_parser("web", help="打开观测面板(无 serve 时代拉起)")
     p_web.add_argument("--repo", default=None,
                        help="Agent-KB 仓根, 默认为本仓 kb_root()")
@@ -304,6 +308,20 @@ def _dispatch(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "serve":
         from kb.serve import run as serve_run
+        if args.install_autostart or args.uninstall_autostart:
+            from kb import autostart
+            try:
+                if args.uninstall_autostart:
+                    print(autostart.uninstall())
+                else:
+                    print(autostart.install(
+                        Path(args.repo).resolve() if args.repo
+                        else Path(__file__).resolve().parents[2],
+                        args.port, args.bind, args.default_caller))
+            except (RuntimeError, OSError) as exc:
+                print(f"kb serve autostart: {exc}", file=sys.stderr)
+                return 1
+            return 0
         try:
             serve_run(Path(args.repo) if args.repo else None, port=args.port,
                       bind=args.bind, token=args.token,

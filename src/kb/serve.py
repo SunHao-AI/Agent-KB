@@ -301,7 +301,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--bind", default="127.0.0.1")
     ap.add_argument("--token", default=None, help="团队态访问令牌(亦可用 KB_SERVE_TOKEN)")
     ap.add_argument("--default-caller", default=None, help="单项目视图默认项目(kb web 代拉起时传入)")
+    ap.add_argument("--install-autostart", action="store_true",
+                    help="注册系统服务常驻(幂等, 见 kb.autostart)")
+    ap.add_argument("--uninstall-autostart", action="store_true",
+                    help="撤销 --install-autostart 注册的系统服务")
     a = ap.parse_args(argv)
+    if a.install_autostart or a.uninstall_autostart:
+        from kb import autostart
+        try:
+            if a.uninstall_autostart:
+                print(autostart.uninstall())
+            else:
+                print(autostart.install(
+                    Path(a.repo).resolve() if a.repo
+                    else kbtrace.kb_root(), a.port, a.bind, a.default_caller))
+        except (RuntimeError, OSError) as exc:
+            print(f"kb serve autostart: {exc}")
+            return 1
+        return 0
     try:
         run(Path(a.repo) if a.repo else None, port=a.port, bind=a.bind,
             token=a.token or os.environ.get("KB_SERVE_TOKEN") or None,

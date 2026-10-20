@@ -1,8 +1,55 @@
 from __future__ import annotations
 import json
+import re
 from pathlib import Path
 from kb.dedup import fingerprint
 from kb.entry import parse_entry
+
+# FR-3.4 keywords 派生(竞品 Mem0 "entity 信号"的零依赖本地化): agent 最自然的
+# 查询词往往是报错串/函数名/配置键, 它们只出现在正文。取三类高信息标识符,
+# 每条 ≤20 词; 只进 index 匹配面, 不是正文句子(敏感度与 summary 同级)。
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_IDENT_RE = re.compile(r"[A-Za-z_$][\w$.]{3,}")
+_H2_RE = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
+_KEYWORDS_CAP = 20
+
+
+def _is_informative(w: str) -> bool:
+    """标识符启发: 含分隔符(snake/dotted/camel)或含大写——排除普通英文词与中文。"""
+    return any(c.isupper() for c in w) or "_" in w or "." in w or "$" in w
+
+
+def derive_keywords(body: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(w: str) -> None:
+        w = w.strip("` '\"()[]")
+        if len(w) >= 4 and w.lower() not in seen:
+            seen.add(w.lower())
+            out.append(w)
+
+    for fence in _FENCE_RE.findall(body):
+        lines = fence.splitlines()
+        # 首行是 ```lang 语言标记, 不是代码, 不参与派生
+        for w in _IDENT_RE.findall("\n".join(lines[1:])):
+            add(w)
+    for line in body.splitlines():
+        s = line.strip()
+        if s.startswith("#") or not s:
+            continue
+        for w in _IDENT_RE.findall(" ".join(re.findall(r"`[^`]+`", s))):
+            add(w)
+    for m in _H2_RE.findall(body):
+        if _is_informative(m):  # 中文段名无检索价值, 只收含标识符的段名
+            add(m)
+    for para in re.split(r"\n\s*\n", body):
+        # 跳过标题行: H1=标题、H2=段名已各自覆盖, keywords 只收正文独有实体
+        text = " ".join(ln for ln in para.splitlines() if not ln.strip().startswith("#"))
+        for w in _IDENT_RE.findall(text):
+            if _is_informative(w):
+                add(w)
+    return out[:_KEYWORDS_CAP]
 
 
 def _records(repo_root: Path, repo_name: str):
@@ -23,6 +70,7 @@ def _records(repo_root: Path, repo_name: str):
             "confidence": fm.get("confidence", ""),
             "path": p.relative_to(repo_root).as_posix(),
             "summary": e.summary(),
+            "keywords": derive_keywords(e.body),
             "dedup_key": fingerprint(e),
             "related": fm.get("related", []),
             "updated": fm.get("updated", ""), "repo": repo_name,

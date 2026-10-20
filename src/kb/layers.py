@@ -14,7 +14,11 @@ def _name(repo: Path) -> str:
 def search_layers_report(repos: list[Path], *, type=None, domain=None, tag=None,
                          scope=None, status=None, confidence=None, query=None,
                          limit: int = 10) -> tuple[list[dict], list[dict]]:
-    """双层合并检索 + 逐层死因报告(供 trace)。repos 顺序即优先级, 逐层取满即截断。"""
+    """双层合并检索 + 逐层死因报告(供 trace)。repos 顺序即优先级, 逐层取满即截断。
+
+    rows 元素附 `hit_fields`/`hit_spans`(来自同层 matched, 按 id 对齐):
+    FR-4.1 要求把"为什么命中"透传给 agent, 比 summary 更省 token 更快回答。
+    """
     out: list[dict] = []
     reports: list[dict] = []
     for rp in repos:
@@ -22,6 +26,12 @@ def search_layers_report(repos: list[Path], *, type=None, domain=None, tag=None,
                              status=status, confidence=confidence, query=query)
         take = max(0, limit - len(out))
         chosen = rows[:take]
+        by_id = {m["id"]: m for m in rep["matched"]}
+        for r in chosen:
+            m = by_id.get(r["id"])
+            if m:
+                r["hit_fields"] = m["hit_fields"]
+                r["hit_spans"] = m["hit_spans"]
         rep.update({"repo": _name(rp), "taken": len(chosen),
                     "truncated_at_limit": len(chosen) < len(rows)})
         reports.append(rep)

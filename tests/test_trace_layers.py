@@ -38,7 +38,11 @@ def test_search_layers_still_equal_layerwise_concat(tmp_path):
     kb = _mk(tmp_path, "kb", [_rec(i, f"vite k{i}", scope="stack") for i in range(4)])
     a = layers.search_layers([docs, kb], query="vite", limit=4)
     b = search.search(docs, query="vite", limit=4) + search.search(kb, query="vite", limit=4)
-    assert a == b[:4]
+    # FR-4.1: layers 行附带 hit_fields/hit_spans(命中解释透传给 agent), 其余字段同形
+    a_core = [{k: v for k, v in r.items() if k not in ("hit_fields", "hit_spans")}
+              for r in a]
+    assert a_core == b[:4]
+    assert all(r["hit_fields"] == ["title"] for r in a)  # vite 命中的都是 title
 
 
 def test_single_layer_zero_matches(tmp_path):

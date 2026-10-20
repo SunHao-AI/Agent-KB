@@ -70,7 +70,7 @@
 
 <h1>Agent-KB 可观测面板与检索命中率提升 PRD</h1>
 <p class="meta">
-  版本 v1.3 · 2026-10-20 · 状态：<b>待评审</b>（v1.1 多项目+连接器；v1.2 C/S 架构与单/多项目视图；v1.3 部署定稿：kb serve 团队常开 + kb web 自动代拉起，单人/团队兼容）<br>
+  版本 v1.4 · 2026-10-20 · 状态：<b>待评审</b>（v1.1 多项目+连接器；v1.2 C/S 架构与单/多项目视图；v1.3 部署定稿：kb serve 团队常开 + kb web 自动代拉起，单人/团队兼容；v1.4 §7.3 开放问题收口：体积/容量延后并写明触发条件、token 口径维持、安全面预案文档化）<br>
   范围仓：<code>d:\Workplace\Agent-KB</code>（检索 / trace / 转换链）+ 新增 Web 展示层 + 知识源连接器框架<br>
   上游事实源：<code>docs/analysis/2026-10-15-agent-kb-ux-hitrate-token-analysis.md</code> ·
   <code>docs/specs/2026-10-15-kb-trace-replay-design.md</code> ·
@@ -584,9 +584,17 @@
   <li>ingest 上报的延迟与量级上限（多人多项目同时打团队 serve：SSE 扇出与 ingest QPS 的容量目标，spec 阶段压测定数）。</li>
 </ol>
 
+<h3>7.3 开放问题收口（用户确认，2026-10-20）</h3>
+<ul>
+  <li><b>问题 1 + 5（数据量驱动）— 延后，写明触发条件</b>：traces/ 维持全量入 git（实测 1 天 ≈9.6KB，年化约 3MB，git 可承受）。触发条件：<b>体积年增长 &gt;50MB</b> 时启动"月分卷 + git gc 约定"评审；<b>团队 &gt;20 人或 ≥2 个业务仓常连同一 serve</b> 时做小规模压测（ingest QPS / SSE 并发 / watcher 轮询开销）定容量数。</li>
+  <li><b>问题 2（token 口径）— 维持现口径</b>：KPI 卡"估算节省 token ⓘ"+悬浮口径说明+未知如实计 0。诚实口径对内决策与对外展示共用同一数字，不改字符数模式、不加开关。</li>
+  <li><b>问题 4 + 对外可见（安全面）— 文档化触发条件，暂不实现</b>：单团队阶段维持 127.0.0.1 / 内网 bind+单令牌。预案：<b>要对外</b> = 前置反代 + TLS，按新 FR 立项；<b>要多团队</b> = 优先双令牌重叠期轮换（serve 并行校验新旧两把令牌），或每团队独立 serve。触发前零改动，预案详见 followups 计划文档 C 类收口记录（README 观测章节随 D-2 补齐时同步搬运）。</li>
+  <li>问题 3（排序权重调参）不受影响：仍按 B-3 计划积累 ≥7 天 trace 后回放验收。</li>
+</ul>
+
 </main>
 <footer>
-Agent-KB · PRD v1.3 · 2026-10-20 · 生成依据：仓库静态分析（search.py / trace.py / spider_export.py / mcp_server.py / layers.py）、
+Agent-KB · PRD v1.4 · 2026-10-20 · 生成依据：仓库静态分析（search.py / trace.py / spider_export.py / mcp_server.py / layers.py）、
 docs/analysis 与 docs/specs 既有结论、prompt-spider-ui README（MCP 实时会话）、Mem0 V3 / mind-mem / mnemo 公开文档。
 标记 <span class="tag tbd">TBD</span> 处为需评审项，其余均可直接进入评审。
 </footer>

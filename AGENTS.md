@@ -42,6 +42,7 @@ kb related kb-20261012-7f3a --repo .            # 反向链接
 kb stat --repo .                                # 质量报告; --due-review 看待复核
 kb promote kb-20261012-7f3a --to stack --repo . # 建议提升 scope(由人确认落地)
 kb review kb-20261012-7f3a --to proposed --repo .   # 人工流转(draft→proposed→…)
+kb review kb-20261012-7f3a --to accepted --evidence "实测证据出处" --repo .  # accepted 留痕 verification
 kb set-scope kb-20261012-7f3a stack --repo .        # scope 终审落地(清 needs-scope-review)
 kb export kb-20261012-7f3a --to-repo ../Agent-KB --to-scope stack --repo docs  # 跨仓上提(人工)
 kb search --query "x" --repo docs --agent-kb .agent-kb   # 双层检索

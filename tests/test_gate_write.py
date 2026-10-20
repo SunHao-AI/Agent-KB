@@ -76,6 +76,20 @@ def test_review_human_accept_has_no_audit_trail(tmp_repo):
     e = review(tmp_repo, "kb-20261014-a2a2", "accepted", today=TODAY)
     assert "auto-reviewed" not in (e.fm.get("tags") or [])
     assert "verified_by" not in e.fm
+    assert "verification" not in e.fm
+
+
+def test_review_human_accept_with_evidence_writes_verification(tmp_repo):
+    # 人工终审带 --evidence: 写 verification 留痕, 但不打 auto-reviewed/verified_by
+    _mk(tmp_repo, "kb-20261014-a4a4", status="proposed", conf="probable")
+    e = review(tmp_repo, "kb-20261014-a4a4", "accepted", today=TODAY,
+               confidence="verified", evidence="perf 报告 §7.2: 21.4→51.5 QPS")
+    assert e.fm["status"] == "accepted"
+    assert e.fm["confidence"] == "verified"
+    assert e.fm["verification"] == {"evidence": "perf 报告 §7.2: 21.4→51.5 QPS",
+                                    "reviewed_at": "2026-10-14"}
+    assert "auto-reviewed" not in (e.fm.get("tags") or [])
+    assert "verified_by" not in e.fm
 
 
 def test_review_agent_accept_still_blocks_speculative(tmp_repo):

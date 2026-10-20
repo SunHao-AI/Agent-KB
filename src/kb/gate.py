@@ -138,6 +138,7 @@ def review(repo, id: str, to: str, today: dt.date | None = None, *,
 
     by="agent" 为自审: accepted 时写 verified_by=agent + auto-reviewed 标签 +
     verification 留痕(供事后抽查回滚)。confidence 仅随 accepted 提升生效。
+    人工流转带 evidence 时同样写 verification 留痕, 但不打自审标记。
     """
     p = _find(repo, id)
     e = parse_entry(p)
@@ -158,6 +159,10 @@ def review(repo, id: str, to: str, today: dt.date | None = None, *,
         fm["tags"] = tags
         d = (today or dt.date.today()).isoformat()
         fm["verification"] = {"evidence": (evidence or "").strip(), "reviewed_at": d}
+    elif to == "accepted" and (evidence or "").strip():
+        # 人工终审带证据: 同样写 verification 留痕, 但不打 auto-reviewed/verified_by
+        d = (today or dt.date.today()).isoformat()
+        fm["verification"] = {"evidence": evidence.strip(), "reviewed_at": d}
     return _save(p, fm, e.body, today or dt.date.today())
 
 

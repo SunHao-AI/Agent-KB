@@ -71,6 +71,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_rev = sub.add_parser("review", parents=[common])
     p_rev.add_argument("id"); p_rev.add_argument("--to", required=True,
         choices=["draft", "proposed", "accepted", "deprecated", "superseded"])
+    p_rev.add_argument("--evidence", default=None,
+                       help="实测证据(仅 --to accepted 生效): 写入 verification.evidence 留痕")
     p_ss = sub.add_parser("set-scope", parents=[common])
     p_ss.add_argument("id"); p_ss.add_argument("scope", choices=["project", "stack", "universal"])
     p_ex = sub.add_parser("export", parents=[common])
@@ -130,7 +132,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
         print(e.path)
         return 0
     if args.cmd == "review":
-        e = gate_review(repo, args.id, args.to)
+        e = gate_review(repo, args.id, args.to, evidence=args.evidence)
         print(json.dumps({**e.fm, "path": str(e.path)}, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "set-scope":

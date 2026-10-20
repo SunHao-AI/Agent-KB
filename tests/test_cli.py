@@ -118,6 +118,19 @@ def test_cli_review_success_prints_json(tmp_repo, capsys):
     assert out["id"] == "kb-20261014-c2c2" and out["status"] == "proposed"
 
 
+def test_cli_review_accepted_with_evidence_writes_verification(tmp_repo, capsys):
+    # --evidence 仅在 --to accepted 时写入 verification 留痕(人工终审, 非自审标记)
+    d = tmp_repo / "kb" / "pitfall" / "frontend"; d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261014-c4c4", status="proposed",
+                                       confidence="verified"), encoding="utf-8")
+    assert main(["review", "kb-20261014-c4c4", "--to", "accepted",
+                 "--evidence", "loadtest 21.4->51.5 QPS", "--repo", str(tmp_repo)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "accepted"
+    assert out["verification"]["evidence"] == "loadtest 21.4->51.5 QPS"
+    assert "auto-reviewed" not in (out.get("tags") or [])
+
+
 def test_cli_set_scope_success_prints_json(tmp_repo, capsys):
     # 成功路径必须可 JSON 序列化输出(与 review 同款缺陷, Entry 不可直接 dumps)
     d = tmp_repo / "kb" / "pitfall" / "frontend"; d.mkdir(parents=True)

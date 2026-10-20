@@ -101,6 +101,7 @@ powershell -File <Agent-KB>\scripts\install-gate.ps1 -RepoRoot .   # 装 push �
 
 ```powershell
 kb review <id> --to proposed --repo docs    # draft→proposed→accepted(speculative 被门禁拒)
+kb review <id> --to accepted --evidence "实测证据出处" --repo docs   # accepted 时留痕 verification.evidence
 kb set-scope <id> stack --repo docs         # scope 终审落地(清 needs-scope-review 标签)
 kb export <id> --to-repo ../Agent-KB --to-scope stack --repo docs   # 项目库→通用库跨仓上提
 ```

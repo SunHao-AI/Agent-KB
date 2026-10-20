@@ -106,6 +106,54 @@ kb set-scope <id> stack --repo docs         # scope 终审落地(清 needs-scope
 kb export <id> --to-repo ../Agent-KB --to-scope stack --repo docs   # 项目库→通用库跨仓上提
 ```
 
+## 观测面板(kb serve / kb web)
+
+检索埋点默认开启(`kb init` 生成的 `.mcp.json` 带 `KB_TRACE=1`), 事件按日追加到
+本仓 `traces/YYYY-MM-DD.jsonl`(入 git, 只含元数据+摘要级信息, 永不写正文)。
+观测读侧与检索写侧彻底解耦: serve 挂了 trace 照常落盘, 不影响检索与门禁。
+
+```powershell
+kb web                                        # 打开观测面板(无 serve 时静默代拉起, 空闲自杀)
+kb serve [--port 4320] [--bind 0.0.0.0 --token <令牌>]   # 观测服务端(只读 REST+SSE)
+kb serve --install-autostart                  # 团队常开: 注册登录自启(Windows 计划任务/systemd 用户 unit)
+kb spider-live                                # 检索事件实时直播到 prompt-spider-ui(需 Node 20+)
+kb trace list --zero-hit / show <id> / export --latest   # 命令行查 trace / 导出蜘蛛回放
+kb trace report                               # 零命中周报(高频待消化词+消化率; 每周一自动跑)
+```
+
+常用开关: `KB_TRACE=0` 关闭埋点; `KB_SOURCES=tdbm`(逗号分隔)启用外接知识源连接器;
+`KB_SERVE_TOKEN` / `KB_INGEST_URL` 团队态令牌与上报口。指标口径唯一实现 serve,
+面板只做展示; 命中率/零命中榜的改进回路是 `kb trace report`(见 PRD FR-3.5)。
+
+### 团队常开态与令牌分发(PRD FR-2.5)
+
+单人态开箱即用(仅 127.0.0.1, 无鉴权, 本机即边界); 团队态是配置升级而非架构切换。
+`--bind` 非本机且无令牌 → serve **拒绝启动**(红线)。标准四步:
+
+```
+① 常开主机:  kb serve --bind 0.0.0.0 --port 4320 --token <随机 32 位> --install-autostart
+             (令牌也可 setx KB_SERVE_TOKEN 注入, autostart 任务不落盘令牌)
+② 成员机:    kb init --repo docs --serve-url http://kb.internal:4320 --token <令牌>
+             → 落盘用户级 ~/.kb/config.toml(不入库): [serve] url/token
+③ 业务仓 .mcp.json(入库安全, 只有地址无凭据): env 加 KB_TRACE=1、KB_INGEST_URL;
+             上报令牌不进项目仓, 埋点从 ~/.kb/config.toml 读
+④ 成员浏览器: kb web → 发现链读 config.toml 连团队实例; 不可达则降级本机+横幅明示
+```
+
+git 始终是权威账本, ingest 上报只是直播加速通道(幂等按 trace_id 去重)。
+
+### 安全预案(触发前零改动, PRD v1.4 §7.3)
+
+- **要对外网可见**: 前置反代 + TLS, 按新 FR 立项(现仅 127.0.0.1 / 内网 bind+单令牌)。
+- **要多团队**: 优先双令牌重叠期轮换(serve 并行校验新旧两把), 或每团队独立 serve。
+- **traces/ 年增长 >50MB**: 触发月分卷评审; **>20 人或 ≥2 仓同连一把 serve**: 触发小规模压测。
+
+### trace 提交节奏(D-3 约定)
+
+`traces/` 随检索不断变脏, 约定**每日定时任务自动提交**(每天 18:30, 只 commit 不
+push, 推送仍人工): 平时不必手动提交 traces/, 也不必为它改 pre-push 钩子; 功能提交
+时看到 traces/ 脏属预期, 跳过即可。周报/日报类自动化见 `docs/reports/`。
+
 ## 贡献流程
 
 1. **查重先行**: 新建前 `kb search` 确认没有重复条目; 命中则更新既有条目而非新建。

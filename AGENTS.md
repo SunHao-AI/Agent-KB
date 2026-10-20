@@ -50,6 +50,9 @@ kb init --repo docs --agent-kb .agent-kb        # 接入: 生成去绝对路径�
 kb doctor --repo docs --agent-kb .agent-kb      # 接入自检(FAIL 才退 1)
 ```
 
+观测面命令(`kb web / serve / spider-live / trace`)与团队令牌配置见 README「观测面板」;
+`traces/` 由每日定时任务自动提交, **不要**随手纳入功能提交。
+
 `kb new` 的 `<type>` ∈ decision/spec/plan/pitfall/rca/howto/reference/retrospective;
 `--domain` ∈ backend/frontend/database/devops/security/testing/build/algorithm/process/tooling。
 

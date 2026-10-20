@@ -8,6 +8,7 @@ from __future__ import annotations
 FORMAT = "prompt-spider-session/v1"
 ROUTES = {"code": {"label": "项目层命中", "color": "#42D6A4"},
           "model": {"label": "通用层命中", "color": "#F28A76"},
+          "ext": {"label": "外接源命中", "color": "#F34A87"},
           "you": {"label": "已读消费", "color": "#F0CA57"}}
 _LAYER_ROUTE = {0: "code", 1: "model"}   # reports 顺序: 项目层在前(spec §7)
 # 对端 lib/replay.js + lib/config.js 硬限制(真机校准 2026-10-15):
@@ -41,8 +42,17 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
             events.append({"id": m["id"], "label": m["title"][:40] or m["id"],
                            "route": final, "status": "completed",
                            "detail": _detail(m)})
+    for e in search_ev.get("ext", []) or []:  # 外接源命中 → ext 分支(不在 layers 内)
+        for eid in e.get("hits", []):
+            if eid not in returned:
+                continue
+            final = "you" if eid in read_ids else "ext"
+            events.append({"id": eid, "label": f"外接 {e.get('source')}: {eid}"[:40],
+                           "route": final, "status": "completed",
+                           "detail": f"source://{e.get('source')}"})
     consumed = {e["id"] for e in events if e["route"] == "you"}
-    events.sort(key=lambda e: (e["route"] != "code", e["route"] != "model", e["id"]))
+    events.sort(key=lambda e: (e["route"] != "code", e["route"] != "model",
+                               e["route"] != "ext", e["id"]))
     layers_note = " · ".join(
         f"{l['repo']} 扫描{l['scanned']} 过滤-{l['rejected']['filter']} 词-{l['rejected']['query']}"
         for l in search_ev.get("layers", []))

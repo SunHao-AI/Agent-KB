@@ -39,7 +39,7 @@ def test_record_shape():
     assert rec["config"]["title"].startswith("KB 命中")
     assert rec["config"]["unit"] == "task"
     labels = {r["label"] for r in rec["config"]["routes"].values()}
-    assert labels == {"项目层命中", "通用层命中", "已读消费"}
+    assert labels == {"项目层命中", "通用层命中", "外接源命中", "已读消费"}
 
 
 def test_events_and_routes():

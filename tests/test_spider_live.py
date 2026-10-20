@@ -20,7 +20,8 @@ def test_route_mapping_three_branches():
     by = {e["id"]: e for e in events}
     assert by["p1"]["route"] == "code"   # 首层=项目层(docs) 全部 code 绿
     assert by["g1"]["route"] == "code"
-    assert by["d1"]["route"] == "model"  # 外接源 → model 橙
+    assert by["d1"]["route"] == "ext"    # 外接源 → ext 粉(B-1 独立分支)
+    assert cfg["routes"]["ext"]["color"] == "#F34A87"  # PRD FR-5.2 指定色
     assert cfg["routes"]["you"]["color"] == "#F0CA57"  # 已读消费=you 黄(由 get 事件驱动)
 
 

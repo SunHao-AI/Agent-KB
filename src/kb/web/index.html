@@ -110,10 +110,20 @@ async function loadStats(){
 }
 async function loadMatrix(){
   const r=await fetch(`/api/callers?token=${qs.get('token')||''}`);const rows=await r.json();
-  $('matrix').innerHTML='<tr><th>项目</th><th>检索数</th><th>命中率</th><th>最近活跃</th><th>状态</th></tr>'+
-   rows.map(x=>`<tr class="${x.stale?'stale':''}"><td>${esc(x.caller)}</td><td>${x.searches}</td>
-    <td>${x.hit_rate==null?'—':(x.hit_rate*100).toFixed(1)+'%'}</td><td>${esc(x.last_ts.slice(0,16))}</td>
-    <td>${x.stale?'⚠ trace 掉线(>14d)':'活跃'}</td></tr>`).join('');
+  // FR-5.2 按源堆叠: 项目层绿/通用层橙/外接源粉(PRD 指定 #F34A87), 与蜘蛛四色同源
+  const SRC=[['project','项目层','#42D6A4'],['stack','通用层','#F28A76']];
+  $('matrix').innerHTML='<tr><th>项目</th><th>检索数</th><th>命中率</th><th>按源堆叠</th><th>外接源</th><th>最近活跃</th><th>状态</th></tr>'+
+   rows.map(x=>{
+    const bs=x.by_source||{};const total=Object.values(bs).reduce((a,b)=>a+b,0)||1;
+    const srcs=[...SRC,...Object.keys(bs).filter(k=>k.startsWith('ext:')).map(k=>[k,k.slice(4),
+      '#F34A87'])].filter(([k])=>bs[k]);
+    const bar=srcs.map(([k,,c],i)=>`<div title="${k}: ${bs[k]} 次(${(100*bs[k]/total).toFixed(0)}%)" style="flex:${bs[k]};background:${c}${i?';border-left:1px solid rgba(255,255,255,.25)':''}"></div>`).join('');
+    const health=(x.ext||[]).map(e=>`<span title="${esc(e.error||'ok')}" style="color:${e.ok?'var(--ok,#42D6A4)':'var(--bad)'}">●${esc(e.source)}</span>`).join(' ')||'—';
+    return `<tr class="${x.stale?'stale':''}"><td>${esc(x.caller)}</td><td>${x.searches}</td>
+    <td>${x.hit_rate==null?'—':(x.hit_rate*100).toFixed(1)+'%'}</td>
+    <td><div style="display:flex;height:10px;min-width:90px;border-radius:3px;overflow:hidden;background:#ffffff14">${bar}</div></td>
+    <td>${health}</td><td>${esc(x.last_ts.slice(0,16))}</td>
+    <td>${x.stale?'⚠ trace 掉线(>14d)':'活跃'}</td></tr>`;}).join('');
 }
 function feedItem(ev,isGet){
   const d=document.createElement('div');d.className='feed-item';

@@ -177,8 +177,11 @@ def feed_events(searches: list[dict], gets: list[dict], *, caller: str | None = 
 
 
 def callers(searches: list[dict]) -> list[dict]:
-    """联邦视图项目矩阵行: caller + 存活检测(最近活跃距今 >14d = stale)。"""
+    """联邦视图项目矩阵行: caller + 存活检测(最近活跃距今 >14d = stale)
+    + 按源堆叠(by_source) + 外接源健康(ext, 来自 trace ext 字段)。"""
     today = dt.date.today()
+    src = by_source(searches)
+    ext_health = _ext_health_latest(searches)
     rows = []
     for c, v in (aggregate(searches, []).get("by_caller", {})).items():
         last = v["last_ts"][:10]
@@ -190,5 +193,55 @@ def callers(searches: list[dict]) -> list[dict]:
                 pass
         rows.append({"caller": c, "searches": v["searches"],
                      "hit_rate": round(v["hits"] / v["searches"], 4) if v["searches"] else None,
-                     "last_ts": v["last_ts"], "stale": stale})
+                     "last_ts": v["last_ts"], "stale": stale,
+                     "by_source": src.get(c, {}),
+                     "ext": ext_health.get(c, [])})
     return sorted(rows, key=lambda r: -r["searches"])
+
+
+def source_of(hit_id: str, layers: list[dict]) -> str:
+    """命中 id → 源名: source://<connector>/<原生id> → "ext:<connector>";
+    否则按 layers 中该 id 所在层 repo(项目层约定 docs, 由调用方传 proj_repo 区分)。"""
+    if str(hit_id).startswith("source://"):
+        return "ext:" + str(hit_id)[len("source://"):].split("/", 1)[0]
+    return None  # 本地命中由调用方按层归类
+
+
+def by_source(searches: list[dict]) -> dict:
+    """FR-5.2 按源堆叠: caller → {源名: 命中次数}。
+
+    源名: "project"(首层=项目层) / "stack"(其余本地层, 即通用层) /
+    "ext:<connector>"(外接源, 取自 returned 的 source:// 前缀 + ext.hits)。
+    计数口径 = 每次 search 事件返回(returned)条目的归属, 与 KPI 命中率同源。
+    """
+    out: dict[str, dict[str, int]] = {}
+    for s in searches:
+        caller = s.get("caller_repo") or "?"
+        row = out.setdefault(caller, {})
+        layers = s.get("layers", [])
+        ext_ids: set[str] = set()
+        for e in s.get("ext", []) or []:
+            ext_ids.update(e.get("hits", []))
+        for hid in s.get("returned", []):
+            if hid in ext_ids or str(hid).startswith("source://"):
+                name = source_of(hid, layers) or "ext:?"
+            else:
+                name = "stack"  # 归层: 首层 matched=project, 其余层=stack
+                for i, ly in enumerate(layers):
+                    if any(m.get("id") == hid for m in ly.get("matched", [])):
+                        name = "project" if i == 0 else "stack"
+                        break
+            row[name] = row.get(name, 0) + 1
+    return out
+
+
+def _ext_health_latest(searches: list[dict]) -> dict:
+    """caller → 最近一次 ext 健康记录(源名/ok/error), 矩阵"外接·源"列用。"""
+    out: dict[str, dict[str, dict]] = {}
+    for s in sorted(searches, key=lambda e: str(e.get("ts", ""))):
+        caller = s.get("caller_repo") or "?"
+        for e in s.get("ext", []) or []:
+            src = e.get("source") or "?"
+            out.setdefault(caller, {})[src] = {
+                "source": src, "ok": bool(e.get("ok")), "error": e.get("error")}
+    return {c: list(v.values()) for c, v in out.items()}

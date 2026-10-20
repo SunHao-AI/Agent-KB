@@ -1,8 +1,8 @@
 """kb spider-live — trace → prompt-spider-ui 实时直播桥(PRD FR-2.4)。
 
 驱动克隆仓(e:/prompt-spider-ui)的 stdio MCP(mcp/server.mjs): 监听本机
-traces/*.jsonl 增量, 每条 search 事件开一个蜘蛛会话(project 层→code 绿,
-通用/外接层→model 橙, 随后到达的 get→you 黄), 5s 无新 get 即 complete 定格。
+traces/*.jsonl 增量, 每条 search 事件开一个蜘蛛会话(项目层→code 绿,
+通用层→model 橙, 外接源→ext 粉, 随后到达的 get→you 黄), 5s 无新 get 即 complete 定格。
 
 依赖: Node 20+ 与克隆仓 `npm --prefix mcp ci`(缺失时给出明确指引后退出)。
 桥是纯读侧消费者, 任何失败不影响检索/埋点/面板。
@@ -23,9 +23,11 @@ from kb import trace as kbtrace
 COMPLETE_AFTER_SEC = 5.0     # search 后无新 get 即定格(可回放)
 _POLL_SEC = 0.5
 
-# route 三色语义(与面板一致): code=项目层, model=通用/外接层, you=已读消费
+# route 四色语义(与面板一致): code=项目层, model=通用层, ext=外接源(B-1, PRD 指定
+# #F34A87), you=已读消费
 ROUTES = {"code": {"label": "项目层命中", "color": "#42D6A4"},
-          "model": {"label": "通用/外接层命中", "color": "#F28A76"},
+          "model": {"label": "通用层命中", "color": "#F28A76"},
+          "ext": {"label": "外接源命中", "color": "#F34A87"},
           "you": {"label": "已读消费", "color": "#F0CA57"}}
 
 
@@ -118,12 +120,12 @@ def event_to_updates(search: dict) -> tuple[dict, list[dict]]:
                            "route": "code" if ly.get("repo") == proj_repo else "model",
                            "status": "running",
                            "detail": "hit: " + "+".join(m.get("hit_fields") or [])})
-    for e in search.get("ext", []):  # 外接源命中 → model 路由, label 带源名
+    for e in search.get("ext", []):  # 外接源命中 → ext 分支色(粉), label 带源名
         for eid in e.get("hits", []):
             if eid not in seen:
                 seen.add(eid)
                 events.append({"id": eid, "label": f"外接 {e.get('source')}: {eid}"[:40],
-                               "route": "model", "status": "running",
+                               "route": "ext", "status": "running",
                                "detail": f"source://{e.get('source')}"})
     q = search.get("query") or "-"
     cfg = {"title": f"KB 直播 {search.get('caller_repo', '?')}"[:80],

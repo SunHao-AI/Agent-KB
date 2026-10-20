@@ -73,12 +73,25 @@
   ext 的合成 trace, `/api/callers` 返回 `by_source={project:1, ext:tdbm:1}` +
   ext 健康, 单测 `test_stats_by_source.py` 4 例; 263 全绿。
 
-### B-2 面板全屏蜘蛛回放（iframe 内嵌 prompt-spider-ui）未接
+### B-2 面板全屏蜘蛛回放（iframe 内嵌 prompt-spider-ui）未接 ✅（2026-10-20 完成）
 - **描述**: PRD P1 表演层方案是 iframe 内嵌克隆仓回放（转换器 `spider_export.to_record`
   现成）; 本版交付了面板内原生 SVG 回放（点击条目弹窗）, iframe 全屏态未接。
 - **上下文**: 用户已克隆 `e:\Workplace\prompt-spider-ui`, 并授权"后续功能修改可用该克隆"。
 - **完成标准**: serve 增加 `/api/replay/<trace_id>` 输出 to_record JSON, 面板加
   "全屏蜘蛛"按钮 iframe 加载克隆仓回放页; 克隆仓零改动优先, 确需改则在其仓内单独 commit。
+- **收口记录**: serve 新增 `/api/replay/<trace_id>`（to_record JSON, get 严格按
+  trace_id 过滤）与 `/api/spider/<trace_id>`（懒启动 `SpiderBridge`: 首次请求才
+  spawn 克隆 MCP → `spider_import_session` 返回 previewUrl; trace_id 缓存 ≤15 超限
+  关最旧; 缺 Node/克隆依赖 → 503+指引且记住失败不重试）; 面板回放弹窗加"⤢ 全屏蜘蛛
+  回放"按钮, 点击后 iframe 加载 previewUrl（token 走 #fragment, 由克隆页 sessionStorage
+   自持）, 失败降级文案明确 SVG 回放不受影响。**克隆仓确需改动**（克隆仓 commit `fc25f75`
+   单独提交, 已跑其全套测试 44+3 pass）: ① 第四分支 `ext` 落地（lib/config.js ROUTES +
+  live-renderer/live.js/live-layout 布局 + mcp zod 枚举, PRD FR-5.2 指定 #F34A87——
+  此前 B-1 加 ext 后回放/直播到克隆侧其实会被 validateEvent 拒绝, 本次真机暴露）;
+  ② 转换器 `spider_id()` 归一原生 id（`source://…` 含 `/` 被对端 id 正则拒, search/
+  get 两侧同函数保 you 匹配）。真机: 合成 ext trace → `/api/spider` 出 previewUrl →
+  回放页 200 → 会话 counts ext=1/you=1; 缓存命中同 URL; 无 XFO/CSP 可 iframe。
+  浏览器人工过一眼按钮交互留待下次开面板时顺带确认（逻辑路径均已 HTTP 级验证）。
 
 ### B-3 limit 10→5 与排序权重调参（等数据）
 - **描述**: PRD 明确排序上线后 limit 收紧与字段裁剪以 trace 实测决策;

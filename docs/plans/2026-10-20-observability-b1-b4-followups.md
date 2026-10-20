@@ -25,12 +25,21 @@
   `src/server.ts` 的 import.meta.url 自执行判断在 Windows 下不生效, 未改）,
   **改动在工作区未提交, 归属该仓维护方决策**。
 
-### A-2 `--install-autostart` 系统服务注册未实现
+### A-2 `--install-autostart` 系统服务注册未实现 ✅（2026-10-20 完成）
 - **描述**: PRD FR-2.5 团队常开态要求 serve 崩溃后由系统管理器拉起
   （Windows 计划任务 / systemd）。当前团队态需管理员手工配置常驻。
 - **上下文**: `kb serve --help` 无此参数; PRD 设计为"不自造守护, 交给系统服务管理器"。
 - **完成标准**: `kb serve --install-autostart` 生成计划任务/systemd unit（幂等,
   含 `--token` 走环境变量不落盘的选项）, `--uninstall-autostart` 可撤销; 文档写清权限要求。
+- **收口记录**: 新增 `src/kb/autostart.py` + `kb serve --install-autostart/
+  --uninstall-autostart`（cli.py 与 serve.py 两处入口）。Windows 走 PowerShell
+  cmdlet（schtasks.exe 在受管终端被策略整体拦截）, 关键坑是 `-AtLogOn` 必须
+  `-User $env:USERNAME`（否则=任意用户登录语义需管理员）——已沉淀
+  kb-20261020-9676（accepted/verified）; Linux/macOS 走 systemd 用户 unit
+  （enable --now, 代码路径未实机验证, 本机无 systemd）。token 红线: 任务定义
+  只含 serve 命令行, token 经 `setx KB_SERVE_TOKEN`/`systemctl set-environment`
+  注入不落盘。真机验证: 注册成功 → 任务 Running → `/api/health` ok → 幂等重装
+  通过。注意验证时先查 4320 端口占用（A-3 遗留 serve 进程曾致 health"假通过"）。
 
 ### A-3 MCP 真实链路端到端验证（spider-live + 面板直播） ✅（2026-10-20 完成）
 - **描述**: spider-live 已用 CLI trace 真机验证; **MCP 进程内检索**（agent 经 kb_search）
@@ -49,12 +58,20 @@
 
 ## B. 功能缺口（PRD 内已定义、本版未做或部分做）
 
-### B-1 联邦视图"按源堆叠"列未实现
+### B-1 联邦视图"按源堆叠"列未实现 ✅（2026-10-20 完成）
 - **描述**: PRD FR-5.2 项目矩阵应含 每项目按知识源（本地项目层/通用层/TDBM/Notion…）
   的命中占比堆叠 + 源健康列。现矩阵只有 caller×检索数/命中率/掉线; trace 已带
   `ext`（外接源命中与 health）与 `source://` 寻址, **数据面就绪, 聚合与前端未做**。
 - **完成标准**: `stats.py` 增加按源聚合（source 取自 returned id 前缀 + layers/ext）,
   面板矩阵行加堆叠条; "外接·TDBM"用蜘蛛新增分支色（PRD 指定 #F34A87）。
+- **收口记录**: `stats.by_source()`（project/stack/ext:<connector> 三分类, 计数口径
+  与命中率同源: returned 条目归属; layers 明细缺失的老事件兜底记 stack 不虚增
+  project）+ `_ext_health_latest()`（每源最近一次 ok/error）并入 `callers()` 行;
+  面板矩阵加"按源堆叠"条（绿/橙/粉 flex 分宽, 悬浮显占比）与"外接源"健康列
+  （●源名, 红=最近失败+悬浮 error）; 蜘蛛 live/export 两处 ROUTES 加 `ext` 第四
+  分支 #F34A87（回放事件序 code→model→ext→you）。真机: 临时仓根 serve 注入带
+  ext 的合成 trace, `/api/callers` 返回 `by_source={project:1, ext:tdbm:1}` +
+  ext 健康, 单测 `test_stats_by_source.py` 4 例; 263 全绿。
 
 ### B-2 面板全屏蜘蛛回放（iframe 内嵌 prompt-spider-ui）未接
 - **描述**: PRD P1 表演层方案是 iframe 内嵌克隆仓回放（转换器 `spider_export.to_record`
@@ -70,11 +87,16 @@
   MCP 默认 limit 10→5; 用回放集验证 `_FIELD_WEIGHT`/`_CJK_COVERAGE=0.6` 是否需调;
   结论回写 PRD §7 并把数值变更 commit（带回放对比证据）。
 
-### B-4 零命中周报无人值守定时化
+### B-4 零命中周报无人值守定时化 ✅（2026-10-20 完成）
 - **描述**: `kb trace report` 命令已交付（FR-3.5）, PRD 的"周报"反馈回路还需**定时任务**
   自动产出并投递（仓内已有先例: due-review 每周一 09:00 cron, 见 commit `bcf1ce7`）。
 - **完成标准**: 建每周一定时任务输出 `kb trace report --format md` 到约定位置;
   高频未消化词 ≥3 时提醒补 tags/立新条。
+- **收口记录**: 建 schedule `b21cba28`（每周一 09:15, 错开 09:00 的 due-review）:
+  跑 `kb trace report --format md` → 归档 `docs/reports/zero-hit-<周一日期>.md` →
+  待消化词 count ≥3 时显式提醒消化动作 → 仅提交 `docs/reports`（不推送）。
+  首跑 2026-10-26。当前窗口已有 1 个 ×3 词（`sse-e2e-验证`, 属联调噪音, 与本文档
+  "测试遗留"备注一致——周报若长期被其霸榜, 再议 `--exclude`）。
 
 ## C. 待产品决策（PRD §7 开放问题, 需用户拍板）✅（2026-10-20 决策收口, 详见 PRD v1.4 §7.3）
 

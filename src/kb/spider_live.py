@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 from kb import trace as kbtrace
+from kb.spider_export import spider_id
 
 COMPLETE_AFTER_SEC = 5.0     # search 后无新 get 即定格(可回放)
 _POLL_SEC = 0.5
@@ -116,7 +117,8 @@ def event_to_updates(search: dict) -> tuple[dict, list[dict]]:
             if m["id"] not in returned or m["id"] in seen:
                 continue
             seen.add(m["id"])
-            events.append({"id": m["id"], "label": str(m.get("title") or m["id"])[:40],
+            events.append({"id": spider_id(m["id"]),
+                           "label": str(m.get("title") or m["id"])[:40],
                            "route": "code" if ly.get("repo") == proj_repo else "model",
                            "status": "running",
                            "detail": "hit: " + "+".join(m.get("hit_fields") or [])})
@@ -124,7 +126,8 @@ def event_to_updates(search: dict) -> tuple[dict, list[dict]]:
         for eid in e.get("hits", []):
             if eid not in seen:
                 seen.add(eid)
-                events.append({"id": eid, "label": f"外接 {e.get('source')}: {eid}"[:40],
+                events.append({"id": spider_id(eid),
+                               "label": f"外接 {e.get('source')}: {eid}"[:40],
                                "route": "ext", "status": "running",
                                "detail": f"source://{e.get('source')}"})
     q = search.get("query") or "-"
@@ -199,9 +202,9 @@ def _dispatch(mcp: SpiderMcp, ev: dict, active: dict, caller: str | None) -> Non
             mcp.tool("spider_complete_session", {"sessionId": sid})
         if events:
             active[tid] = {"session": sid, "last": time.monotonic(), "has_hits": True}
-    elif tid in active:  # 迟到的 get → you 分支"已读消费"
+    elif tid in active:  # 迟到的 get → you 分支"已读消费"(id 与建会话时同样归一)
         a = active[tid]
         a["last"] = time.monotonic()
         if ev.get("ok"):
             mcp.tool("spider_update_events", {"sessionId": a["session"], "events": [
-                {"id": ev["id"], "route": "you", "status": "completed"}]})
+                {"id": spider_id(ev["id"]), "route": "you", "status": "completed"}]})

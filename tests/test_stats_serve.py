@@ -116,6 +116,14 @@ def _get_url(url, token=None):
         return r.status, json.loads(r.read().decode())
 
 
+def _get_any(url):
+    """非 2xx 也返回 (status, body), 便于断言 404/503 错误体。"""
+    try:
+        return _get_url(url)
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode())
+
+
 def test_serve_health_stats_and_page(tmp_path):
     srv, base = _serve(tmp_path)
     try:
@@ -158,6 +166,85 @@ def test_bind_without_token_refused():
         pass
     assert serve.resolve_bind("0.0.0.0", "tok") == "0.0.0.0"
     assert serve.resolve_bind("127.0.0.1", None) == "127.0.0.1"
+
+
+# ---- B-2: /api/replay 与 /api/spider(懒启动桥) ----------------------------
+
+def _seed_trace(tmp_path, search_ev, get_evs):
+    from kb import trace as kbtrace
+    for ev in [search_ev] + get_evs:
+        kbtrace.append_event(ev, tmp_path)
+
+
+def test_api_replay_returns_record_scoped_to_trace(tmp_path):
+    srv, base = _serve(tmp_path)
+    ev = _search("rb-1", "a", "vite", ["k1", "k2"])
+    ev["layers"][0]["matched"] = [
+        {"id": "k1", "title": "T1", "hit_fields": ["title"], "hit_spans": [[0, 2]]},
+        {"id": "k2", "title": "T2", "hit_fields": ["tag"], "hit_spans": []}]
+    # 同 trace 的 get → you; 其他 trace 的 get(k1) 不得混入
+    _seed_trace(tmp_path, ev, [_get("rb-1", "k1", "a"), _get("other", "k2", "a")])
+    try:
+        st, rec = _get_url(f"{base}/api/replay/rb-1")
+        assert st == 200 and rec["format"] == "prompt-spider-session/v1"
+        assert rec["id"] == "rb-1"
+        by_id = {e["id"]: e for e in rec["events"]}
+        assert by_id["k1"]["route"] == "you"      # 本 trace 已读
+        assert by_id["k2"]["route"] == "code"     # 其他 trace 的 get 不算已读
+        st, body = _get_any(f"{base}/api/replay/missing")
+        assert st == 404 and "not found" in body["error"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_api_spider_uses_bridge_and_caches(tmp_path, monkeypatch):
+    srv, base = _serve(tmp_path)
+    calls = []
+
+    class FakeMcp:
+        def tool(self, name, args):
+            calls.append((name, args))
+            if name == "spider_import_session":
+                return {"id": f"sid{len(calls)}",
+                        "previewUrl": "http://127.0.0.1:9/?session=x#token=t"}
+            return {}
+
+    srv.spider._mcp = FakeMcp()  # 注入假桥, 不真 spawn node
+    ev = _search("rb-2", "a", "vite", ["k1"])
+    ev["layers"][0]["matched"] = [{"id": "k1", "title": "T1", "hit_fields": ["title"]}]
+    _seed_trace(tmp_path, ev, [])
+    try:
+        st, body = _get_url(f"{base}/api/spider/rb-2")
+        assert st == 200 and body["previewUrl"].startswith("http://127.0.0.1:9/")
+        st2, body2 = _get_url(f"{base}/api/spider/rb-2")   # 缓存命中: 不再 import
+        assert body2 == body
+        assert sum(1 for n, _ in calls if n == "spider_import_session") == 1
+        st, _ = _get_any(f"{base}/api/spider/nope")
+        assert st == 404
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_api_spider_dependency_missing_is_503_hint(tmp_path, monkeypatch):
+    from kb import spider_live
+    srv, base = _serve(tmp_path)
+    ev = _search("rb-3", "a", "vite", ["k1"])
+    _seed_trace(tmp_path, ev, [])
+    # 确定性模拟缺依赖(本机等开发机可能真装了 Node+克隆, 不能依赖环境)
+    monkeypatch.setattr(spider_live, "find_spider_home",
+                        lambda explicit=None: (_ for _ in ()).throw(
+                            FileNotFoundError("找不到 prompt-spider-ui 克隆")))
+    try:
+        st, body = _get_any(f"{base}/api/spider/rb-3")   # 缺克隆 → 503 + 指引
+        assert st == 503 and "克隆" in body["error"]
+        # 记住失败不再重试(第二次同样 503 且不卡)
+        st2, _ = _get_any(f"{base}/api/spider/rb-3")
+        assert st2 == 503
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 # ---- /api/ingest(FR-2.5 团队态直播通道) ---------------------------------

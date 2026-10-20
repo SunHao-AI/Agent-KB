@@ -70,7 +70,9 @@
   <div id="feed"></div></div>
 </main>
 <div id="modal"><div class="head" id="modalHead"></div><svg id="spider" viewBox="0 0 860 380"></svg>
-  <div style="color:var(--mu);font-size:12px;margin-top:8px">点击任意处关闭</div></div>
+  <button id="fullSpider" style="margin-top:10px;display:none;background:var(--ac);color:#08110c;border:0;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer">⤢ 全屏蜘蛛回放</button>
+  <div id="fullWrap" style="display:none;width:min(1200px,96vw);height:82vh;margin-top:8px"><iframe id="fullFrame" style="width:100%;height:100%;border:1px solid var(--bd);border-radius:8px;background:#080909" title="全屏蜘蛛回放"></iframe></div>
+  <div id="spiderHint" style="color:var(--mu);font-size:12px;margin-top:8px">点击任意处关闭</div></div>
 <script>
 const qs=new URLSearchParams(location.search);
 let caller=qs.get('caller')||'';           // '' = 单项目(由 serve default_caller 决定)
@@ -181,6 +183,10 @@ function playSpider(ev){
   const f=normSearch(ev);$('modalHead').innerHTML=
     `蜘蛛回放 · <b>${esc(f.query)}</b> · ${esc(f.caller||'')} · ${f.duration_ms??'?'}ms · trace ${esc(f.trace_id||'')}`;
   const svg=$('spider');svg.innerHTML='';
+  fullTid=f.trace_id||'';                 // 全屏按钮的数据源(每次开新 trace 重置)
+  $('fullWrap').style.display='none';$('fullFrame').src='about:blank';
+  $('fullSpider').style.display=fullTid?'inline-block':'none';
+  $('spiderHint').textContent='点击任意处关闭';
   const NS='http://www.w3.org/2000/svg';const mk=(t,a)=>{const n=document.createElementNS(NS,t);
     for(const k in a)n.setAttribute(k,a[k]);svg.appendChild(n);return n;};
   mk('circle',{cx:430,cy:190,r:12,fill:'#42D6A4'});
@@ -221,7 +227,27 @@ document.querySelectorAll('[data-w]').forEach(c=>c.onclick=()=>{win=+c.dataset.w
 $('feed').addEventListener('click',e=>{const it=e.target.closest('.feed-item');
   const tid=it&&(it.dataset.tid||'');const raw=it&&it.raw||feedBuf[tid];
   if(raw&&raw.kind!=='get')playSpider(raw);});
-$('modal').onclick=()=>$('modal').classList.remove('open');
+// 全屏蜘蛛回放(B-2): 首次点击才让 serve 懒启动克隆仓 MCP 导入本 trace, iframe 加载 previewUrl
+let fullTid='';
+$('fullSpider').onclick=async e=>{
+  e.stopPropagation();
+  const btn=$('fullSpider');
+  if($('fullWrap').style.display!=='none'){   // 已展开 → 收起
+    $('fullWrap').style.display='none';$('fullFrame').src='about:blank';
+    btn.textContent='⤢ 全屏蜘蛛回放';return;}
+  btn.disabled=true;btn.textContent='连接蜘蛛会话…';
+  try{
+    const r=await fetch(`/api/spider/${encodeURIComponent(fullTid)}?token=${qs.get('token')||''}`);
+    const d=await r.json();
+    if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);
+    $('fullFrame').src=d.previewUrl;$('fullWrap').style.display='block';
+    btn.textContent='⤡ 收起全屏';$('spiderHint').textContent='全屏=克隆仓回放页(可导入导出/换肤); 关闭面板即释放桥进程内会话';
+  }catch(err){btn.textContent='⤢ 全屏蜘蛛回放';$('spiderHint').innerHTML=
+    `全屏不可用: ${esc(err.message)} — 需 Node 20+ 与克隆仓 mcp/ 依赖(npm --prefix mcp ci), 或设 KB_SPIDER_HOME; 当前 SVG 回放不受影响`;}
+  finally{btn.disabled=false;}
+};
+$('fullWrap').onclick=e=>e.stopPropagation();
+$('modal').onclick=e=>{if(e.target===$('modal')||e.target===$('modalHead'))$('modal').classList.remove('open');};
 document.addEventListener('keydown',e=>{if(e.key==='Escape')$('modal').classList.remove('open');});
 (async()=>{try{const h=await fetch('/api/health');const d=await h.json();
   if(!d.exists)banner('','<b>traces/ 目录不存在</b> — 观测尚未开启: 业务仓 .mcp.json 加 <code>"env":{"KB_TRACE":"1"}</code> 或重跑 <code>kb init</code>。检索本身不受影响。');

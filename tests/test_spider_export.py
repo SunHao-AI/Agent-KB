@@ -42,6 +42,29 @@ def test_record_shape():
     assert labels == {"项目层命中", "通用层命中", "外接源命中", "已读消费"}
 
 
+def test_spider_id_sanitizes_and_roundtrips():
+    import re
+    ok = re.compile(r"^[\w.:-]+$", re.UNICODE)
+    # source:// 原生 id 含 '/', 对端正则会拒(真机校准) → '/'归一为'-', ':'与'.'保留
+    assert spider_export.spider_id("source://tdbm/wiki/redis.md") == "source:--tdbm-wiki-redis.md"
+    assert ok.match(spider_export.spider_id("source://tdbm/wiki/redis.md"))
+    # 普通 kb id 原样保留(search/get 两侧同函数, you 匹配不断)
+    assert spider_export.spider_id("kb-20261012-7f3a") == "kb-20261012-7f3a"
+
+
+def test_ext_hits_are_ext_route_and_sanitized():
+    tr = _trace()
+    tr["returned"] = ["kb-a", "source://tdbm/wiki/redis.md"]
+    tr["ext"] = [{"source": "tdbm", "ok": True, "hits": ["source://tdbm/wiki/redis.md"]}]
+    rec = spider_export.to_record(tr, _gets())
+    by_id = {e["id"]: e for e in rec["events"]}
+    sid = "source:--tdbm-wiki-redis.md"
+    assert by_id[sid]["route"] == "ext"
+    assert by_id[sid]["detail"] == "source://tdbm"
+    # consumed 回原生 id(仓内语义), 不是归一后的
+    assert rec["consumed"] == ["kb-a"]
+
+
 def test_events_and_routes():
     rec = spider_export.to_record(_trace(), _gets())
     by_id = {e["id"]: e for e in rec["events"]}

@@ -24,6 +24,51 @@ _POLL_SEC = 1.0
 _SSE_KEEPALIVE_SEC = 15.0
 
 
+class SpiderBridge:
+    """B-2 全屏回放桥: 懒启动克隆仓 MCP, trace_id → previewUrl(iframe 数据源)。
+
+    首次请求才 spawn node; 缺 Node/克隆依赖时记住错误不再重试(失败面收敛一次)。
+    会话缓存有界(≤15, 克隆进程上限 20): 超限先 close 最旧会话, 防 create 被拒。
+    """
+
+    CAP = 15
+
+    def __init__(self):
+        import threading
+        from collections import OrderedDict
+        self._mcp = None
+        self._dead: str | None = None
+        self._urls: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def replay_url(self, record: dict, tid: str) -> str:
+        with self._lock:
+            if tid in self._urls:
+                self._urls.move_to_end(tid)
+                return self._urls[tid][1]
+            if self._dead:
+                raise RuntimeError(self._dead)
+            try:
+                if self._mcp is None:
+                    from kb.spider_live import SpiderMcp, find_spider_home
+                    self._mcp = SpiderMcp(find_spider_home())
+                res = self._mcp.tool("spider_import_session", {"record": record})
+                url, sid = res.get("previewUrl"), res.get("id")
+                if not url or not sid:
+                    raise RuntimeError(f"spider import 无 previewUrl: {res}")
+            except (RuntimeError, FileNotFoundError, OSError) as exc:
+                self._dead = str(exc)
+                raise
+            self._urls[tid] = (sid, url)
+            while len(self._urls) > self.CAP:  # 逐旧腾位(关闭失败不阻断)
+                _, (old_sid, _) = self._urls.popitem(last=False)
+                try:
+                    self._mcp.tool("spider_close_session", {"sessionId": old_sid})
+                except RuntimeError:
+                    pass
+            return url
+
+
 class TraceWatcher(threading.Thread):
     """traces/*.jsonl 增量读取(mtime+size 变化才重读), 新事件入队广播。"""
 
@@ -196,6 +241,24 @@ class _Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/callers":
                 s, _, _ = kbtrace.read_traces(root=srv.root)
                 self._json(stats.callers(s))
+            elif u.path.startswith("/api/replay/"):
+                tid = u.path[len("/api/replay/"):]
+                rec = _replay_record(srv.root, tid)
+                if rec is None:
+                    self._json({"error": f"trace {tid} not found"}, 404)
+                    return
+                self._json(rec)
+            elif u.path.startswith("/api/spider/"):
+                tid = u.path[len("/api/spider/"):]
+                rec = _replay_record(srv.root, tid)
+                if rec is None:
+                    self._json({"error": f"trace {tid} not found"}, 404)
+                    return
+                try:
+                    self._json({"previewUrl": srv.spider.replay_url(rec, tid)})
+                except (RuntimeError, FileNotFoundError, OSError) as exc:
+                    # 缺 Node/克隆依赖不是 500: 面板拿 message 引导降级(原生 SVG 回放仍在)
+                    self._json({"error": str(exc)}, 503)
             elif u.path == "/api/feed":
                 s, g, _ = kbtrace.read_traces(root=srv.root)
                 s, g = srv.filter_caller(s, g, q)
@@ -248,6 +311,7 @@ class ServeServer(ThreadingHTTPServer):
         self.seen_ingest: set[tuple] = set()
         self.ingest_cap = 50_000
         self.watcher = TraceWatcher(self.root, quiet=quiet)
+        self.spider = SpiderBridge()
         self.index_html = (_asset_dir() / "index.html").read_text(encoding="utf-8")
 
     @staticmethod
@@ -265,6 +329,16 @@ class ServeServer(ThreadingHTTPServer):
 
 def _asset_dir() -> Path:
     return Path(__file__).resolve().parent / "web"
+
+
+def _replay_record(root: Path, tid: str) -> dict | None:
+    """trace_id → 完整可导入 record(仅喂本 trace 的 get, 已读态才不越界)。"""
+    s, g, _ = kbtrace.read_traces(root=root)
+    search = next((e for e in s if e.get("trace_id") == tid), None)
+    if search is None:
+        return None
+    from kb.spider_export import to_record
+    return to_record(search, [e for e in g if e.get("trace_id") == tid])
 
 
 def resolve_bind(bind: str | None, token: str | None) -> str:

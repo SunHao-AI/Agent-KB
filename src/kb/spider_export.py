@@ -5,7 +5,17 @@
 """
 from __future__ import annotations
 
+import re
+
 FORMAT = "prompt-spider-session/v1"
+
+
+def spider_id(native: str) -> str:
+    """原生 id → 蜘蛛合法 event.id(对端正则 ^[\\p{L}\\p{N}_.:-]+$, 真机校准:
+    source://tdbm/wiki/x.md 的 '/' 会被拒)。search/get 两侧同函数保证 you 匹配。"""
+    return re.sub(r"[^\w.:-]", "-", str(native))
+
+
 ROUTES = {"code": {"label": "项目层命中", "color": "#42D6A4"},
           "model": {"label": "通用层命中", "color": "#F28A76"},
           "ext": {"label": "外接源命中", "color": "#F34A87"},
@@ -19,8 +29,9 @@ _T_CONFIG, _T_RUNNING, _T_DONE, _T_END = 0.0, 0.5, 1.5, 2.5
 
 
 def _detail(m: dict) -> str:
-    fields = "+".join(m["hit_fields"]) or "filter"
-    return f"hit: {fields} @ {m['hit_spans']}"
+    # .get: 历史 trace(schema 早期)可能缺 hit_fields/hit_spans, 回放不得因此炸
+    fields = "+".join(m.get("hit_fields") or []) or "filter"
+    return f"hit: {fields} @ {m.get('hit_spans') or []}"
 
 
 def _chunks(xs: list) -> list[list]:
@@ -28,7 +39,11 @@ def _chunks(xs: list) -> list[list]:
 
 
 def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
-    """一条 search trace + 其关联 get 事件 → 可导入的完整 record。"""
+    """一条 search trace + 其关联 get 事件 → 可导入的完整 record。
+
+    event.id 一律经 spider_id 归一(原生 id 可含 '/' 等对端非法字符);
+    consumed 仍回原生 id(仓内语义), 仅 record 内做映射。
+    """
     read_ids = {g["id"] for g in get_evs if g.get("trace_id") == search_ev["trace_id"]}
     ts = str(search_ev.get("ts", ""))[:10]
     returned = set(search_ev.get("returned", []))
@@ -39,7 +54,7 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
             if m["id"] not in returned:
                 continue
             final = "you" if m["id"] in read_ids else route
-            events.append({"id": m["id"], "label": m["title"][:40] or m["id"],
+            events.append({"id": spider_id(m["id"]), "label": m["title"][:40] or m["id"],
                            "route": final, "status": "completed",
                            "detail": _detail(m)})
     for e in search_ev.get("ext", []) or []:  # 外接源命中 → ext 分支(不在 layers 内)
@@ -47,10 +62,11 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
             if eid not in returned:
                 continue
             final = "you" if eid in read_ids else "ext"
-            events.append({"id": eid, "label": f"外接 {e.get('source')}: {eid}"[:40],
+            events.append({"id": spider_id(eid), "label": f"外接 {e.get('source')}: {eid}"[:40],
                            "route": final, "status": "completed",
                            "detail": f"source://{e.get('source')}"})
-    consumed = {e["id"] for e in events if e["route"] == "you"}
+    consumed = {g["id"] for g in get_evs
+                if g.get("trace_id") == search_ev["trace_id"] and g["id"] in returned}
     events.sort(key=lambda e: (e["route"] != "code", e["route"] != "model",
                                e["route"] != "ext", e["id"]))
     layers_note = " · ".join(

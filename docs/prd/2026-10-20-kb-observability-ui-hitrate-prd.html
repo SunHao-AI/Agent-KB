@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRD · Agent-KB 可观测面板与检索命中率提升</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#2d3646;
+    --text:#d7dee8; --muted:#8b98a9; --accent:#42D6A4; --accent2:#F34A87;
+    --warn:#F0CA57; --danger:#F28A76; --link:#6cb8ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:15px/1.75 "PingFang SC","Microsoft YaHei",system-ui,sans-serif;padding:40px 20px 120px}
+  main{max-width:960px;margin:0 auto}
+  h1{font-size:26px;margin-bottom:6px;letter-spacing:.5px}
+  h2{font-size:20px;margin:48px 0 14px;padding-left:10px;border-left:4px solid var(--accent)}
+  h3{font-size:16px;margin:26px 0 10px;color:#eef3f9}
+  h4{font-size:14px;margin:18px 0 8px;color:var(--accent)}
+  p{margin:8px 0}
+  ul,ol{margin:8px 0 8px 22px}
+  li{margin:4px 0}
+  a{color:var(--link);text-decoration:none}
+  code{background:#222b3a;border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:Consolas,Menlo,monospace;font-size:13px;color:#a8dadc}
+  .meta{color:var(--muted);font-size:13px;margin-bottom:24px}
+  .meta b{color:var(--text)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+  th,td{border:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#eaf1f8;white-space:nowrap}
+  tr:nth-child(even) td{background:#131924}
+  .tag{display:inline-block;font-size:11.5px;border-radius:10px;padding:1px 9px;margin-right:6px;border:1px solid}
+  .p0{color:var(--accent);border-color:var(--accent)}
+  .p1{color:var(--warn);border-color:var(--warn)}
+  .p2{color:var(--danger);border-color:var(--danger)}
+  .tbd{color:var(--accent2);border-color:var(--accent2)}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin:16px 0}
+  .fr{border-left:3px solid var(--accent);padding-left:14px;margin:22px 0}
+  .fr h3{margin-top:0}
+  .note{background:#1a2130;border-left:3px solid var(--warn);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:13.5px;color:#c9d4e2}
+  .flow{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;margin:16px 0;overflow-x:auto}
+  .demo{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;margin:18px 0}
+  .demo-title{font-size:12px;color:var(--muted);letter-spacing:2px;margin-bottom:12px}
+  .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .kpi{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:14px}
+  .kpi .v{font-size:26px;font-weight:700;color:var(--accent);font-family:Consolas,monospace}
+  .kpi .l{font-size:12px;color:var(--muted);margin-top:2px}
+  .kpi .s{font-size:11.5px;color:var(--muted)}
+  .bars{margin-top:14px}
+  .bar{display:grid;grid-template-columns:170px 1fr 60px;align-items:center;gap:8px;font-size:12.5px;margin:5px 0}
+  .bar .track{background:#0b1017;border-radius:4px;height:14px;overflow:hidden}
+  .bar .fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),#2ea87f)}
+  .bar .fill.zero{background:linear-gradient(90deg,var(--danger),#b25646)}
+  .btns{margin-top:16px}
+  .btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 14px;font-size:13px;cursor:pointer;margin-right:8px}
+  .btn.on{border-color:var(--accent);color:var(--accent)}
+  .feed{margin-top:14px;border-top:1px dashed var(--border);padding-top:10px}
+  .feed-item{display:flex;align-items:center;gap:10px;font-size:12.5px;padding:6px 8px;border-radius:6px;margin:4px 0;background:var(--panel2);animation:fadein .5s}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .g{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+  .r{background:var(--danger);box-shadow:0 0 6px var(--danger)}
+  .w{background:var(--warn)}
+  .mono{font-family:Consolas,monospace;color:var(--muted);margin-left:auto;font-size:11.5px}
+  @keyframes fadein{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
+  footer{max-width:960px;margin:60px auto 0;color:var(--muted);font-size:12px;border-top:1px solid var(--border);padding-top:14px}
+  @media (max-width:640px){.bar{grid-template-columns:110px 1fr 46px}}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Agent-KB 可观测面板与检索命中率提升 PRD</h1>
+<p class="meta">
+  版本 v1.3 · 2026-10-20 · 状态：<b>待评审</b>（v1.1 多项目+连接器；v1.2 C/S 架构与单/多项目视图；v1.3 部署定稿：kb serve 团队常开 + kb web 自动代拉起，单人/团队兼容）<br>
+  范围仓：<code>d:\Workplace\Agent-KB</code>（检索 / trace / 转换链）+ 新增 Web 展示层 + 知识源连接器框架<br>
+  上游事实源：<code>docs/analysis/2026-10-15-agent-kb-ux-hitrate-token-analysis.md</code> ·
+  <code>docs/specs/2026-10-15-kb-trace-replay-design.md</code> ·
+  <code>docs/plans/2026-10-18-uncompleted-tasks-inventory.md</code><br>
+  外部参考：prompt-spider-ui (MIT) · Mem0 V3 · mind-mem · mnemo · Zep/Graphiti · TencentDB-Agent-Memory（工作区内，默认外接源）
+</p>
+
+<h2>1. 背景与目标</h2>
+
+<p><b>现状。</b>Agent-KB 已具备"检索埋点 → JSONL trace → spider 转换器"的离线链路：
+<code>kb trace export --format spider</code> 把一次检索导出为 prompt-spider-ui 回放文件，
+人工导入后观看动画。但这条链路今天是断的、静默的、无数字的：</p>
+
+<ul>
+  <li><b>无指标可见性</b>：知识库对 agent 到底"帮了多少忙"（命中率、被消费率、省了多少 token）没有任何数字出口。项目的核心价值主张（低 token、三级披露、越用越准）不可证明。</li>
+  <li><b>无实时性</b>：回放必须"检索完 → 导出 → 导入 → 播放"，agent 正在干活时观众看不到。prompt-spider-ui 自身已提供 MCP 实时会话（<code>spider_create_session / spider_update_events</code>，支持 follow_live 跟随），但本项目尚未接入；spec §9 也把"实时直播"列为挂账。</li>
+  <li><b>命中率机制薄弱</b>：[search.py](file:///d:/Workplace/Agent-KB/src/kb/search.py) 对 title+tags+summary 拼接文本做整 token 小写 <code>find</code> + AND——中文连写（"推流死锁"）、正文专名（"PermissionError"）、同义词（授权/license）三类查询系统性零命中；命中后无排序，<code>limit</code> 截断等于抽签；零命中返回裸 <code>[]</code>，agent 直接得出"库里没有"的错误结论。</li>
+  <li><b>观测地基已塌</b>：<code>traces/</code> 被 gitignore，开关 <code>.kb-trace</code> 是本机临时文件，数据已<b>两次丢失</b>（139 行首日数据）。任何指标与实时展示都以"trace 持续存活"为硬前提。</li>
+</ul>
+
+<p><b>产品决策。</b>沿 spec 已评审的"数据先行、渲染可插拔"三层架构，做五件事：
+① 把 trace 从临时物变成持久数据；② 新增观测面板，采用<b>客户端 / 服务端架构</b>：观测服务端（<code>kb serve</code>）是唯一的聚合与推送点，浏览器瘦客户端（<code>kb web</code>）支持<b>单项目 / 多项目联邦</b>两种视图，动画层复用 prompt-spider 视觉语言；③ 按同类项目共识（多信号打分 + 排名融合 + 时效加权）重构检索匹配与排序；④ <code>source</code>（知识来源）升为一等字段，贯穿 trace / 指标 / 路由 / 面板；⑤ 建立<b>知识源连接器</b>（检索联邦）框架：本地 git 知识层之外，TencentDB-Agent-Memory 为默认首个外接源，Notion / 飞书 / 图数据库按统一契约可插拔。</p>
+
+<p><b>部署与使用模型（v1.1 明确）。</b></p>
+<ul>
+  <li><b>一套系统服务 N 个项目</b>：各业务仓经 submodule（<code>.agent-kb/</code>）+ 项目内 <code>.mcp.json</code> 接入同一套 kb MCP；项目自有知识在 <code>docs/kb/</code>，通用知识在 <code>.agent-kb/kb/</code>（既有双层模型不变）。</li>
+  <li><b>观测面 = 客户端/服务端</b>：trace 与各知识源状态汇聚在 Agent-KB 侧的观测服务端（<code>kb serve</code>，唯一事实视图聚合点）；用户在任意项目目录跑 <code>kb web</code> 打开瘦客户端（未检测到服务时自动代拉起），默认进入<b>单项目视图</b>（本项目），可切换<b>多项目联邦视图</b>（结合 TDBM 等外接源状态，跨项目对比 + 按源分层）。客户端不含业务逻辑，所有口径由服务端计算。服务端两种部署形态兼容：<b>单人态</b>（本机自动拉起，默认）与<b>团队常开态</b>（常开主机 + 令牌 + 实时 ingest，FR-2.5）。</li>
+  <li><b>知识源可联邦扩展</b>：检索面从"本地双层"扩为"本地双层 + N 个外接源"，外接源命中带来源标识进入同一观测面——"知识库帮了多少"的口径从本地库扩展到全部知识源。</li>
+</ul>
+
+<p><b>预期可观察结果。</b></p>
+<ol>
+  <li>任何人打开面板即可看到：总检索数、命中率、零命中榜、被消费率、估算节省 token，并可按仓 / 时间筛选。</li>
+  <li>agent 调 <code>kb_search</code> 时，面板在秒级延迟内出现该次检索的命中动画与逐条分流（项目层命中 / 通用层命中 / 已读消费）。</li>
+  <li>已知零命中查询类型（中文连写、正文专名、同义词、长查询）转为可命中，且 top-K 由相关性排序决定；零命中时返回死因与改写建议而非空数组。</li>
+  <li>业务开发者在项目目录一条命令打开面板，默认看到"本项目"的命中率与实时命中流，一键切到多项目联邦视图对比所有项目与外接源；外接源（默认 TDBM）的命中同样出现在实时流与指标中，且明确标注来源。</li>
+</ol>
+
+<h2>2. 竞品分析与设计启示</h2>
+
+<p>对市面同类"agent 记忆/知识库"项目的检索与展示设计做了对照，结论按"是否适配本项目约束（197→未来千级条目、纯 Python 零外部索引依赖、git 为事实源）"过滤后列出：</p>
+
+<table>
+  <tr><th>项目</th><th>可借鉴设计</th><th>对本项目的适配判断</th></tr>
+  <tr>
+    <td><b>Mem0 V3</b></td>
+    <td>多信号并行检索：semantic + BM25 + entity 三路打分融合为单一分数；实体层从记忆中自动抽取，检索时Boost 共享实体的结果。</td>
+    <td>✅ "多信号融合"思想采纳。<b>entity 信号</b>映射为"正文派生 keywords 入匹配面"（报错串/函数名/配置键正是 agent 最自然的查询词）；semantic 向量路<b>不采纳</b>（违背零依赖约束，197 条规模 BM25-lite 足够）。<span class="tag p2">来源</span> <a href="https://docs.mem0.ai/migration/oss-v2-to-v3">mem0 v3 迁移文档</a></td>
+  </tr>
+  <tr>
+    <td><b>mind-mem</b></td>
+    <td>BM25 + 向量双路 RRF（Reciprocal Rank Fusion, k=60）按<b>排名</b>融合；向量可选，纯 BM25 开箱即用。</td>
+    <td>✅ 采纳"排名融合优于分数融合"，RRF 无需给各信号校准量纲，未来若加语义路可直接插第三路。<a href="https://pypi.org/project/mind-mem/3.2.1/">mind-mem · PyPI</a></td>
+  </tr>
+  <tr>
+    <td><b>mnemo</b></td>
+    <td><code>score = 0.5·relevance + 0.2·recency + 0.3·importance</code>，用时间与重要性修正纯文本相关性。</td>
+    <td>✅ recency → 既有条目 <code>updated</code> 字段；importance → <code>confidence</code>（verified&gt;probable）。两信号在 index.jsonl 现成可取，零 schema 变更。<a href="http://raw.githubusercontent.com/JoaquimLegal/mnemo/HEAD/docs/03-search.md">mnemo search 文档</a></td>
+  </tr>
+  <tr>
+    <td><b>Zep / Graphiti</b></td>
+    <td>时序知识图谱 + 混合检索（语义/BM25/图遍历），强调知识有效期与失效边。</td>
+    <td>⚠️ 图谱路线不采纳（重依赖、与 git-Markdown 事实源冲突）；但"知识有生命周期"与本项目 <code>review_by</code> / <code>superseded</code> 机制同构——已具备，纳入排序信号即可（deprecated/superseded 降权）。</td>
+  </tr>
+  <tr>
+    <td><b>prompt-spider-ui</b></td>
+    <td>MCP 实时会话：create_session → update_events（同 ID 更新状态）→ complete；浏览器 follow_live 跟随，暂停/拖轴不阻塞后台接收；会话内存态、上限 20 会话/万事件。</td>
+    <td>✅ 实时展示优先走它的 MCP 工具面或复用其回放引擎（本项目转换器契约已真机校准）；其"会话内存态、需主动导出"的短板反证本项目必须由 trace JSONL 做持久层，UI 只做渲染。<a href="https://github.com/Kirito14IT/prompt-spider-ui">Kirito14IT/prompt-spider-ui</a></td>
+  </tr>
+  <tr>
+    <td><b>TencentDB-Agent-Memory</b><br>（工作区内，默认外接源）</td>
+    <td>L0–L3 分层记忆（对话→提炼→场景→人设）；召回分层：L2/L3 快速进语境，需要事实时经 BM25+向量+RRF 回 L1/L0；结果受条数、字符预算、超时三重限制；记忆资产与 Agent 框架解耦、Team 内共享；开放 Memory Core / Memory Knowledge / Proxy v3 API（OpenAPI）。</td>
+    <td>✅ 作为<b>默认首个外接知识源</b>经 OpenAPI 接入联邦检索。两个直接借鉴：① "结果受字符预算与超时限制"→ 外接源命中必须带<b>预算闸门</b>，防止外部大结果反噬上下文（这与本项目低 token 主张同源）；② 其"分层召回"与本项目"三级披露"同构，L2 摘要先行 / L3 按需全文的读取契约一致，外接源按同一契约返回。</td>
+  </tr>
+</table>
+
+<div class="note"><b>共识提炼（决定本文 FR 走向）：</b>
+① 命中率 = 匹配面（查得到）× 排序（排得前）× 反馈（查不到时能自救），三者缺一其余被稀释；
+② 多信号加权/排名融合是行业主流，且在千级条目规模不需要向量也能拿到大部分收益；
+③ 时效与置信度是一等排序信号，不是过滤参数；
+④ 展示层的价值在"持续可看 + 实时可看"，离线导出只是分享态。</div>
+
+<h2>3. 范围</h2>
+
+<h3>3.1 P0 旅程（最小完整闭环）</h3>
+<div class="flow">
+<svg viewBox="0 0 940 150" width="100%" font-family="Consolas,monospace" font-size="12">
+  <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#42D6A4"/></marker></defs>
+  <rect x="8" y="45" width="150" height="52" rx="8" fill="#1c2330" stroke="#2d3646"/>
+  <text x="83" y="68" fill="#d7dee8" text-anchor="middle">Agent 调 kb_search</text>
+  <text x="83" y="86" fill="#8b98a9" text-anchor="middle">（MCP / CLI）</text>
+  <rect x="218" y="45" width="160" height="52" rx="8" fill="#1c2330" stroke="#42D6A4"/>
+  <text x="298" y="68" fill="#42D6A4" text-anchor="middle">排序后检索</text>
+  <text x="298" y="86" fill="#8b98a9" text-anchor="middle">多信号打分+死因</text>
+  <rect x="438" y="45" width="160" height="52" rx="8" fill="#1c2330" stroke="#42D6A4"/>
+  <text x="518" y="68" fill="#42D6A4" text-anchor="middle">trace 持久落盘</text>
+  <text x="518" y="86" fill="#8b98a9" text-anchor="middle">入库/归档，不再丢</text>
+  <rect x="658" y="45" width="160" height="52" rx="8" fill="#1c2330" stroke="#42D6A4"/>
+  <text x="738" y="68" fill="#42D6A4" text-anchor="middle">kb web 秒级呈现</text>
+  <text x="738" y="86" fill="#8b98a9" text-anchor="middle">实时流+看板+动画</text>
+  <line x1="158" y1="71" x2="214" y2="71" stroke="#42D6A4" stroke-width="1.6" marker-end="url(#ar)"/>
+  <line x1="378" y1="71" x2="434" y2="71" stroke="#42D6A4" stroke-width="1.6" marker-end="url(#ar)"/>
+  <line x1="598" y1="71" x2="654" y2="71" stroke="#42D6A4" stroke-width="1.6" marker-end="url(#ar)"/>
+  <rect x="658" y="115" width="160" height="26" rx="6" fill="none" stroke="#F0CA57" stroke-dasharray="4 3"/>
+  <text x="738" y="132" fill="#F0CA57" text-anchor="middle" font-size="11">kb_get → 补"已读消费"</text>
+  <line x1="738" y1="97" x2="738" y2="113" stroke="#F0CA57" stroke-dasharray="4 3"/>
+  <rect x="218" y="0" width="160" height="26" rx="6" fill="none" stroke="#F34A87" stroke-dasharray="4 3"/>
+  <text x="298" y="17" fill="#F34A87" text-anchor="middle" font-size="11">零命中→死因+改写建议</text>
+  <line x1="298" y1="43" x2="298" y2="27" stroke="#F34A87" stroke-dasharray="4 3"/>
+</svg>
+</div>
+
+<ul>
+  <li><b>进入条件</b>：trace 开关开启（默认策略见 FR-1.1），业务开发者在<b>项目目录</b>启动 <code>kb web</code>。</li>
+  <li><b>P0 动作</b>：trace 持久化含 source/caller 字段（FR-1）→ 面板项目视角看板与实时流（FR-2 + FR-5）→ 检索排序与死因透传（FR-3）→ MCP 返回契约压缩（FR-4）。</li>
+  <li><b>完成证据</b>：观众在面板看到本次检索的命中分流动画；看板命中率/节省 token 数字随检索变化且可区分"仅本项目 / 全局"；<code>推流死锁</code>、<code>PermissionError</code>、<code>授权台账</code> 三类历史零命中查询转为命中且排位可解释。</li>
+  <li><b>恢复路径</b>：trace 目录缺失/为空 → 面板显示开启引导而非报错（沿用 spec §5 行为）；UI 进程退出绝不影响检索主链路（埋点失败静默红线不变）。</li>
+</ul>
+
+<h3>3.2 P1 支持项</h3>
+<ul>
+  <li>中文 2-gram 覆盖率匹配、正文 keywords 入匹配面、aliases 同义词表（FR-3）。</li>
+  <li>零命中周报（<code>kb stat --zero-hit-report</code>）与回填消化率。</li>
+  <li>prompt-spider MCP 桥接（agent 侧主动上报的"直播态"，FR-2.4）。</li>
+  <li><b>知识源连接器框架 + TDBM 默认连接器</b>（FR-6）：统一 SourceConnector 契约、TDBM v3 API 接入、外接源命中进同一 trace/指标/路由观测面。</li>
+  <li>多项目"发起项目识别"增强：caller 自动识别为项目身份（FR-5.1，P0 用 <code>caller_repo</code> 已够用，识别健壮性属 P1）。</li>
+</ul>
+
+<h3>3.3 明确排除</h3>
+<ul>
+  <li>向量嵌入 / 外部搜索引擎 / 知识图谱组件进入<b>本地检索内核</b>（与 git+Markdown 事实源、零依赖约束冲突；但<b>外接源侧</b>允许自带向量/图谱能力，经连接器契约以"摘要先行"方式接入——本项目内核不感知其实现）。未来若加语义路经 RRF 插第三口的升级路径保留。</li>
+  <li>Notion / 飞书 / 图数据库连接器<b>实例</b>（P2 挂账：本版只冻结 SourceConnector 契约并验证"两个异构源可插"，具体连接器待各自鉴权与配额方案评审；契约设计见 FR-6.2，竞品映射见 §2）。</li>
+  <li>外接源<b>写回</b>（kb_create/kb_update 目标仍只有本地 git 知识层；外接源本版只读——写路径涉及跨系统事实源冲突，独立评审）。</li>
+  <li>多用户鉴权、多团队空间（roadmap B4 触发器制，未触发；连接器凭据管理见 §5 隐私边界）。</li>
+  <li>修改 prompt-spider-ui / TDBM 两仓代码（保持只读外件，仅消费其格式与 API 面）。</li>
+</ul>
+
+<h2>4. 功能需求</h2>
+
+<h3>M1 · 观测数据地基 <span class="tag p0">P0</span></h3>
+
+<div class="fr">
+<h3>FR-1.1 trace 持久化策略</h3>
+<p><b>目的</b>：结束"数据已两次丢失"，指标与实时展示都读同一份持久 trace。</p>
+<p><b>规则</b>：</p>
+<table>
+  <tr><th>项</th><th>决策</th></tr>
+  <tr><td>存储</td><td>沿用 <code>traces/YYYY-MM-DD.jsonl</code>，但脱离 gitignore：<b>纳入 git</b>（事件仅含元数据+摘要级信息，敏感度与已入库的 index.jsonl 等同，spec §4.2 红线不变）。git 始终是权威账本——团队常开态的实时 ingest 只是直播加速通道（FR-2.5），不改变"重启/换机后 git clone 即恢复全部历史"这一底线。</td></tr>
+  <tr><td>体积控制</td><td>单文件超 <code>[TBD: 建议 2MB]</code> 或条目超 <code>[TBD]</code> 时按周归档压缩提交；CI 检查 trace 文件不含 <code>body</code>/<code>content</code> 键（守红线）。</td></tr>
+  <tr><td>开关默认</td><td>接入侧 <code>kb init</code> 生成的 <code>.mcp.json</code> 默认带 <code>KB_TRACE=1</code>（观测默认开，成本仅一次行级 append）；本地关闭走既有优先级链。解决 followup T2"依赖本机临时标记"问题。</td></tr>
+  <tr><td>坏行</td><td>沿用 reader 跳过+计数；出现实测坏行再启动写侧加锁（既有触发器不变）。</td></tr>
+</table>
+<p><b>验收</b>：换机 / clean clone 后 <code>kb trace list</code> 仍有历史数据；业务仓一次真实 <code>kb_search</code> 在主仓 trace 可见。</p>
+</div>
+
+<div class="fr">
+<h3>FR-1.2 指标口径（唯一定义，全系统引用此表）</h3>
+<table>
+  <tr><th>指标</th><th>计算规则</th><th>数据源</th></tr>
+  <tr><td>检索命中率</td><td>命中数&gt;0 的 search 事件数 ÷ search 事件总数（同一 query 重复检索逐次计数）。可按 caller_repo、时间窗、scope 分层。</td><td>search 事件 <code>returned</code></td></tr>
+  <tr><td>条目消费率</td><td>被返回后又被同 trace_id 关联 kb_get 读过的条目数 ÷ 被返回条目总数（"返回≠有用"的第二层漏斗）。</td><td>search↔get 关联（既有 trace_id 尽力关联）</td></tr>
+  <tr><td>估算节省 token</td><td><code>Σ(被消费条目全文字符数) − Σ(该次检索返回的摘要级字符数)</code>，按消费口径计（被返回但未读的条目不记节省，保守口径）。字符→token 换算标注估算系数 <code>[Assumption, TBD: 中文≈1字:1token 标注]</code>，面板显示"估算"角标。</td><td>get 事件 + 条目文件字数（index 增派生 <code>chars</code> 字段，<code>kb index</code> 生成）</td></tr>
+  <tr><td>检索自身成本</td><td>search 返回序列化字符数累计（看板显示"知识库自身开销"，与节省对照）。</td><td>search 事件增 <code>returned_chars</code></td></tr>
+  <tr><td>零命中榜</td><td>零命中 search 的 query 按出现频次倒序；已消化（此后同 query 或改写词命中）标记 ✅。</td><td>search 事件</td></tr>
+</table>
+<div class="note">"节省 token"是<b>估算指标</b>而非审计指标——真实反事实（"没有知识库 agent 会花多少 token 重新踩坑"）不可测，面板必须以"估算"字样与口径悬浮说明呈现，禁止包装成精确承诺。<span class="tag tbd">口径需评审确认</span></div>
+</div>
+
+<h3>M2 · 观测面板：客户端 / 服务端 <span class="tag p0">P0</span></h3>
+
+<div class="fr">
+<h3>FR-2.1 架构：观测服务端（kb serve）+ 瘦客户端（kb web）</h3>
+<p><b>目的</b>：trace 是集中事实源，指标口径必须只算一次；多项目/多源联邦视图需要跨 caller、跨源的聚合点。这两件事都指向同一个角色——观测服务端。客户端退化为纯视图（渲染 + 交互 + 订阅），零业务逻辑。</p>
+<div class="flow">
+<svg viewBox="0 0 940 240" width="100%" font-family="Consolas,monospace" font-size="12">
+  <defs><marker id="ar2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#6cb8ff"/></marker>
+  <marker id="ar3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#42D6A4"/></marker></defs>
+  <text x="120" y="16" fill="#8b98a9">客户端（浏览器）</text>
+  <rect x="20" y="28" width="200" height="46" rx="8" fill="#1c2330" stroke="#6cb8ff"/>
+  <text x="120" y="48" fill="#d7dee8" text-anchor="middle">项目 A 目录 → kb web</text>
+  <text x="120" y="64" fill="#8b98a9" text-anchor="middle" font-size="11">默认单项目视图</text>
+  <rect x="20" y="86" width="200" height="46" rx="8" fill="#1c2330" stroke="#6cb8ff"/>
+  <text x="120" y="106" fill="#d7dee8" text-anchor="middle">项目 B 目录 → kb web</text>
+  <text x="120" y="122" fill="#8b98a9" text-anchor="middle" font-size="11">默认单项目视图</text>
+  <rect x="20" y="144" width="200" height="46" rx="8" fill="#1c2330" stroke="#F0CA57"/>
+  <text x="120" y="164" fill="#d7dee8" text-anchor="middle">维护者 → kb web</text>
+  <text x="120" y="180" fill="#8b98a9" text-anchor="middle" font-size="11">默认多项目联邦视图</text>
+  <text x="500" y="16" fill="#8b98a9">服务端（Agent-KB 仓根，单点）</text>
+  <rect x="360" y="58" width="280" height="104" rx="10" fill="#1c2330" stroke="#42D6A4"/>
+  <text x="500" y="84" fill="#42D6A4" text-anchor="middle" font-size="13">kb serve（观测服务端）</text>
+  <text x="500" y="104" fill="#8b98a9" text-anchor="middle" font-size="11">traces/*.jsonl 监听 + 索引增量聚合</text>
+  <text x="500" y="122" fill="#8b98a9" text-anchor="middle" font-size="11">FR-1.2 口径唯一实现 · REST + SSE</text>
+  <text x="500" y="140" fill="#8b98a9" text-anchor="middle" font-size="11">按 caller/source 视图切片由参数表达</text>
+  <rect x="720" y="40" width="200" height="46" rx="8" fill="#1c2330" stroke="#F28A76"/>
+  <text x="820" y="60" fill="#d7dee8" text-anchor="middle">数据层</text>
+  <text x="820" y="76" fill="#8b98a9" text-anchor="middle" font-size="11">traces/*.jsonl · index.jsonl</text>
+  <rect x="720" y="98" width="200" height="46" rx="8" fill="#1c2330" stroke="#F28A76"/>
+  <text x="820" y="118" fill="#d7dee8" text-anchor="middle">知识源健康探针</text>
+  <text x="820" y="134" fill="#8b98a9" text-anchor="middle" font-size="11">tdbm / demo / notion…（FR-6）</text>
+  <line x1="220" y1="51" x2="356" y2="90" stroke="#6cb8ff" stroke-width="1.4" marker-end="url(#ar2)"/>
+  <line x1="220" y1="109" x2="356" y2="108" stroke="#6cb8ff" stroke-width="1.4" marker-end="url(#ar2)"/>
+  <line x1="220" y1="167" x2="356" y2="130" stroke="#F0CA57" stroke-width="1.4" marker-end="url(#ar2)"/>
+  <line x1="640" y1="90" x2="716" y2="66" stroke="#42D6A4" stroke-width="1.4" marker-end="url(#ar3)"/>
+  <line x1="640" y1="130" x2="716" y2="118" stroke="#42D6A4" stroke-width="1.4" marker-end="url(#ar3)"/>
+  <text x="470" y="200" fill="#8b98a9" text-anchor="middle" font-size="11">客户端互访同一 URL 亦可；MCP 埋点不依赖服务端存活（trace 落盘即成立，服务端只是读侧）</text>
+</svg>
+</div>
+<table>
+  <tr><th>角色</th><th>命令</th><th>职责</th><th>约束</th></tr>
+  <tr>
+    <td><b>观测服务端</b></td>
+    <td><code>kb serve [--port 4320] [--bind 127.0.0.1|0.0.0.0] [--token …]</code>（Agent-KB 仓根；<code>kb web</code> 未检测到存活服务时自动代拉起，部署形态见 FR-2.5）</td>
+    <td>监听 <code>traces/*.jsonl</code> 增量 → 维护按 caller×source×日的聚合缓存；对外 REST（历史/榜单/KPI）+ SSE（实时事件）；FR-1.2 指标口径的<b>唯一实现</b>；知识源健康态汇总；团队模式下提供 trace ingest 上报口（FR-2.5）。</td>
+    <td>不写知识内容与门禁面（trace 追加例外，见 FR-2.5）；单机模式仅监听 127.0.0.1，团队模式显式开绑定+令牌；聚合故障/未启动<b>不得影响</b>检索与埋点落盘（读侧与写侧解耦，trace 落盘即事实源成立）。</td>
+  </tr>
+  <tr>
+    <td><b>瘦客户端</b></td>
+    <td><code>kb web [--project X | --all] [--serve-url …]</code>（任意项目目录）</td>
+    <td>打开浏览器连到服务端；解析当前目录推断项目身份 → 默认单项目视图；提供单项目/多项目联邦切换、时间窗、source 筛选、实时流订阅、动画态入口。</td>
+    <td>无构建步骤、无本地状态事实（刷新即重建）；服务发现链与降级行为见 FR-2.5（单人态自动代拉起；团队态不可达降级本机+横幅明示），任何情况下不显示脏数据、不把"连不上"演成"没数据"。</td>
+  </tr>
+</table>
+<p><b>视图参数化</b>：单项目 = 服务端查询参数 <code>caller=X</code>；联邦 = <code>caller=*</code> + 按 caller 分组；按源 = <code>source=…</code>。客户端只是参数组合的呈现，新增视图不改服务端。</p>
+</div>
+
+<div class="fr">
+<h3>FR-2.5 部署形态：单人默认态 ⟶ 团队常开态（同一套 C/S，兼容升级）</h3>
+<p><b>决策（用户定稿）</b>：<code>kb serve</code> 支持团队常开；<code>kb web</code> 自动代拉起 serve；两种形态共用同一代码与协议，差别只在<b>连接地址的发现方式</b>与<b>访问控制</b>，单人→团队是配置升级，不是架构切换。</p>
+<table>
+  <tr><th></th><th>单人态（默认，开箱即用）</th><th>团队常开态（可选启用）</th></tr>
+  <tr><td>拓扑</td><td>每人本机：kb web 自动拉起本机 kb serve（127.0.0.1），看自己 clone 的 Agent-KB 数据。</td><td>一台常开主机（或容器）跑 kb serve，绑定 <code>0.0.0.0:4320</code>；成员浏览器直接访问 <code>http://&lt;host&gt;:4320</code>，或本机 kb web 指向远端。</td></tr>
+  <tr><td>kb web 行为</td><td>发现链：本机端口探活 → 存活则直连；不通 → 静默代拉起本机 serve（用户零感知）→ 打开浏览器。代拉起进程随最后一个客户端退出后空闲超时自杀（默认 <code>[TBD: 15min]</code>），不残留。</td><td>发现链第一步改为读配置的 <code>serve_url</code>（项目 <code>.mcp.json</code> 或用户级 <code>~/.kb/config</code>）→ 可达则连团队服务端并提示"已连团队实例"；不可达 → <b>降级到单人态</b>（本机代拉起）+ 顶部横幅明示"团队实例不可达，当前为本地数据视图"。<b>禁止</b>静默把"团队不可达"演成"没有数据"。</td></tr>
+  <tr><td>数据汇聚</td><td>trace 落各人本地 Agent-KB 仓根（git 提交汇聚，FR-1.1）。</td><td>两条汇聚通道并存：① git 汇聚（权威事实源，不变）；② <b>ingest 上报口</b>——业务机 kb 埋点在 trace 落盘<b>之后</b>尽力 POST 到团队 serve（异步、失败静默、不重试超过 <code>[TBD: 1 次]</code>），让"正在发生"的检索秒级出现在团队看板，不必等一次 git push。git 是账本，ingest 是直播，冲突以 trace_id 幂等去重。</td></tr>
+  <tr><td>访问控制</td><td>127.0.0.1，无鉴权（本机即边界）。</td><td>令牌门：<code>kb serve --token</code> 或 <code>KB_SERVE_TOKEN</code>；无令牌访问 REST/SSE/页面一律 401 提示页。令牌只分"能不能看"，不做行级权限（trace 敏感度已论证= index 级）。角色差异化：<code>--read-only-federation</code> 可关"全局联邦视图"只放单项目视图（给外部协作者）<span class="tag tbd">是否有此场景待确认</span>。</td></tr>
+  <tr><td>写面</td><td colspan="2">两态一致：serve 永不写知识内容与门禁面；团队态唯一新增写是 ingest 追加 trace（幂等、schema 校验、正文键名拒收——红线不变）。</td></tr>
+  <tr><td>常开保障</td><td>不适用（按需拉起）。</td><td>提供 <code>kb serve --install-autostart</code>（Windows 计划任务 / systemd 单元）+ 健康检查端点 <code>/healthz</code>；崩溃重启由系统服务管理器负责，kb 不自造守护。</td></tr>
+</table>
+<p><b>口径一致性</b>：团队态看板数字可能短暂大于 git 事实源（ingest 先到、commit 后到），属预期；每个 KPI 悬浮标注数据水位（"含 N 条未入库实时上报"）。禁止两态出现两套指标实现——仍是 FR-1.2 唯一口径。</p>
+
+<h4>令牌分发配置示例（团队常开态标准流程）</h4>
+<p><b>角色与顺序</b>：① 维护者在常开主机启动带令牌的 serve → ② 令牌随接入指引分发（推荐经 <code>kb init</code> 落盘 <code>~/.kb/config</code>，手工改文件为兜底）→ ③ 成员业务仓只需在 <code>.mcp.json</code> 声明 <code>serve_url</code>，凭据不落在项目仓（防止入库泄露）。</p>
+<div style="background:#0b1017;border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin:10px 0;font-family:Consolas,monospace;font-size:12.5px;overflow-x:auto;white-space:pre">① 常开主机（管理员，一次性）
+   kb serve --bind 0.0.0.0 --port 4320 --token &lt;随机 32 位&gt; --install-autostart
+   # 令牌也可经环境变量注入: setx KB_SERVE_TOKEN &lt;随机 32 位&gt;
+   # --bind 非 127.0.0.1 且无令牌 → serve 拒绝启动（红线，§5 服务边界）
+
+② 成员机（一次性，推荐经 kb init 自动写入）
+   kb init --repo docs --serve-url http://kb.internal:4320 --token &lt;令牌&gt;
+   # 落盘用户级配置(不入库): ~/.kb/config.toml
+   #   [serve]
+   #   url   = "http://kb.internal:4320"
+   #   token = "&lt;令牌&gt;"          # 仅用户级文件; 项目仓永不出现
+
+③ 业务仓 .mcp.json（入库安全，只有地址没有凭据）
+   { "mcpServers": { "kb": {
+       "command": "&lt;venv&gt;/python", "args": ["-m","kb.mcp","--repo","docs"],
+       "env": { "KB_TRACE": "1", "KB_INGEST_URL": "http://kb.internal:4320" }
+       # KB_INGEST_TOKEN 不进这里——埋点上报从 ~/.kb/config.toml 读令牌
+   }}}
+
+④ 成员浏览器: 项目目录 `kb web` → 发现链读 ~/.kb/config.toml
+   → 带 Bearer 头连团队实例; 不可达 → 降级本机 serve + 横幅明示</div>
+<p><b>安全边界</b>：令牌只分"能不能看/能不能 ingest"；轮换暂不支持（离职收权靠重发新令牌重启 serve，见 §7.2 开放问题 4）。</p>
+<p><b>验收</b>：① 全新机器直接 <code>kb web</code>：无 serve 也能开箱看本地数据（代拉起生效），退出后 serve 超时自杀；② 配置 <code>serve_url</code> 指向团队实例：成员 B 浏览器无本机 Agent-KB 完整数据也能看全团队联邦视图；③ 拔掉团队实例网线：B 的 kb web 降级本机视图且横幅可见；④ 无令牌访问团队实例 REST → 401。</p>
+</div>
+
+<div class="fr">
+<h3>FR-2.2 统计看板（首屏，两种视图共用组件）</h3>
+<p><b>目的</b>：一屏回答"这个知识库（对某项目 / 对全部项目）有没有用、帮了多少"。</p>
+<p><b>布局</b>：顶部视图切换（<b>单项目 ⟷ 多项目联邦</b>）+ 时间窗（7d/30d/全部）+ source 筛选；KPI 卡片区（命中率 / 检索数 / 消费率 / 估算节省 token / 知识库自身开销）；中部两张榜单（热门被消费条目、零命中 query 榜）；下部检索流时间线。联邦视图下 KPI 卡叠加"按 caller 迷你分布条"、榜单变"项目矩阵 + 按源堆叠条"（细节见 FR-5）。</p>
+<p><b>规则</b>：数字全部由服务端按 FR-1.2 口径计算，客户端只渲染；筛选变更即重查（服务端聚合缓存保证响应 &lt;300ms 量级 <span class="tag tbd">性能目标待测</span>）；空数据显示开启引导（trace 未开/目录空的文案区分）。</p>
+
+<div class="demo">
+  <div class="demo-title">交互示意 · 看板（视图切换模拟 C/S 查询参数；状态按钮演示异常态）</div>
+  <div class="btns">
+    <button class="btn on" onclick="showView('single',this)">单项目视图（caller=flysee_video_web）</button>
+    <button class="btn" onclick="showView('fed',this)">多项目联邦视图（caller=* + TDBM 源状态）</button>
+  </div>
+  <div class="btns">
+    <button class="btn on" onclick="showState('normal',this)">有数据</button>
+    <button class="btn" onclick="showState('empty',this)">trace 未开启</button>
+    <button class="btn" onclick="showState('cold',this)">冷启动（数据&lt;7天）</button>
+  </div>
+  <div id="state-normal">
+    <div id="view-single">
+      <div class="kpi-row">
+        <div class="kpi"><div class="v">68.4%</div><div class="l">检索命中率（30d · 本项目）</div><div class="s">↑ 41.2% → 68.4%（排序+2-gram 上线后）</div></div>
+        <div class="kpi"><div class="v">~12.6万</div><div class="l">估算节省 token</div><div class="s">估算口径 ⓘ · 按被消费条目计</div></div>
+        <div class="kpi"><div class="v">73.5%</div><div class="l">返回→消费率</div><div class="s">340 返回 / 250 被 kb_get</div></div>
+        <div class="kpi"><div class="v">2.1万</div><div class="l">知识库自身开销</div><div class="s">检索返回字符累计</div></div>
+      </div>
+      <div class="bars">
+        <div class="bar"><span>kb-20261012 · Vite HMR</span><div class="track"><div class="fill" style="width:86%"></div></div><span>43 次消费</span></div>
+        <div class="bar"><span>kb-20261012 · nginx 413</span><div class="track"><div class="fill" style="width:62%"></div></div><span>31 次</span></div>
+        <div class="bar"><span>零命中榜 · "推流死锁" ×9</span><div class="track"><div class="fill zero" style="width:74%"></div></div><span style="color:var(--danger)">未消化</span></div>
+        <div class="bar"><span>零命中榜 · "授权台账" ×5</span><div class="track"><div class="fill zero" style="width:41%"></div></div><span style="color:var(--warn)">已消化 ✅</span></div>
+      </div>
+    </div>
+    <div id="view-fed" style="display:none">
+      <div class="kpi-row">
+        <div class="kpi"><div class="v">61.9%</div><div class="l">全局命中率（30d · 4 项目）</div><div class="s">按 caller 分布见下</div></div>
+        <div class="kpi"><div class="v">~47.8万</div><div class="l">估算节省 token（全局）</div><div class="s">本地 62% · TDBM 38%</div></div>
+        <div class="kpi"><div class="v" style="color:var(--accent)">4/5</div><div class="l">知识源健康</div><div class="s">tdbm ✅ 210ms · demo ✅ · notion ⚠️ 鉴权失效</div></div>
+        <div class="kpi"><div class="v" style="color:var(--warn)">1</div><div class="l">trace 掉线告警</div><div class="s">flysee_media：接入 12 天零记录（开关疑失效）</div></div>
+      </div>
+      <div class="bars">
+        <div class="bar"><span>flysee_video_web</span><div class="track"><div class="fill" style="width:68%"></div></div><span>68% · 省 12.6万</span></div>
+        <div class="bar"><span>flysee_video_setting</span><div class="track"><div class="fill" style="width:72%"></div></div><span>72% · 省 18.2万</span></div>
+        <div class="bar"><span>tencentdb-agent-memory</span><div class="track"><div class="fill" style="width:49%"></div></div><span>49% · 省 9.4万</span></div>
+        <div class="bar"><span>flysee_media</span><div class="track"><div class="fill zero" style="width:4%"></div></div><span style="color:var(--danger)">0 记录</span></div>
+        <div class="bar"><span>命中来源堆叠</span><div class="track"><div class="fill" style="width:62%;display:inline-block;border-radius:0"></div><div class="fill" style="width:38%;background:linear-gradient(90deg,#F28A76,#c96b5a);display:inline-block;border-radius:0"></div></div><span style="font-size:11px">本地│TDBM</span></div>
+      </div>
+    </div>
+  </div>
+  <div id="state-empty" style="display:none">
+    <div class="note" style="border-color:var(--accent2)">traces/ 目录不存在 —— 观测尚未开启。业务仓 <code>.mcp.json</code> 加 <code>"env":{"KB_TRACE":"1"}</code> 或跑 <code>kb init</code> 重新生成后，检索即自动进入看板。本面板不影响检索本身。</div>
+  </div>
+  <div id="state-cold" style="display:none">
+    <div class="kpi-row"><div class="kpi"><div class="v" style="color:var(--warn)">样本不足</div><div class="l">命中率暂不展示</div><div class="s">已积累 3 天 / 26 条检索；口径要求 ≥7 天连续数据后显示趋势，当前仅显示绝对计数。</div></div></div>
+  </div>
+</div>
+
+<p><b>异常态</b>：trace 未开启 → 引导文案（不空白、不报错）；数据不足 7 天 → 命中率显示绝对计数+冷启动标识，不显示百分比趋势 <span class="tag tbd">门槛需确认</span>；trace 文件坏行 → 顶部横幅提示"N 行跳过"；<b>观测服务端未启动/断连</b> → 客户端全区块置灰 + "连接中/启动指引（kb serve）"，禁止显示上次缓存冒充实时。</p>
+</div>
+
+<div class="fr">
+<h3>FR-2.3 实时命中流（P0）+ 蜘蛛动画（P1 视觉层）</h3>
+<p><b>实时流（P0，先做）</b>：经服务端 SSE 订阅（降级 2s 轮询），<b>接受延迟目标 ≤2s</b>（用户明示可接受延迟）。单项目视图只推本项目；联邦视图推全量并在每行标注 caller。检索事件到达后在"实时"区插入一行卡片：query、耗时、逐层扫描/淘汰计数（复用死因报告 <code>扫描N 过滤-N 词-N</code>）、命中条目按三分支配色（项目层 <span style="color:#42D6A4">绿</span> / 通用层 <span style="color:#F28A76">橙</span> / 已读消费 <span style="color:#F0CA57">黄</span>——沿用 spider_export 已校准的 route 语义；外接源命中独立配色，见 FR-6.1）。命中条目卡片先以"返回"态出现，同 trace_id 的 get 事件到达时原地变为"已读"态（同 ID 更新，不重复计数——与 prompt-spider 事件语义一致）。零命中以警示色出现，附死因与改写建议。</p>
+<p><b>蜘蛛动画（P1）</b>：单条 trace 点开 → 进入全屏动画态，复用 prompt-spider 视觉语言与三分支分流。实现路线二选一（评审定）：a) 内嵌 prompt-spider-ui 回放页，面板把 trace 现转为 record 经 URL/iframe 传入（转换函数已有，<code>spider_export.to_record</code> 抽为进程内复用）；b) 面板原生 Canvas 简化动画。推荐 a：零前端重做、格式已真机校准。</p>
+<p><b>规则</b>：暂停/筛选只改观看位置不丢事件（follow_live 语义）；事件保留窗 <code>[TBD: 默认当日]</code>；页面切后台恢复后自动追赶最新。</p>
+
+<div class="demo">
+  <div class="demo-title">交互示意 · 实时流（点击模拟一次检索到达）</div>
+  <button class="btn" onclick="pushEvent()">▶ 模拟 agent 检索「推流 死锁」</button>
+  <div class="feed" id="feed">
+    <div class="feed-item"><span class="dot g"></span>命中 <b>kb-20261012-7f3a</b> 线程锁死锁排查<span class="mono">项目层 · title+tags · 2ms</span></div>
+    <div class="feed-item"><span class="dot r"></span>零命中「授权台账」— 死因: 词匹配淘汰 197/197；建议改查「台账」<span class="mono">hint</span></div>
+  </div>
+</div>
+</div>
+
+<div class="fr">
+<h3>FR-2.4 prompt-spider MCP 直播桥（P1）</h3>
+<p>agent 会话可选择性加载 spider MCP：本仓提供桥（trace 事件 → <code>spider_update_events</code> 映射，或直接在 <code>kb.mcp</code> 埋点旁路转发），让 demo 场景获得对方原生实时画布。<b>约束</b>：桥失败不影响 kb 主链路；spider 会话内存态，持久仍以 trace 为准（面板为"事实源视图"，spider 为"表演视图"）。</p>
+</div>
+
+<h3>M3 · 检索命中率提升 <span class="tag p0">P0</span> / <span class="tag p1">P1</span></h3>
+
+<div class="fr">
+<h3>FR-3.1 多信号排序（P0）</h3>
+<p><b>触发</b>：<code>evaluate()</code> 命中集合产出后、limit 截断前。竞品共识（mnemo 加权式 + RRF 排名思想）落地为纯函数打分：</p>
+<table>
+  <tr><th>信号</th><th>取值</th><th>权重建议 <span class="tag tbd">评审定</span></th></tr>
+  <tr><td>字段权重</td><td>title &gt; tags &gt; keywords(P1) &gt; summary，取命中 span 的最高字段权重</td><td>5 / 3 / 2 / 1</td></tr>
+  <tr><td>命中密度</td><td>命中 token 数占比 × span 密度（惩罚"碰巧沾一个词"）</td><td>×1.0 归一</td></tr>
+  <tr><td>置信度</td><td>verified 1.0 / probable 0.8（speculative 已被门禁挡在检索外）</td><td>×0.2 加分项</td></tr>
+  <tr><td>时效</td><td>exp(-Δupdated/90d)，deprecated/superseded ×0.3</td><td>×0.1 加分项</td></tr>
+</table>
+<p><b>结果</b>：<code>matched.rank</code> 改由分数决定；trace 与 MCP 返回携带 rank 与分数（可解释性："为什么这条排第一"）。双层合并策略同步调整：各层先内部排序再按层优先级取数（层序仍项目层优先，spec §7 不破）。</p>
+<p><b>验收</b>：查询「授权」首位为标题命中条目；既有 206 测试全绿 + 排序回归用例。</p>
+</div>
+
+<div class="fr">
+<h3>FR-3.2 零命中死因透传（P0）</h3>
+<p>MCP <code>kb_search</code> 零命中时不再返回 <code>[]</code>，返回结构化对象：</p>
+<ul>
+  <li><code>hits: []</code> + <code>hint</code>：死因计数（scanned / 死于过滤器 N / 死于词匹配 N）+ 建议（更短单 token、该域可用 tags）；</li>
+  <li>追加 <code>suggest</code>：difflib 对 title 分词的近似词（"你是想查'推流卡顿'？"），最多 3 个。</li>
+</ul>
+<p>命中时返回结构不变（数组），保持现有调用零破坏。<code>suggest</code> 词面进入 trace 事件，供面板与零命中榜关联"已消化"判定。</p>
+</div>
+
+<div class="fr">
+<h3>FR-3.3 CJK 2-gram 覆盖率匹配（P1，先补 spec 再动）</h3>
+<p>查询侧 CJK 连续段切 2-gram（"推流死锁"→{推流,流死,死锁}），按<b>覆盖率 ≥0.6</b> 判命中（跨词碎词命中不了属预期）；西文保持既有空白分词 AND。等价于用零依赖方式拿到"轻量分词"的大部分收益；Mem0 式 entity 信号的本地化替代。hit_spans 语义同步进 trace spec（schema 版本 +1）。</p>
+</div>
+
+<div class="fr">
+<h3>FR-3.4 匹配面扩展：keywords + aliases（P1/P2）</h3>
+<ul>
+  <li><b>keywords（P1）</b>：<code>kb index</code> 从正文派生 ≤20 词/条（代码围栏标识符 + H2 段名 + 高信息 token），入 index 并入匹配面——对应竞品 entity 信号，解决 PermissionError 类报错串零命中。索引每条约 +200B，可接受。</li>
+  <li><b>aliases（P2）</b>：front-matter 可选 <code>aliases: []</code>（授权/license 中英对照），schema 走 taxonomy.yaml 唯一事实源老规矩，index 与查询双侧展开。</li>
+</ul>
+</div>
+
+<div class="fr">
+<h3>FR-3.5 零命中反馈回路（P1）</h3>
+<p>trace 持久化（FR-1.1）后：每周跑 <code>kb trace list --zero-hit</code> → 高频词逐条消化（补 tags / 改 summary / 立新条 / 加 alias）→ <code>kb stat --zero-hit-report</code> 输出消化率 → 面板展示"已消化 ✅"。这是唯一让命中率随使用时间<b>单调上升</b>的机制；其余各项是一次性修复。</p>
+</div>
+
+<h3>M4 · Agent 侧返回契约 <span class="tag p0">P0</span></h3>
+
+<div class="fr">
+<h3>FR-4.1 MCP 返回压缩 + 排序后可见信息</h3>
+<ul>
+  <li>compact 序列化（去缩进）+ 默认字段裁剪：保留 id/title/type/domain/scope/confidence/summary/path，<b>新增 hit_fields</b>（比 summary 更快回答"为什么命中"）；status/severity/updated 仅在显式过滤时返回。单次返回 5518 字 → 约 3.5–3.9k 字。</li>
+  <li>排序上线后 MCP 默认 limit 10 → 5（累计 token -60~65%）。<b>硬依赖：排序先行</b>，否则只是提高抽签率。</li>
+  <li>工具描述补检索姿势三段话（分词规则、中文短词建议、死因字段读法），约 150 字常驻，替代"靠踩坑传递"的循环依赖。</li>
+</ul>
+</div>
+
+<h3>M5 · 单项目 / 多项目联邦视图 <span class="tag p0">P0 单项目</span> <span class="tag p1">P1 联邦</span></h3>
+
+<div class="fr">
+<h3>FR-5.1 项目身份识别与单项目视图（P0）</h3>
+<p><b>目的</b>：kb MCP 被多个项目共用（各自 <code>.mcp.json</code> 指向同一套代码），trace 集中落在观测服务端；"我在我的项目里打开 UI，默认只看我的数据"必须由数据模型 + 客户端启动推断保证，而不是靠人记 filter。</p>
+<table>
+  <tr><th>项</th><th>规则</th></tr>
+  <tr><td>身份字段</td><td>沿用既有 <code>caller_repo</code>（发起检索的仓目录名小写）作为<b>项目身份唯一口径</b>，不新造概念。MCP 实例启动时已知自身项目名，埋点直接带上，零新增推断成本。</td></tr>
+  <tr><td>客户端启动推断</td><td><code>kb web</code> 在业务项目目录启动时：读项目 <code>.mcp.json</code> / <code>.agent-kb</code> 挂载与目录名，解析出本项目身份 → 打开后默认视图 = <code>caller == 本项目</code>（单项目视图）；在 Agent-KB 仓根启动 → 默认进入<b>多项目联邦视图</b>。显式 <code>--project X</code> / <code>--all</code> 覆盖推断。</td></tr>
+  <tr><td>识别失败</td><td>目录名与 trace 中任何 caller 都不匹配 → 顶部横幅明示"当前项目无检索记录（识别为 X）"，并列出已见 caller 供一键切换；禁止静默显示空图让人误判"知识库没用"。</td></tr>
+  <tr><td>同名冲突</td><td>不同机器/父目录下同名项目目录会合并计数（caller 口径是目录名）。风险与现有 trace 口径一致，本版接受；若成真痛点再以 <code>repo_path_hash</code> 细分 <span class="tag tbd">观察项</span>。</td></tr>
+</table>
+<p><b>验收</b>：项目 A 与项目 B 各跑 <code>kb_search</code> 后，在 A 目录启动 <code>kb web</code>，看板 KPI、榜单、实时流均只含 A 的记录；点"联邦"可见两项目并按 caller 区分。</p>
+</div>
+
+<div class="fr">
+<h3>FR-5.2 多项目联邦视图（多客户端共用一个服务端）</h3>
+<p>联邦视图 = 服务端 <code>caller=*</code> 查询 + "项目矩阵"：每项目一行——检索数、命中率、消费率、估算节省 token、最近活跃时间、trace 是否存活（掉线检测：接入但长期零记录 = 开关失效告警，正是 followup T2 问题的看板化）、该项目启用哪些知识源。再叠加<b>知识源维度</b>：按 source 堆叠的命中占比与源健康（tdbm 延迟/成功率等，来自 FR-6 健康探针）——即"项目 × 知识源"双轴矩阵。</p>
+<p><b>价值</b>：把"这套系统值不值"从单项目叙事升级为跨项目 + 跨源证据；服务端单点聚合让任意多个客户端（各项目开发者、维护者）同时连同一 URL 各看各的视图，互不干扰。</p>
+<p><b>验收</b>：两个浏览器分别以 A 目录 / 仓根打开，同一服务端下分别呈现单项目视图与联邦视图；联邦矩阵行数 = 已见 caller 数，含源健康列。</p>
+</div>
+
+<h3>M6 · 知识源连接器（检索联邦）<span class="tag p1">P1 框架+TDBM</span> <span class="tag p2">P2 更多源</span></h3>
+
+<div class="fr">
+<h3>FR-6.1 统一概念：source 升为一等字段</h3>
+<p>今天"来源"只有隐含的两层（项目层/通用层，由目录顺序表达）。接入外部源后，<b>source 必须显式化</b>并贯穿全链路：</p>
+<table>
+  <tr><th>载体</th><th>变化</th></tr>
+  <tr><td>trace（schema=2）</td><td>search 事件每层 report 加 <code>source</code> 与 <code>source_kind</code>（<code>local-git | external</code>）；外接源 report 记录 <code>latency_ms</code>、<code>budget_cut</code>（被预算截断数）、<code>error</code>（超时/鉴权失败等）。恒等式扩展为逐源成立。</td></tr>
+  <tr><td>命中条目</td><td>返回行携带 <code>source</code>（如 <code>tdbm</code> / <code>notion</code> / <code>local:docs</code> / <code>local:kb</code>）与源内引用句柄（外接源的条目没有本仓 path，用 <code>source://&lt;connector&gt;/&lt;native_id&gt;</code> 统一寻址）。</td></tr>
+  <tr><td>UI 路由</td><td>蜘蛛三分支扩展为"路由可配置"：既有 项目层/通用层/已读消费 保留，外接源命中进入<b>新增路由</b>（如"外接·TDBM"独立配色）；"已读消费"仍是跨源覆盖层标记（哪个源的条目被 kb_get 式读过）。spider record 的 routes 本就是 config 字段，扩展合法。</td></tr>
+  <tr><td>指标</td><td>FR-1.2 全部口径按 source 维度可分层：外接源命中率、外接源贡献的节省 token、本地 vs 外接的命中占比（面板堆叠条展示）。</td></tr>
+</table>
+</div>
+
+<div class="fr">
+<h3>FR-6.2 SourceConnector 契约（P1 冻结）</h3>
+<p>连接器是<b>只读检索适配器</b>，产品行为契约（实现细节由 spec 承接）：</p>
+<table>
+  <tr><th>契约面</th><th>要求</th></tr>
+  <tr><td>能力申报</td><td>声明：是否支持自由文本 query / 结构化 filter / 分节读取（section）/ 关联（related）。能力缺失时按"不支持→降级"处理（如只读全文的源，section 读取降级为整篇+预算截断并在 UI 标注）。</td></tr>
+  <tr><td>返回形态</td><td><b>摘要先行</b>：检索命中必须返回 L2 级摘要 + source 内句柄 + 源内相关性序；全文按需二次读取（三级披露跨源一致）。禁止连接器把外部全文塞进检索返回。</td></tr>
+  <tr><td>预算闸门</td><td>每源独立：超时上限（默认 <code>[TBD: 建议 800ms]</code>，超时降级为"该源本次不可用"并计入死因）、返回条数上限、字符预算上限。借鉴 TDBM"条数/字符/超时三重限制"——外接源不得反噬本地库的低 token 主张。</td></tr>
+  <tr><td>优先级与融合</td><td>本地双层优先（项目层→通用层）取数后，剩余名额给外接源；外接源之间按配置权重 + FR-3.1 打分统一排序 <span class="tag tbd">融合细则 spec 阶段定</span>。跨源去重：同一条外部知识被重复命中按 source 句柄折叠。</td></tr>
+  <tr><td>故障与观测</td><td>任何源故障（网络/鉴权/超时）静默降级 + trace 记 error，检索永不因外接源失败而失败（与埋点红线同构）；面板按源显示健康态（近 N 次成功率/延迟）。</td></tr>
+  <tr><td>凭据</td><td>连接器凭据走本机环境/本地配置，<b>永不入库、永不进 trace</b>（收录红线延伸到连接器）。</td></tr>
+  <tr><td>配置面</td><td>项目 <code>.mcp.json</code> 的 kb server args 增加 <code>--sources tdbm</code> 式声明 + <code>kb sources list/status</code> CLI 自检（并入 <code>kb doctor</code>）。</td></tr>
+</table>
+</div>
+
+<div class="fr">
+<h3>FR-6.3 TDBM 默认连接器（P1）</h3>
+<p><b>为什么默认</b>：同为 agent 记忆系统、工作区内已有、开放 v3 OpenAPI（Memory Core / Knowledge）、无额外 SaaS 依赖——是验证契约的最小真实外接源。</p>
+<ul>
+  <li>映射：TDBM 记忆资产 → 命中条目；其分层召回结果（L2/L3 摘要 + 句柄）→ 摘要先行返回；其 BM25+向量+RRF 黑盒完成，本项目不重复建设，仅做跨源统一排序。</li>
+  <li>身份传递：检索携带 caller 项目与 agent 身份参数，保证"哪个项目借用了哪些团队记忆"可观测 <span class="tag tbd">TDBM 侧 Team/Agent 映射待确认</span>。</li>
+  <li>验收：项目 agent <code>kb_search</code> 返回中含 <code>source: "tdbm"</code> 命中；面板实时流出现"外接·TDBM"路由卡片；TDBM 服务停机时检索正常、死因区显示"外接源超时"。</li>
+</ul>
+</div>
+
+<div class="fr">
+<h3>FR-6.4 扩展源路线（P2 挂账，本版仅验证契约）</h3>
+<table>
+  <tr><th>候选源</th><th>典型价值</th><th>契约适配要点 / 前置问题</th></tr>
+  <tr><td><b>Notion</b></td><td>PRD/决策/wiki 等产品知识，人已在维护</td><td>官方搜索 API 有速率限与授权粒度（page-level share）问题；摘要先行天然适配（Notion block → 摘要需提取规则）。凭据与"哪些库参与联邦"须项目级白名单。</td></tr>
+  <tr><td><b>飞书（docx/wiki/多维表格）</b></td><td>国内团队协作主阵地，会议纪要/规范文档</td><td>同 Notion：应用授权 + 搜索接口配额；wiki 层级 → 映射为可过滤 domain。本地已有 lark 工具面可快速做 PoC。</td></tr>
+  <tr><td><b>图数据库 / 知识图谱</b>（Neo4j、Graphiti 类）</td><td>"related 空转"的终极解法：关系遍历与多跳问答</td><td>图谱查询天然不是"摘要列表"形态，需为契约增加"关系型返回"扩展（节点+边→可折叠卡片）。等 FR-3.4 tag 关联候选跑一年、确认关系查询是真需求再评估。</td></tr>
+</table>
+<p><b>本版验收（只验可插性，不做上面三源）</b>：用一个内置 <code>demo</code> 假源（fixture 数据实现的 SourceConnector）+ TDBM 真源，同时挂载跑通"四路检索（项目层/通用层/demo/tdbm）→ 统一排序 → 统一 trace → 面板四路由动画"，即证明契约成立。</p>
+</div>
+
+<h2>5. 共享规则与边界</h2>
+
+<table>
+  <tr><th>规则</th><th>内容</th></tr>
+  <tr><td>红线不变</td><td>trace 不含正文（CI 键名校验，团队态 ingest 口同样拒收正文键名）；埋点/UI/观测服务端任何故障不得影响检索主链路（写侧与读侧彻底解耦：kb serve 挂了 trace 照常落盘）；kb serve / kb web 不写知识内容与门禁面（团队态 ingest 追加 trace 为唯一例外，FR-2.5）；prompt-spider-ui / TDBM 两仓只读不改。</td></tr>
+  <tr><td>指标口径单一</td><td>所有界面/CLI/报表口径引用 FR-1.2 定义表，且<b>只在观测服务端实现一份</b>，客户端与 stat 命令均消费服务端结果；"节省 token"永远带"估算"标识。</td></tr>
+  <tr><td>服务边界</td><td>默认单机态：仅监听 127.0.0.1，无鉴权（本机即边界）。团队常开态（FR-2.5）为显式启用：绑定非本机地址<b>必须</b>同时带令牌，缺令牌则 serve 拒绝启动（防止无意裸奔）；ingest 口同令牌门。用户/角色级权限、OAuth 等仍留给 roadmap B4。kb web 代拉起 serve 时恒用单机参数。</td></tr>
+  <tr><td>隐私边界</td><td>trace 含 query 原文与 caller 仓名（与 index 同敏感度，FR-1.1 已论证）；query 若命中敏感词面处理策略 <span class="tag tbd">TBD：是否需要脱敏白名单</span>。</td></tr>
+  <tr><td>兼容与迁移</td><td>trace schema 版本化（现 schema=1；rank/score/returned_chars/suggest 字段 → schema=2），reader 对低版本容错、高版本跳过（既有策略）。MCP 命中态返回结构不变，零命中从数组变对象是<b>行为变更</b>，需在工具描述与 AGENTS.md 同步声明。</td></tr>
+  <tr><td>性能地板</td><td>197→5k 条规模 O(N) 全扫 + 打分 &lt;10ms 量级成立；面板聚合在前端做（trace 行数年级仍 &lt;10 万行）；超限再议增量聚合。</td></tr>
+</table>
+
+<h2>6. 里程碑建议（依赖顺序，非排期）</h2>
+<table>
+  <tr><th>批次</th><th>内容</th><th>依赖</th></tr>
+  <tr><td>B-1</td><td>FR-1.1 trace 持久化 + FR-3.1 排序 + FR-3.2 死因透传 + FR-4.1 返回压缩</td><td>互相独立，可并行；B-1 完成即"能力可证明"的最小态</td></tr>
+  <tr><td>B-2</td><td>FR-2.1 观测服务端（kb serve）+ FR-2.5 <b>单人态</b>（kb web 自动代拉起 + 空闲自杀）+ FR-2.2/2.3 客户端看板与实时流 + FR-5.1 单项目视图</td><td>依赖 B-1 的 trace 持久化与 schema=2 字段；服务端先行，客户端随后（C/S 可两人并行）；协议按团队态设计（令牌头/serve_url 预留），单人态先交付</td></tr>
+  <tr><td>B-3</td><td>FR-3.3 2-gram + FR-3.4 keywords + FR-3.5 反馈回路 + FR-2.3 动画态 + FR-5.2 联邦视图</td><td>3.3 需先补 spec（既有前置约定）；联邦视图依赖服务端 caller 聚合</td></tr>
+  <tr><td>B-4</td><td>FR-2.5 <b>团队常开态</b>（外绑定+令牌+ingest 上报+autostart）+ FR-6 连接器框架（契约冻结 + demo 假源）+ FR-6.3 TDBM 默认连接器 + FR-2.4 spider MCP 桥 + FR-3.4 aliases + limit 10→5</td><td>limit 减半硬依赖排序实测效果；TDBM 连接器依赖其 v3 API 可用性核实；团队态 ingest 容量目标 spec 压测定数</td></tr>
+</table>
+
+<h2>7. 已定决策与开放问题</h2>
+
+<h3>7.1 已定决策（用户确认，2026-10-20）</h3>
+<ul>
+  <li><b>观测面采用 C/S 架构</b>；UI 支持单项目 / 多项目联邦两视图（v1.2）。</li>
+  <li><b>kb serve 升级团队常开模式</b>，且与单人态兼容——同一协议与代码，配置升级而非架构切换（FR-2.5，v1.3）。</li>
+  <li><b>kb web 自动代拉起 serve</b>：单人态默认行为，代拉起进程空闲超时自杀；团队态按 serve_url 发现、不可达降级本机并横幅明示（FR-2.5）。</li>
+  <li><b>知识源联邦</b>：TDBM 为默认首个外接源；Notion / 飞书 / 图数据库按 SourceConnector 契约挂账 P2（FR-6）。</li>
+</ul>
+
+<h3>7.2 开放问题（仅存影响决策项）</h3>
+<ol>
+  <li>trace 全量入 git vs 每月归档仓（本 PRD 推荐全量入 git，需确认仓库体积容忍度与 CI 索引重建策略）。团队常开态下 git 仍是权威账本，此问题不因 FR-2.5 消失。</li>
+  <li>"估算节省 token" 的字符→token 系数与展示措辞（是否直接展示字符数代替）。</li>
+  <li>排序权重数值（5/3/2/1 + 0.2/0.1 加分）是否直接采用后以 trace 回放验收调参。</li>
+  <li>团队实例令牌分发方式：手工分发 vs 接入 <code>kb init</code> 时写入 <code>~/.kb/config</code>（推荐后者，但仍无轮换机制，可接受？）。联邦视图是否需要对"外部协作者"关闭（<code>--read-only-federation</code> 场景真实性）。</li>
+  <li>ingest 上报的延迟与量级上限（多人多项目同时打团队 serve：SSE 扇出与 ingest QPS 的容量目标，spec 阶段压测定数）。</li>
+</ol>
+
+</main>
+<footer>
+Agent-KB · PRD v1.3 · 2026-10-20 · 生成依据：仓库静态分析（search.py / trace.py / spider_export.py / mcp_server.py / layers.py）、
+docs/analysis 与 docs/specs 既有结论、prompt-spider-ui README（MCP 实时会话）、Mem0 V3 / mind-mem / mnemo 公开文档。
+标记 <span class="tag tbd">TBD</span> 处为需评审项，其余均可直接进入评审。
+</footer>
+<script>
+function showState(s,btn){
+  ['normal','empty','cold'].forEach(k=>{const el=document.getElementById('state-'+k);if(el)el.style.display=k===s?'block':'none'});
+  btn.parentElement.querySelectorAll('.btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+}
+function showView(v,btn){
+  ['single','fed'].forEach(k=>{const el=document.getElementById('view-'+k);if(el)el.style.display=k===v?'block':'none'});
+  btn.parentElement.querySelectorAll('.btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+}
+let n=0;
+function pushEvent(){
+  n++;
+  const feed=document.getElementById('feed');
+  const d=document.createElement('div');d.className='feed-item';
+  const hit=n%3!==0;
+  d.innerHTML=hit
+    ?'<span class="dot g"></span>命中 <b>kb-20261015-6254</b> 多词零命中检索姿势<span class="mono">项目层 · tags · '+(2+n)+'ms</span>'
+    :'<span class="dot r"></span>零命中「推流 死锁」— 死因: 词匹配淘汰 197/197；建议改查「死锁」<span class="mono">hint</span>';
+  feed.prepend(d);
+  setTimeout(()=>{if(hit){d.innerHTML='<span class="dot w"></span>已读消费 <b>kb-20261015-6254</b> ← kb_get<span class="mono">+1.2s · 估算节省 ~1.8k 字</span>';}},1500);
+}
+</script>
+</body>
+</html>

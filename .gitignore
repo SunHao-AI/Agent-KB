@@ -4,8 +4,8 @@ __pycache__/
 .pytest_cache/
 .superpowers/
 .venv/
-traces/
 .kb-trace
+.trae-html-share-packages/
 build/
 dist/
 

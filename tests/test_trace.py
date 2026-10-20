@@ -78,7 +78,7 @@ def test_new_file_writes_meta_once(kbroot):
     lines = files[0].read_text(encoding="utf-8").splitlines()
     metas = [ln for ln in lines if json.loads(ln).get("kind") == "meta"]
     assert len(metas) == 1
-    assert json.loads(metas[0]) == {"kind": "meta", "schema": 1}
+    assert json.loads(metas[0]) == {"kind": "meta", "schema": trace.SCHEMA}
     assert len(lines) == 3
 
 

@@ -84,10 +84,43 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_init.add_argument("--repo-name", default=None, help="写入 --repo-name 的名字, 默认仓目录名小写")
     p_init.add_argument("--mcp-name", default="kb", help=".mcp.json 中 server 键名")
     p_init.add_argument("--force", action="store_true", help="覆盖已存在的 .mcp.json")
+    p_init.add_argument("--serve-url", default=None,
+                        help="团队观测服务端地址(FR-2.5): 地址进 .mcp.json, 凭据进 ~/.kb/config.toml")
+    p_init.add_argument("--token", default=None, help="与 --serve-url 联用的访问令牌")
 
     p_doc = sub.add_parser("doctor", parents=[common])
     p_doc.add_argument("--current-python", action="store_true",
                        help="追加检查当前解释器(kb CLI 自身运行环境)")
+
+    # 观测面(FR-2): serve=服务端(读侧, 只读); web=瘦客户端启动器(自动代拉起)
+    p_serve = sub.add_parser("serve", help="观测服务端(只读 REST+SSE, 默认仅本机)")
+    p_serve.add_argument("--repo", default=None,
+                         help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
+    p_serve.add_argument("--port", type=int, default=4320)
+    p_serve.add_argument("--bind", default="127.0.0.1",
+                         help="非本机绑定必须带 --token(红线)")
+    p_serve.add_argument("--token", default=None)
+    p_serve.add_argument("--default-caller", default=None,
+                         help="单项目视图默认项目名(小写目录名)")
+    p_web = sub.add_parser("web", help="打开观测面板(无 serve 时代拉起)")
+    p_web.add_argument("--repo", default=None,
+                       help="Agent-KB 仓根, 默认为本仓 kb_root()")
+    p_web.add_argument("--port", type=int, default=4320)
+    p_web.add_argument("--caller", default="",
+                       help="项目身份; 缺省按当前目录名推断")
+    p_web.add_argument("--all", action="store_true", help="直接进多项目联邦视图")
+    p_web.add_argument("--no-browser", action="store_true", help="只打印 URL")
+
+    # FR-2.4: trace → prompt-spider-ui 实时直播(驱动克隆仓的 stdio MCP)
+    p_sl = sub.add_parser("spider-live",
+                          help="把检索埋点实时直播到 prompt-spider-ui(需 Node 20+)")
+    p_sl.add_argument("--repo", default=None,
+                      help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
+    p_sl.add_argument("--spider-home", default=None,
+                      help="prompt-spider-ui 克隆根, 默认探 KB_SPIDER_HOME/常见同级目录")
+    p_sl.add_argument("--caller", default=None, help="只直播指定项目身份的检索")
+    p_sl.add_argument("--max-sec", type=float, default=0.0,
+                      help="运行上限秒数(0=常驻, 联调用)")
 
     # trace 独立解析: 不用 parents=[common](其 --repo 默认 "." 会静默失效);
     # 各子命令自定义 --repo, 缺省 None = 集中读 Agent-KB 仓根 kb_root()
@@ -113,6 +146,14 @@ def _dispatch(argv: list[str] | None = None) -> int:
                       help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
     p_te.add_argument("--format", default="spider", choices=["spider"])
     p_te.add_argument("-o", "--out", default=None, help="输出文件, 默认 <trace_id>.json")
+
+    # FR-3.5 零命中反馈回路: 周报 = 零命中榜 + 消化率(唯一让命中率单调上升的机制)
+    p_trp = tr_sub.add_parser("report", help="零命中周报(消化率+高频待消化词)")
+    p_trp.add_argument("--repo", default=None,
+                       help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
+    p_trp.add_argument("--since", default=None, help="YYYY-MM-DD, 默认近 7 天")
+    p_trp.add_argument("--caller", default=None)
+    p_trp.add_argument("--format", default="md", choices=["md", "json"])
 
     args = ap.parse_args(argv)
     # trace 子命令 --repo 缺省 None(= kb_root()); 其余命令经 common 恒有默认 "."
@@ -146,7 +187,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
         from kb.bootstrap import init_repo
         ak = Path(args.agent_kb[0]) if args.agent_kb else None
         info = init_repo(repo, ak, args.kb_dir, repo_name=args.repo_name,
-                         mcp_name=args.mcp_name, force=args.force)
+                         mcp_name=args.mcp_name, force=args.force,
+                         serve_url=args.serve_url, serve_token=args.token)
         print(json.dumps(info, ensure_ascii=False, indent=2))
         print("next: 复核 `kb doctor --repo <kb载体目录>`; 再让 Agent 重载 MCP 配置",
               file=sys.stderr)
@@ -216,7 +258,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
                          "confidence": args.confidence},
                 limit=args.limit, reports=reports,
                 returned=[r["id"] for r in res],
-                duration_ms=round((time.perf_counter() - t0) * 1000))
+                duration_ms=round((time.perf_counter() - t0) * 1000),
+                returned_chars=len(json.dumps(res, ensure_ascii=False)))
             kbtrace.append_event(ev)
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return 0
@@ -259,6 +302,36 @@ def _dispatch(argv: list[str] | None = None) -> int:
         else:
             print(json.dumps(stat(repo), ensure_ascii=False, indent=2))
         return 0
+    if args.cmd == "serve":
+        from kb.serve import run as serve_run
+        try:
+            serve_run(Path(args.repo) if args.repo else None, port=args.port,
+                      bind=args.bind, token=args.token,
+                      default_caller=args.default_caller)
+        except ValueError as exc:  # 红线: 非本机绑定无 token → 拒绝启动
+            print(f"kb serve: {exc}", file=sys.stderr)
+            return 2
+        return 0
+    if args.cmd == "web":
+        from kb.launcher import open_panel
+        url, mode = open_panel(args.port, repo=Path(args.repo) if args.repo else None,
+                               caller=args.caller, all_projects=args.all,
+                               no_browser=args.no_browser)
+        if mode == "local-degraded":
+            print("⚠ 已配置团队观测服务端但不可达, 已降级连接本机 serve(数据仅本机)",
+                  file=sys.stderr)
+        print(url)
+        return 0
+    if args.cmd == "spider-live":
+        from kb.spider_live import run as live_run
+        try:
+            live_run(Path(args.repo) if args.repo else None,
+                     spider_home=args.spider_home, caller=args.caller,
+                     max_sec=args.max_sec)
+        except (FileNotFoundError, RuntimeError) as exc:
+            print(f"kb spider-live: {exc}", file=sys.stderr)
+            return 2
+        return 0
     if args.cmd == "trace":
         # 未传 --repo 时 root=None → trace 层落到 kb_root(); 显式传入则生效
         root = Path(args.repo) if args.repo else None
@@ -289,6 +362,33 @@ def _dispatch(argv: list[str] | None = None) -> int:
             out.write_text(json.dumps(rec, ensure_ascii=False, indent=2),
                            encoding="utf-8")
             print(out)
+            return 0
+        if args.trace_cmd == "report":
+            import datetime as _dt
+            from kb import stats as kbstats
+            since = args.since or (_dt.date.today() - _dt.timedelta(days=7)).isoformat()
+            searches, _, _ = kbtrace.read_traces(root=root, caller=args.caller)
+            win = [s for s in searches if str(s.get("ts", ""))[:10] >= since]
+            board = kbstats.zero_hit_board(win, limit=30)
+            digested = [r for r in board if r["digested"]]
+            rate = round(len(digested) / len(board), 4) if board else None
+            if args.format == "json":
+                print(json.dumps({"since": since, "zero_hit_queries": len(board),
+                                  "digested": len(digested), "digest_rate": rate,
+                                  "board": board}, ensure_ascii=False, indent=2))
+                return 0
+            print(f"# 零命中周报(自 {since}"
+                  + (f" · caller={args.caller}" if args.caller else "") + ")")
+            print(f"\n待消化 {len(board) - len(digested)} / 上榜 {len(board)}"
+                  + (f" · 消化率 {rate * 100:.0f}%" if rate is not None else ""))
+            todo = [r for r in board if not r["digested"]]
+            if todo:
+                print("\n高频待消化词(消化动作: 补 tags / 改 summary / 立新条 / 加 alias):")
+                for r in todo:
+                    print(f"- 「{r['query']}」×{r['count']} (caller={r['caller']}, "
+                          f"最近 {r['last_ts'][:10]})")
+            else:
+                print("\n本窗口零命中已全部消化 ✅")
             return 0
         if args.trace_cmd == "show":
             ev = kbtrace.find_trace(args.id, root=root)

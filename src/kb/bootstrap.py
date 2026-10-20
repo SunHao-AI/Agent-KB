@@ -56,7 +56,8 @@ def resolve_interpreter(root: Path) -> str | None:
 
 
 def render_mcp_json(repo_name: str, kb_dir: str, agent_kb_rel: str | None,
-                    interpreter_rel: str, mcp_name: str = "kb") -> str:
+                    interpreter_rel: str, mcp_name: str = "kb",
+                    serve_url: str | None = None) -> str:
     # repo 字段规范名统一小写(同 index 口径), 防大小写漂移致检索 caller_repo 对不上。
     # 不写 cwd: 客户端默认 cwd = .mcp.json 所在目录(业务仓根), args 里的相对
     # --repo/--agent-kb 即按此解析; command 写仓根相对的 venv 解释器路径
@@ -65,11 +66,15 @@ def render_mcp_json(repo_name: str, kb_dir: str, agent_kb_rel: str | None,
     if agent_kb_rel:
         args += ["--agent-kb", agent_kb_rel]
     args += ["--repo-name", repo_name.lower()]
+    env = {"KB_TRACE": "1"}  # FR-1.1: 观测默认开(成本仅一次行级 append); 关闭走 KB_TRACE=0
+    if serve_url:  # FR-2.5: 只有地址入库; token 永远只进 ~/.kb/config.toml
+        env["KB_INGEST_URL"] = serve_url
     payload = {
         "mcpServers": {
             mcp_name: {
                 "command": interpreter_rel,
                 "args": args,
+                "env": env,
             }
         }
     }
@@ -89,12 +94,15 @@ def _biz_root(kb_base: Path) -> Path:
 
 def init_repo(kb_base: Path, agent_kb: Path | None, kb_dir: str,
               repo_name: str | None = None, mcp_name: str = "kb",
-              force: bool = False) -> dict:
+              force: bool = False, serve_url: str | None = None,
+              serve_token: str | None = None) -> dict:
     """写入接入仓 .mcp.json 并返回引导信息(下一步指引由调用方打印)。
 
     `kb_base` = kb 载体目录(同 doctor); 业务仓根经 git toplevel 推导。
     首次接入友好: kb_dir 不存在则创建骨架(可直接 `kb new`); 仓内无 .agent-kb
     submodule 时生成单层配置(不挂 --agent-kb), 提示可后补 submodule。
+    FR-2.5 令牌分发: serve_url 只作为地址写进 .mcp.json 的 env(入库安全),
+    凭据写用户级 ~/.kb/config.toml —— 项目仓永不出现 token。
     """
     kb_base = Path(kb_base)
     repo = _biz_root(kb_base)
@@ -129,11 +137,17 @@ def init_repo(kb_base: Path, agent_kb: Path | None, kb_dir: str,
     if out.exists() and not force:
         raise FileExistsError(f"{out} 已存在(覆盖请加 --force)")
     name = (repo_name or repo.resolve().name).lower()
-    out.write_text(render_mcp_json(name, kb_dir, ak_rel, cmd_rel, mcp_name),
+    out.write_text(render_mcp_json(name, kb_dir, ak_rel, cmd_rel, mcp_name,
+                                   serve_url=serve_url),
                    encoding="utf-8")
+    userconf_path = None
+    if serve_url:  # 凭据只落用户级(团队态令牌分发标准动作, 见 PRD FR-2.5 示例)
+        from kb.userconf import write_serve_config
+        userconf_path = str(write_serve_config(serve_url, serve_token))
     return {"mcp_json": str(out), "agent_kb_root": str(root),
             "command": cmd_rel, "repo_name": name,
-            "layered": ak_rel is not None, "kb_dir_created": created}
+            "layered": ak_rel is not None, "kb_dir_created": created,
+            "userconf": userconf_path}
 
 
 # ---------------- doctor ----------------

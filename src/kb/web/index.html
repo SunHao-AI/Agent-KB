@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent-KB 观测面板</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--bd:#2d3646;--tx:#d7dee8;
+        --mu:#8b98a9;--ok:#42D6A4;--warn:#F0CA57;--bad:#F28A76;--ext:#F34A87;--link:#6cb8ff}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--tx);font:14px/1.65 "PingFang SC","Microsoft YaHei",system-ui,sans-serif;padding:24px 20px 80px}
+  main{max-width:1080px;margin:0 auto}
+  header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px}
+  h1{font-size:19px;margin-right:auto}
+  .chip{background:var(--panel2);border:1px solid var(--bd);border-radius:16px;color:var(--mu);
+        padding:3px 13px;font-size:12.5px;cursor:pointer}
+  .chip.on{border-color:var(--ok);color:var(--ok)}
+  .card{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:16px 18px;margin:14px 0}
+  .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+  .kpi{background:var(--panel2);border:1px solid var(--bd);border-radius:10px;padding:13px}
+  .kpi .v{font-size:24px;font-weight:700;color:var(--ok);font-family:Consolas,monospace}
+  .kpi .l{font-size:12px;color:var(--mu)}
+  .kpi .s{font-size:11.5px;color:var(--mu)}
+  .bar{display:grid;grid-template-columns:230px 1fr 110px;align-items:center;gap:8px;font-size:12.5px;margin:5px 0}
+  .track{background:#0b1017;border-radius:4px;height:13px;overflow:hidden}
+  .fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--ok),#2ea87f)}
+  .fill.zero{background:linear-gradient(90deg,var(--bad),#b25646)}
+  .feed-item{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:7px 9px;
+             border-radius:6px;margin:5px 0;background:var(--panel2);animation:fi .5s}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .g{background:var(--ok);box-shadow:0 0 6px var(--ok)} .r{background:var(--bad);box-shadow:0 0 6px var(--bad)}
+  .w{background:var(--warn);box-shadow:0 0 6px var(--warn)}
+  .mono{font-family:Consolas,monospace;color:var(--mu);margin-left:auto;font-size:11px;white-space:nowrap}
+  .banner{border-left:3px solid var(--warn);background:#1a2130;padding:9px 13px;border-radius:0 8px 8px 0;margin:10px 0;font-size:13px}
+  .banner.bad{border-color:var(--bad)} .banner.ok{border-color:var(--ok)}
+  h3{font-size:14px;margin-bottom:8px;color:#eaf1f8}
+  .est{color:var(--ext);cursor:help}
+  a{color:var(--link);text-decoration:none}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{border:1px solid var(--bd);padding:5px 8px;text-align:left}
+  th{background:var(--panel2);white-space:nowrap}
+  .stale td{color:var(--bad)}
+  .feed-item{cursor:pointer}
+  .feed-item:hover{outline:1px solid var(--bd)}
+  #modal{position:fixed;inset:0;background:rgba(5,8,12,.88);display:none;z-index:9}
+  #modal.open{display:flex;align-items:center;justify-content:center;flex-direction:column}
+  #modal .head{color:var(--mu);font-size:13px;margin-bottom:6px}
+  #modal .head b{color:var(--tx)}
+  #spider{width:min(860px,94vw)}
+  @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
+  @media(max-width:700px){.bar{grid-template-columns:120px 1fr 60px}}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Agent-KB 观测面板</h1>
+  <span class="chip on" id="vSingle">单项目</span>
+  <span class="chip" id="vFed">多项目联邦</span>
+  <span class="chip on" data-w="7">7天</span>
+  <span class="chip" data-w="30">30天</span>
+  <span class="chip" data-w="0">全部</span>
+  <span class="chip" id="conn">连接中…</span>
+</header>
+<div id="banners"></div>
+<div id="kpi" class="card"><div class="kpi-row" id="kpis"></div></div>
+<div class="card" id="boards"><h3>热门被消费条目 / 零命中榜</h3><div id="boardBars"></div></div>
+<div class="card" id="matrixCard" style="display:none"><h3>项目矩阵</h3><table id="matrix"></table></div>
+<div class="card"><h3>实时命中流 <span style="color:var(--mu);font-weight:400">(≤2s · SSE · 点击条目回放蜘蛛动画)</span></h3>
+  <div id="feed"></div></div>
+</main>
+<div id="modal"><div class="head" id="modalHead"></div><svg id="spider" viewBox="0 0 860 380"></svg>
+  <div style="color:var(--mu);font-size:12px;margin-top:8px">点击任意处关闭</div></div>
+<script>
+const qs=new URLSearchParams(location.search);
+let caller=qs.get('caller')||'';           // '' = 单项目(由 serve default_caller 决定)
+let view='single', win=7, es=null;
+const feedBuf={};                          // trace_id → 原始事件(动画回放数据源)
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=n=>n==null?'—':(n>=1e4?(n/1e4).toFixed(1)+'万':n);
+
+function sinceDate(days){if(!days)return '';const d=new Date(Date.now()-days*864e5);
+  return d.toISOString().slice(0,10);}
+function callerParam(){return view==='fed'?'caller=*':(caller?`caller=${encodeURIComponent(caller)}`:'');}
+
+async function loadStats(){
+  const q=`${callerParam()}${callerParam()?'&':''}since=${sinceDate(win)}`;
+  const r=await fetch(`/api/stats?${q}`); if(r.status==401)return banner('bad','需要访问令牌: 用 <code>kb web</code> 打开(自动携带)或在 URL 加 <code>?token=…</code>');
+  const d=await r.json(); conn(true);
+  const k=d.kpi; const cold=k.cold_start;
+  $('kpis').innerHTML=[
+    [`<span title="口径: 命中数>0 的检索事件占比, 逐次计">${cold?'样本不足':'命中率'}</span>`,
+      cold?`${k.searches} 次检索`:(k.hit_rate==null?'—':(k.hit_rate*100).toFixed(1)+'%'),
+      cold?'数据<7天, 仅绝对计数':`共 ${k.searches} 次检索`],
+    [`<span class="est" title="估算口径: 被消费全文字符 − 摘要返回摊额; 非精确承诺">估算节省 token ⓘ</span>`,
+      '≈'+fmt(k.saved_chars_est), `未计入 ${k.saved_unknown_count} 次(老数据无字符数)`],
+    ['返回→消费率', k.consume_rate==null?'—':(k.consume_rate*100).toFixed(1)+'%',
+      `${k.consumed_total} 读 / ${k.returned_total} 返回`],
+    ['知识库自身开销', fmt(k.overhead_chars)+' 字','检索返回字符累计'],
+  ].map(([l,v,s])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div><div class="s">${s}</div></div>`).join('');
+  const top=d.top_consumed.slice(0,6), zh=d.zero_hits.slice(0,4);
+  const mx=Math.max(1,...top.map(t=>t.count));
+  $('boardBars').innerHTML=top.map(t=>
+    `<div class="bar"><span title="${esc(t.id)}">${esc(t.title||t.id)}</span><div class="track"><div class="fill" style="width:${100*t.count/mx}%"></div></div><span>${t.count} 次消费</span></div>`
+  ).join('')+zh.map(z=>
+    `<div class="bar"><span>零命中「${esc(z.query)}」×${z.count}</span><div class="track"><div class="fill zero" style="width:${100*Math.min(z.count,mx)/mx}%"></div></div><span>${z.digested?'已消化 ✅':'<span style="color:var(--bad)">未消化</span>'}</span></div>`
+  ).join('')||'<div style="color:var(--mu)">暂无数据</div>';
+  (d.warns||[]).forEach(w=>banner('',`trace 文件告警: ${esc(w)}`));
+}
+async function loadMatrix(){
+  const r=await fetch(`/api/callers?token=${qs.get('token')||''}`);const rows=await r.json();
+  $('matrix').innerHTML='<tr><th>项目</th><th>检索数</th><th>命中率</th><th>最近活跃</th><th>状态</th></tr>'+
+   rows.map(x=>`<tr class="${x.stale?'stale':''}"><td>${esc(x.caller)}</td><td>${x.searches}</td>
+    <td>${x.hit_rate==null?'—':(x.hit_rate*100).toFixed(1)+'%'}</td><td>${esc(x.last_ts.slice(0,16))}</td>
+    <td>${x.stale?'⚠ trace 掉线(>14d)':'活跃'}</td></tr>`).join('');
+}
+function feedItem(ev,isGet){
+  const d=document.createElement('div');d.className='feed-item';
+  if(isGet){const g=$('feed').querySelector(`[data-tid="${CSS.escape(ev.trace_id||'')}"]`);
+    if(g){const rd=g.querySelector('.readset');if(rd)rd.textContent=` · 已读 ${ev.id}`;
+      g.querySelector('.dot').className='dot w';
+      if(g.raw){g.raw.read=g.raw.read||[];if(ev.id)g.raw.read.push(ev.id);}}  // 回放时带已读态
+    return;}
+  const hits=(ev.returned||[]);const tid=ev.trace_id||'';
+  d.dataset.tid=tid;
+  const scanned=(ev.layers||[]).map(l=>`${l.repo}:${l.scanned}扫描/词-${l.rejected?.query??'?'}`).join(' ');
+  d.innerHTML=`<span class="dot ${hits.length?'g':'r'}"></span>
+    <span>${hits.length?`命中 <b>${hits.slice(0,3).map(esc).join(', ')}</b>${hits.length>3?' …+':' '}`
+      :`零命中「${esc(ev.query)}」— <span style="color:var(--bad)">${esc(scanned)}</span>`}</span>
+    <span class="readset"></span>
+    <span class="mono">${view==='fed'?esc(ev.caller_repo)+' · ':''}${esc(ev.query||'')} · ${ev.duration_ms??'?'}ms</span>`;
+  d.raw=ev;feedBuf[tid]=ev;
+  $('feed').prepend(d);
+  while($('feed').children.length>80)$('feed').lastChild.remove();
+}
+function stream(){
+  if(es)es.close();
+  const c=view==='fed'?'*':caller;
+  const tok=qs.get('token')?`&token=${encodeURIComponent(qs.get('token'))}`:'';
+  es=new EventSource(`/api/stream?caller=${encodeURIComponent(c||'')}${tok}`);
+  es.addEventListener('search',e=>feedItem(JSON.parse(e.data)));
+  es.addEventListener('get',e=>feedItem(JSON.parse(e.data),true));
+  es.onerror=()=>{conn(false);};
+}
+async function loadFeed(){
+  $('feed').innerHTML='';
+  const r=await fetch(`/api/feed?${callerParam()}${callerParam()?'&':''}limit=30`);
+  (await r.json()).slice().reverse().forEach(f=>{
+    const hits=f.returned||[];
+    const d=document.createElement('div');d.className='feed-item';d.dataset.tid=f.trace_id;
+    d.innerHTML=`<span class="dot ${f.read.length?'w':(hits.length?'g':'r')}"></span>
+      <span>${hits.length?`命中 <b>${hits.slice(0,3).map(esc).join(', ')}</b>${f.read.length?` · 已读 ${f.read.map(esc).join(', ')}`:''}`
+        :`零命中「${esc(f.query)}」`}</span>
+      <span class="mono">${esc(f.query||'')} · ${f.duration_ms??'?'}ms · ${esc((f.ts||'').slice(5,16))}</span>`;
+    d.raw=f;feedBuf[f.trace_id]=f;
+    $('feed').prepend(d);
+  });
+}
+function banner(cls,html){const b=document.createElement('div');b.className='banner '+cls;b.innerHTML=html;
+  $('banners').prepend(b);setTimeout(()=>b.remove(),12000);}
+// ---- 蜘蛛回放动画(FR-2.3 P1 视觉层): 原生 SVG, trace 数据现算, 不依赖外件 ----
+function normSearch(ev){            // SSE 原始事件 与 feed 快照 → 统一动画数据
+  const returned=ev.returned||[];let details=ev.details||null;
+  if(!details){details={};for(const ly of ev.layers||[])for(const m of ly.matched||[])
+    if(returned.includes(m.id)&&!(m.id in details))details[m.id]={repo:ly.repo,hit_fields:m.hit_fields||[]};}
+  return {trace_id:ev.trace_id,query:ev.query,caller:ev.caller_repo||ev.caller,duration_ms:ev.duration_ms,
+    returned,details,read:ev.read||[],layers:(ev.layers||[]).map(l=>({repo:l.repo,scanned:l.scanned,rejected:l.rejected}))};
+}
+function playSpider(ev){
+  const f=normSearch(ev);$('modalHead').innerHTML=
+    `蜘蛛回放 · <b>${esc(f.query)}</b> · ${esc(f.caller||'')} · ${f.duration_ms??'?'}ms · trace ${esc(f.trace_id||'')}`;
+  const svg=$('spider');svg.innerHTML='';
+  const NS='http://www.w3.org/2000/svg';const mk=(t,a)=>{const n=document.createElementNS(NS,t);
+    for(const k in a)n.setAttribute(k,a[k]);svg.appendChild(n);return n;};
+  mk('circle',{cx:430,cy:190,r:12,fill:'#42D6A4'});
+  mk('text',{x:430,y:222,fill:'#8b98a9','font-size':'12','text-anchor':'middle'}).textContent=`query: ${f.query||'-'}`;
+  (f.layers||[]).forEach((l,i)=>{const x=120+i*230+(f.layers.length===1?310:0);
+    mk('rect',{x:x-80,y:300,width:160,height:44,rx:8,fill:'#1c2330',stroke:'#2d3646'});
+    mk('text',{x,y:318,fill:'#d7dee8','font-size':'12','text-anchor':'middle'}).textContent=`层 ${esc(l.repo)}`;
+    mk('text',{x,y:335,fill:'#8b98a9','font-size':'11','text-anchor':'middle'}).textContent=
+      `扫描${l.scanned} · 词-${l.rejected?.query??'?'} 过滤-${l.rejected?.filter??'?'}`;
+    mk('line',{x1:430,y1:190,x2:x,y2:300,stroke:'#2d3646','stroke-dasharray':'4 4'});});
+  const items=f.returned.slice(0,10);const projRepo=(f.layers||[])[0]?.repo;
+  items.forEach((id,i)=>{const x=items.length===1?430:110+i*(640/(items.length-1));
+    const d=f.details[id]||{};const isProj=d.repo===projRepo;const isRead=(f.read||[]).includes(id);
+    const color=isRead?'#F0CA57':(isProj?'#42D6A4':'#F28A76');
+    const ln=mk('line',{x1:430,y1:190,x2:x,y2:60,stroke:color,'stroke-width':1.4,opacity:0});
+    const c=mk('circle',{cx:430,cy:190,r:5,fill:color});
+    const t=mk('text',{x,y:48,fill:'#d7dee8','font-size':'11','text-anchor':'middle',opacity:0});
+    t.textContent=`${id}·${(d.hit_fields||[]).join('+')||'?'}`;
+    c.animate([{cx:430,cy:190},{cx:x,cy:60}],{duration:420,delay:i*140,fill:'forwards',easing:'ease-out'});
+    ln.animate([{opacity:0},{opacity:.85}],{duration:300,delay:i*140,fill:'forwards'});
+    t.animate([{opacity:0},{opacity:1}],{duration:250,delay:i*140+380,fill:'forwards'});});
+  if(!items.length){const z=mk('text',{x:430,y:120,fill:'#F28A76','font-size':'14','text-anchor':'middle'});
+    z.textContent='零命中 — 死因见各层淘汰计数';z.animate([{opacity:0},{opacity:1}],{duration:400,fill:'forwards'});}
+  $('modal').classList.add('open');
+}
+function conn(ok){$('conn').textContent=ok?'● 已连接':'● 断连(重试中)';
+  $('conn').style.color=ok?'var(--ok)':'var(--bad)';}
+function render(){
+  $('vSingle').classList.toggle('on',view==='single');
+  $('vFed').classList.toggle('on',view==='fed');
+  $('matrixCard').style.display=view==='fed'?'block':'none';
+  document.querySelectorAll('[data-w]').forEach(c=>c.classList.toggle('on',+c.dataset.w===win));
+  loadStats(); loadFeed(); stream(); if(view==='fed')loadMatrix();
+}
+$('vSingle').onclick=()=>{view='single';render();};
+$('vFed').onclick=()=>{view='fed';render();};
+document.querySelectorAll('[data-w]').forEach(c=>c.onclick=()=>{win=+c.dataset.w;render();});
+$('feed').addEventListener('click',e=>{const it=e.target.closest('.feed-item');
+  const tid=it&&(it.dataset.tid||'');const raw=it&&it.raw||feedBuf[tid];
+  if(raw&&raw.kind!=='get')playSpider(raw);});
+$('modal').onclick=()=>$('modal').classList.remove('open');
+document.addEventListener('keydown',e=>{if(e.key==='Escape')$('modal').classList.remove('open');});
+(async()=>{try{const h=await fetch('/api/health');const d=await h.json();
+  if(!d.exists)banner('','<b>traces/ 目录不存在</b> — 观测尚未开启: 业务仓 .mcp.json 加 <code>"env":{"KB_TRACE":"1"}</code> 或重跑 <code>kb init</code>。检索本身不受影响。');
+  if(qs.get('degraded'))banner('bad',`已配置团队观测服务端 <code>${esc(qs.get('serve_url')||'')}</code> 但不可达, 当前为<b>本机降级视图</b>(数据仅本机, 非团队全量)`);
+}catch(e){conn(false);}
+render();})();
+</script>
+</body>
+</html>

@@ -34,6 +34,18 @@ async def test_search_merges_layers(layers, tmp_path):
     srv = build_server(proj, agent_kbs=[kb], repo_name="docs")
     err, out = await _call(srv, "kb_search", {"query": "Vite"})
     assert err is False and out[0]["id"] == "kb-20261014-e1e1"
+    # FR-4.1: 命中行透传 hit_fields; compact 序列化无缩进换行
+    assert out[0]["hit_fields"] == ["title"]
+
+
+async def test_search_zero_hit_returns_hint_not_bare_list(layers):
+    """FR-3.2: 零命中返回 {hits, hint, suggest} 而非裸 []。"""
+    proj, kb = layers
+    srv = build_server(proj, agent_kbs=[kb], repo_name="docs")
+    err, out = await _call(srv, "kb_search", {"query": "vitee"})
+    assert err is False
+    assert out["hits"] == [] and "scanned" in out["hint"]
+    assert "vite" in out["suggest"]
 
 
 async def test_get_returns_full_text(layers):

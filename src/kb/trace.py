@@ -11,7 +11,7 @@ import os
 import uuid
 from pathlib import Path
 
-SCHEMA = 1
+SCHEMA = 2  # v2: search 事件+returned_chars, get 事件+chars(FR-1.2 估算节省 token 自包含)
 _MARKER = ".kb-trace"
 _ENV = "KB_TRACE"
 _FALSY = ("", "0", "false", "False", "no")
@@ -46,8 +46,14 @@ def _today_file(root: Path | None) -> Path:
     return traces_dir(root) / f"{dt.date.today():%Y-%m-%d}.jsonl"
 
 
-def append_event(event: dict, root: Path | None = None) -> None:
-    """行级 append, 新文件补 meta 行。任何 OSError 静默放弃。"""
+def append_event(event: dict, root: Path | None = None, *,
+                 ingest: bool = True) -> None:
+    """行级 append, 新文件补 meta 行。任何 OSError 静默放弃。
+
+    落盘即事实源成立; 之后若配置了 ingest 目标(FR-2.5 团队态直播通道),
+    尽力异步 POST 一份 —— 失败静默、不重试第二跳、绝不反向影响检索。
+    serve 端接收 ingest 后落盘时必须传 ingest=False, 防中继回环。
+    """
     try:
         f = _today_file(root)
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -59,6 +65,25 @@ def append_event(event: dict, root: Path | None = None) -> None:
         with f.open("a", encoding="utf-8") as fh:
             fh.write("".join(ln + "\n" for ln in lines))
     except OSError:
+        return
+    if ingest:
+        _post_ingest(event)
+
+
+def _post_ingest(event: dict) -> None:
+    try:
+        from urllib.request import Request, urlopen
+        from kb.userconf import ingest_target
+        url, token = ingest_target()
+        if not url:
+            return
+        req = Request(url.rstrip("/") + "/api/ingest",
+                      data=json.dumps(event, ensure_ascii=False).encode("utf-8"),
+                      headers={"Content-Type": "application/json",
+                               **({"Authorization": f"Bearer {token}"} if token else {})},
+                      method="POST")
+        urlopen(req, timeout=1.0).close()  # 失败由外层 except 静默吞掉
+    except Exception:
         return
 
 
@@ -138,9 +163,14 @@ def _now() -> str:
 def build_search_event(*, trace_id: str, source: str, caller_repo: str,
                        query: str | None, filters: dict, limit: int,
                        reports: list[dict], returned: list[str],
-                       duration_ms: int, ts: str | None = None) -> dict:
-    """逐层报告 → search 事件(字段序即 spec §4.4 schema)。只取元数据, 不带正文。"""
-    return {
+                       duration_ms: int, returned_chars: int | None = None,
+                       ts: str | None = None) -> dict:
+    """逐层报告 → search 事件(字段序即 spec §4.4 schema)。只取元数据, 不带正文。
+
+    returned_chars: 本次返回给调用方的序列化字符数(FR-1.2 知识库自身开销/节省
+    token 估算用); 调用方未传则省略字段, 聚合侧按"未知"跳过。
+    """
+    ev = {
         "kind": "search", "trace_id": trace_id, "ts": ts or _now(), "source": source,
         "caller_repo": caller_repo, "query": query,
         "filters": {k: filters.get(k) for k in
@@ -152,9 +182,17 @@ def build_search_event(*, trace_id: str, source: str, caller_repo: str,
                    for r in reports],
         "returned": list(returned),
     }
+    if returned_chars is not None:
+        ev["returned_chars"] = int(returned_chars)
+    return ev
 
 
 def build_get_event(*, trace_id: str | None, source: str, caller_repo: str, id: str,
-                    layer: str | None, ok: bool, ts: str | None = None) -> dict:
-    return {"kind": "get", "trace_id": trace_id, "ts": ts or _now(), "source": source,
-            "caller_repo": caller_repo, "id": id, "layer": layer, "ok": ok}
+                    layer: str | None, ok: bool, chars: int | None = None,
+                    ts: str | None = None) -> dict:
+    """chars: 本次读到的全文字符数(FR-1.2 消费口径), ok=False 时无意义省略。"""
+    ev = {"kind": "get", "trace_id": trace_id, "ts": ts or _now(), "source": source,
+          "caller_repo": caller_repo, "id": id, "layer": layer, "ok": ok}
+    if chars is not None:
+        ev["chars"] = int(chars)
+    return ev

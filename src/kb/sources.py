@@ -111,10 +111,14 @@ class DemoConnector(SourceConnector):
 class TdbmConnector(SourceConnector):
     """TencentDB-Agent-Memory LLM-Wiki BM25 检索(FR-6.3 默认外接源)。
 
-    契约核实自其仓内 MemoryKnowledge/openapi.yaml: POST /wiki/search,
-    租户头 x-tdai-service-id, body {wiki_id, query, limit}, 响应为
-    ApiResponseEnvelope(code=0 + data)。⚠ 未经真实实例联调(挂账):
-    data 内页列表字段名做了宽容取首个 list 的防御式解析。
+    契约经真实实例联调核实(2026-10-20, MemoryKnowledge v3):
+    - POST /wiki/search  body {wiki_id, query, limit} → data.results[]
+      {path, title, snippet, score, type}(另有 data.links, 非结果勿混);
+    - POST /wiki/page/read body {wiki_id, refs[]}(字段名是 refs 不是 paths)
+      → data.items[] {ref, content} 或 {ref, not_found: true};
+    - ⚠ Windows 服务端 search 返回的 path 混用分隔符(如
+      `wiki/entities\\xxx.md`), 须归一化为 `/` 再回传 page/read, 否则跨平台解析失败。
+    租户头 x-tdai-service-id, ApiResponseEnvelope(code=0 + data)。
     """
 
     name = "tdbm"
@@ -151,13 +155,14 @@ class TdbmConnector(SourceConnector):
         if resp.get("code") not in (0, None):
             raise RuntimeError(f"TDBM code={resp.get('code')} msg={resp.get('message')}")
         data = resp.get("data") or {}
-        rows = data if isinstance(data, list) else next(
-            (v for v in data.values() if isinstance(v, list)), [])
+        rows = data.get("results") if isinstance(data, dict) else data
         out = []
-        for it in rows[:limit]:
+        for it in (rows or [])[:limit]:
             if not isinstance(it, dict):
                 continue
+            # 服务端 Windows 下 path 混用 `\` 分隔符, 归一化为 `/` 再寻址
             nid = str(it.get("path") or it.get("page_id") or it.get("id") or "")
+            nid = nid.replace("\\", "/")
             out.append(Hit.make(self.name, nid,
                                 str(it.get("title") or it.get("name") or nid),
                                 str(it.get("snippet") or it.get("summary")
@@ -166,13 +171,18 @@ class TdbmConnector(SourceConnector):
         return out
 
     def _get(self, native_id: str) -> str | None:
+        # 请求字段是 refs(非 paths); 响应 items 匹配字段是 ref(非 path)
         resp = self._post("/wiki/page/read",
-                          {"wiki_id": self.wiki_id, "paths": [native_id]})
+                          {"wiki_id": self.wiki_id, "refs": [native_id]})
+        if resp.get("code") not in (0, None):
+            raise RuntimeError(f"TDBM code={resp.get('code')} msg={resp.get('message')}")
         data = resp.get("data") or {}
-        rows = data if isinstance(data, list) else next(
-            (v for v in data.values() if isinstance(v, list)), [])
-        for it in rows:
-            if isinstance(it, dict) and str(it.get("path") or "") == native_id:
+        rows = data.get("items") if isinstance(data, dict) else data
+        want = native_id.replace("\\", "/")
+        for it in rows or []:
+            if not isinstance(it, dict) or it.get("not_found"):
+                continue
+            if str(it.get("ref") or it.get("path") or "").replace("\\", "/") == want:
                 return str(it.get("content") or "")
         return None
 

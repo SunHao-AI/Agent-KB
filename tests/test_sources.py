@@ -1,4 +1,4 @@
-"""FR-6 SourceConnector 契约回归(demo 假源验收, TDBM 未联调只测防御解析)。"""
+"""FR-6 SourceConnector 契约回归(demo 假源验收; TDBM 按真机联调 schema 回归)。"""
 import json
 
 import pytest
@@ -56,19 +56,23 @@ def test_build_tdbm_requires_config(monkeypatch):
     assert sources.build_connectors(only="tdbm") == []  # 未配置不启用
 
 
-# ---- TDBM 防御式解析(不联网, 假响应) --------------------------------------
+# ---- TDBM 解析(不联网, 响应为 2026-10-20 真机联调核实过的真实 schema) ----
 
-def test_tdbm_parses_envelope_defensively(monkeypatch):
+def test_tdbm_search_real_schema(monkeypatch):
     c = TdbmConnector(base_url="http://x", service_id="svc", wiki_id="wiki-1")
 
     def fake_post(path, body):
         assert path == "/wiki/search"
         assert body == {"wiki_id": "wiki-1", "query": "网关", "limit": 5}
-        return {"code": 0, "data": {"pages": [
-            {"path": "wiki/a.md", "title": "网关超时", "snippet": "BM25 摘要", "score": 3.2}]}}
+        # 真机形状: data.results(list of {path,title,snippet,score,type});
+        # links 也是 list, 解析器必须显式取 results 而非首个 list
+        return {"code": 0, "data": {"results": [
+            {"path": "wiki/entities\\redis-timeout.md",  # Windows 真机混用分隔符
+             "title": "Redis Timeout", "snippet": "BM25 摘要", "score": 3.2,
+             "type": "entity"}], "links": [], "count": 1}}
     monkeypatch.setattr(c, "_post", fake_post)
     hits = c.search("网关", limit=5)
-    assert hits[0]["id"] == "source://tdbm/wiki/a.md"
+    assert hits[0]["id"] == "source://tdbm/wiki/entities/redis-timeout.md"  # 已归一化
     assert hits[0]["score"] == 3.2
 
     def fake_post_err(path, body):
@@ -76,6 +80,26 @@ def test_tdbm_parses_envelope_defensively(monkeypatch):
     monkeypatch.setattr(c, "_post", fake_post_err)
     assert c.search("网关") == []  # 业务错误也走静默降级
     assert "40001" in c.health()["error"]
+
+
+def test_tdbm_get_uses_refs_and_ref_fields(monkeypatch):
+    c = TdbmConnector(base_url="http://x", service_id="svc", wiki_id="wiki-1")
+
+    def fake_post(path, body):
+        # 真机契约: 请求字段是 refs(非 paths), 响应 items 匹配字段是 ref(非 path)
+        assert path == "/wiki/page/read"
+        assert body == {"wiki_id": "wiki-1", "refs": ["wiki/entities/redis-timeout.md"]}
+        return {"code": 0, "data": {"items": [
+            {"ref": "wiki/entities/redis-timeout.md", "content": "---\ntype: entity\n---\n正文"}]}}
+    monkeypatch.setattr(c, "_post", fake_post)
+    text = c.get("source://tdbm/wiki/entities/redis-timeout.md")
+    assert text and "正文" in text
+
+    def fake_post_missing(path, body):
+        return {"code": 0, "data": {"items": [
+            {"ref": "wiki/entities/redis-timeout.md", "not_found": True}]}}
+    monkeypatch.setattr(c, "_post", fake_post_missing)
+    assert c.get("source://tdbm/wiki/entities/redis-timeout.md") is None
 
 
 # ---- MCP 联邦集成 ----------------------------------------------------------

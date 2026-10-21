@@ -40,11 +40,13 @@
   .fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--ok),#2ea87f)}
   .fill.zero{background:linear-gradient(90deg,var(--bad),#b25646)}
   .feed-item{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:7px 9px;
-             border-radius:6px;margin:5px 0;background:var(--panel2);animation:fi .5s}
+             border-radius:6px;margin:5px 0;background:var(--panel2)}
+  .feed-item.new{animation:fi .5s}
   .dot{width:8px;height:8px;border-radius:50%;flex:none}
   .g{background:var(--ok);box-shadow:0 0 6px var(--ok)} .r{background:var(--bad);box-shadow:0 0 6px var(--bad)}
   .w{background:var(--warn);box-shadow:0 0 6px var(--warn)}
   .mono{font-family:Consolas,monospace;color:var(--mu);margin-left:auto;font-size:11px;white-space:nowrap}
+  .mono .dur{display:inline-block;min-width:5.5ch;text-align:right}   /* 耗时定宽: 跨行右缘与时间列对齐 */
   .banner{border-left:3px solid var(--warn);background:#1a2130;padding:9px 13px;border-radius:0 8px 8px 0;margin:10px 0;font-size:13px}
   .banner.bad{border-color:var(--bad)} .banner.ok{border-color:var(--ok)}
   .est{color:var(--ext);cursor:help}
@@ -62,6 +64,14 @@
   .fbar input::placeholder{color:#5c6878}
   .fbar .seg button{padding:4px 11px;font-size:11.5px}
   .cnt{font-size:11px;color:var(--mu);font-family:Consolas,monospace;margin-left:auto}
+  #fpage{display:flex;gap:5px;align-items:center;margin-top:9px;flex-wrap:wrap}
+  #fpage button{background:var(--panel2);border:1px solid var(--bd);color:var(--mu);min-width:26px;
+        border-radius:6px;padding:2px 8px;font:12px Consolas,monospace;cursor:pointer}
+  #fpage button:hover:not(:disabled){color:var(--tx);border-color:#3a4658}
+  #fpage button.on{color:var(--ok);border-color:#275848}
+  #fpage button:disabled{opacity:.35;cursor:default}
+  #fpage .gap{color:var(--mu);font-size:11px}
+  #fpage .pgn{font-size:11px;color:var(--mu);margin-left:6px;font-family:Consolas,monospace}
   .empty{border:1px dashed var(--bd);border-radius:10px;padding:26px 18px;text-align:center;color:var(--mu);font-size:12.5px;line-height:2}
   .empty b{color:var(--tx)}
   .boards2{display:grid;grid-template-columns:1fr 1fr;gap:0 26px}
@@ -76,6 +86,16 @@
   #modal .head{color:var(--mu);font-size:13px;margin-bottom:6px}
   #modal .head b{color:var(--tx)}
   #spider{width:min(960px,94vw);background:#080909;border:1px solid #29292e;border-radius:8px}
+  /* 回放浮层: 盖在 main 上的大弹层, iframe 加载克隆仓整页(原生 topbar/transport 全保留) */
+  #rp{position:fixed;inset:0;background:rgba(4,6,9,.78);display:none;z-index:8;align-items:center;justify-content:center}
+  #rp.open{display:flex}
+  #rpBox{width:94vw;height:88vh;background:#080909;border:1px solid var(--ac);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.6)}
+  #rpBar{display:flex;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px solid var(--bd);font-size:12.5px;color:var(--tx)}
+  #rpBar #rpMeta{color:var(--mu);font-size:11.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #rpBar button{background:none;border:1px solid var(--bd);color:var(--mu);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px}
+  #rpBar button:hover{color:var(--tx);border-color:var(--tx)}
+  #rpStage{flex:1;min-height:0}
+  #rpStage iframe{width:100%;height:100%;border:0;background:#080909}
   @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
   @media(max-width:700px){.bar{grid-template-columns:110px 1fr 60px}.boards2{grid-template-columns:1fr}}
 </style>
@@ -102,11 +122,11 @@
 <div id="kpi" class="card"><div class="kpi-row" id="kpis"></div></div>
 <div class="card" id="boards"><h3>热门被消费条目 / 零命中榜
   <span class="tip">条目标题悬停看 id · 零命中行可一键去检索流追因</span></h3>
-  <div class="boards2"><div><div class="colhd">▲ 热门被消费 TOP6</div><div id="hotBars"></div></div>
+  <div class="boards2"><div><div class="colhd">▲ 热门被消费 TOP10</div><div id="hotBars"></div></div>
   <div><div class="colhd">▼ 零命中(知识缺口)</div><div id="zeroBars"></div></div></div></div>
 <div class="card" id="matrixCard" style="display:none"><h3>项目矩阵
   <span class="tip">点击项目行 → 下钻到该项目单项目视图</span></h3><table id="matrix"></table></div>
-<div class="card"><h3>实时命中流 <span class="tip">点击条目回放蜘蛛动画 · Enter/空格 同样可回放</span></h3>
+<div class="card"><h3>实时命中流 <span class="tip">点击条目弹出整页回放浮层(自动重播·循环) · Enter/空格 同样可回放</span></h3>
   <div class="fbar">
     <input id="fq" type="search" placeholder="过滤 query / 命中 id / 项目…" aria-label="过滤检索流" autocomplete="off">
     <div class="seg" role="group" aria-label="状态过滤" id="fseg">
@@ -115,16 +135,30 @@
     </div>
     <span class="cnt" id="fcnt"></span>
   </div>
-  <div id="feed"></div></div>
+  <div id="feed"></div><div id="fpage" hidden></div></div>
 </main>
 <div id="modal"><div class="head" id="modalHead"></div><svg id="spider" viewBox="0 0 960 480"></svg>
-  <button id="fullSpider" style="margin-top:10px;display:none;background:var(--ac);color:#08110c;border:0;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer">⤢ 全屏蜘蛛回放</button>
-  <div id="fullWrap" style="display:none;width:min(1200px,96vw);height:82vh;margin-top:8px"><iframe id="fullFrame" style="width:100%;height:100%;border:1px solid var(--bd);border-radius:8px;background:#080909" title="全屏蜘蛛回放"></iframe></div>
   <div id="spiderHint" style="color:var(--mu);font-size:12px;margin-top:8px">点击任意处关闭</div></div>
+<div id="rp"><div id="rpBox">
+  <div id="rpBar"><span id="rpTitle">▶ 回放</span><span id="rpMeta"></span>
+    <button id="rpPop" title="在新标签页整页打开">⤢ 新标签</button>
+    <button id="rpClose" title="关闭回放(Esc)">✕ 关闭</button></div>
+  <div id="rpStage"><iframe id="rpFrame" title="蜘蛛回放" src="about:blank"></iframe></div></div></div>
 <script>
 const qs=new URLSearchParams(location.search);
 let caller=qs.get('caller')||'';           // '' = 单项目(由 serve default_caller 决定)
 let view='single', win=7, es=null;
+if(caller==='*'){view='fed';caller='';}    // URL 状态恢复(§12): caller=* → 联邦视图
+if([7,30,0].includes(+qs.get('w')))win=+qs.get('w');
+// 状态→URL(state-in-URL): 刷新/分享链接复现视图; push=下钻入栈(浏览器返回键=回退视图)
+function syncUrl(push){
+  const p=new URLSearchParams(location.search);
+  if(view==='fed')p.set('caller','*');
+  else if(caller)p.set('caller',caller); else p.delete('caller');
+  p.set('w',String(win));
+  history[push?'pushState':'replaceState']({view,caller,win},'',
+    location.pathname+'?'+p+location.hash);
+}
 const feedBuf={};                          // trace_id → 原始事件(动画回放数据源)
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -132,11 +166,17 @@ const fmt=n=>n==null?'—':(n>=1e4?(n/1e4).toFixed(1)+'万':n);
 
 function sinceDate(days){if(!days)return '';const d=new Date(Date.now()-days*864e5);
   return d.toISOString().slice(0,10);}
+// 时间统一展示: trace ts 为写入机(Asia/Shanghai)本地时间串(无时区后缀), 直通格式化
+// 为 yyyy/MM/dd HH:mm:ss(补齐到秒); 查看者在其他时区也显示上海钟点, 不做本地化换算。
+const fmtTs=s=>{const m=String(s||'').match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}:\d{2})(:\d{2})?/);
+  return m?`${m[1]}/${m[2]}/${m[3]} ${m[4]}${m[5]||':00'}`:'—';};
+// 统一注入 token: 任何 /api/* 请求(fetch/SSE)必须走这里, 漏注入=token 态静默 401(实测踩坑)
+function apiUrl(p){return p+(p.includes('?')?'&':'?')+'token='+encodeURIComponent(qs.get('token')||'');}
 function callerParam(){return view==='fed'?'caller=*':(caller?`caller=${encodeURIComponent(caller)}`:'');}
 
 async function loadStats(){
   const q=`${callerParam()}${callerParam()?'&':''}since=${sinceDate(win)}`;
-  const r=await fetch(`/api/stats?${q}`); if(r.status==401)return banner('bad','需要访问令牌: 用 <code>kb web</code> 打开(自动携带)或在 URL 加 <code>?token=…</code>');
+  const r=await fetch(apiUrl(`/api/stats?${q}`)); if(r.status==401)return banner('bad','需要访问令牌: 用 <code>kb web</code> 打开(自动携带)或在 URL 加 <code>?token=…</code>');
   const d=await r.json(); conn(true);
   const k=d.kpi; const cold=k.cold_start;
   $('kpis').innerHTML=[
@@ -149,7 +189,7 @@ async function loadStats(){
       `${k.consumed_total} 读 / ${k.returned_total} 返回`],
     ['知识库自身开销', fmt(k.overhead_chars)+' 字','检索返回字符累计'],
   ].map(([l,v,s])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div><div class="s">${s}</div></div>`).join('');
-  const top=d.top_consumed.slice(0,6), zh=d.zero_hits.slice(0,5);
+  const top=d.top_consumed.slice(0,10), zh=d.zero_hits.slice(0,5);
   const mx=Math.max(1,...top.map(t=>t.count));
   $('hotBars').innerHTML=top.map(t=>
     `<div class="bar"><span title="${esc(t.id)}">${esc(t.title||t.id)}</span><div class="track"><div class="fill" style="width:${100*t.count/mx}%"></div></div><span>${t.count} 次消费</span></div>`
@@ -158,12 +198,16 @@ async function loadStats(){
     `<div class="bar"><span title="${esc(z.query)}">「${esc(z.query)}」×${z.count}</span><div class="track"><div class="fill zero" style="width:${100*Math.min(z.count,mx)/mx}%"></div></div><span>${z.digested?'已消化 ✅':`<button class="drill" data-zq="${esc(z.query)}" title="在检索流中定位这些零命中记录, 点击回放看各层淘汰">追因→</button>`}</span></div>`
   ).join('')||'<div style="color:var(--mu);font-size:12px;padding:8px 0">窗口内没有零命中 🎉</div>';
   $('zeroBars').querySelectorAll('.drill').forEach(b=>b.onclick=e=>{
-    e.stopPropagation();$('fq').value=b.dataset.zq;fState.q=b.dataset.zq;fState.f='zero';
-    syncFseg();applyFilter();$('feed').scrollIntoView({behavior:'smooth',block:'center'});});
+    e.stopPropagation();drillTo(b.dataset.zq);});
   (d.warns||[]).forEach(w=>banner('',`trace 文件告警: ${esc(w)}`));
 }
+// 追因落空兜底: 零命中榜聚合整个窗口; feed 现已一次拉 500 条, 直接过滤即可命中
+function drillTo(q){
+  $('fq').value=q;fState.q=q;fState.f='zero';syncFseg();applyFilter();
+  $('feed').scrollIntoView({behavior:'smooth',block:'center'});
+}
 async function loadMatrix(){
-  const r=await fetch(`/api/callers?token=${qs.get('token')||''}`);const rows=await r.json();
+  const r=await fetch(apiUrl('/api/callers'));if(r.status==401)return;const rows=await r.json();
   // FR-5.2 按源堆叠: 项目层绿/通用层橙/外接源粉(PRD 指定 #F34A87), 与蜘蛛四色同源
   const SRC=[['project','项目层','#42D6A4'],['stack','通用层','#F28A76']];
   $('matrix').innerHTML='<tr><th>项目</th><th>检索数</th><th>命中率</th><th>按源堆叠</th><th>外接源</th><th>最近活跃</th><th>状态</th></tr>'+
@@ -171,97 +215,109 @@ async function loadMatrix(){
     const bs=x.by_source||{};const total=Object.values(bs).reduce((a,b)=>a+b,0)||1;
     const srcs=[...SRC,...Object.keys(bs).filter(k=>k.startsWith('ext:')).map(k=>[k,k.slice(4),
       '#F34A87'])].filter(([k])=>bs[k]);
-    const bar=srcs.map(([k,,c],i)=>`<div title="${k}: ${bs[k]} 次(${(100*bs[k]/total).toFixed(0)}%)" style="flex:${bs[k]};background:${c}${i?';border-left:1px solid rgba(255,255,255,.25)':''}"></div>`).join('');
+    // 段内 title 保留精确口径; min-width 保证窄列下小占比段仍可悬停; 外层汇总 title 兜底
+    const barTitle=srcs.map(([k])=>`${k}: ${bs[k]} 次(${(100*bs[k]/total).toFixed(0)}%)`).join(' / ');
+    const bar=srcs.map(([k,,c],i)=>`<div title="${barTitle}" style="flex:${bs[k]};min-width:3px;background:${c}${i?';border-left:1px solid rgba(255,255,255,.25)':''}"></div>`).join('');
     const health=(x.ext||[]).map(e=>`<span title="${esc(e.error||'ok')}" style="color:${e.ok?'var(--ok,#42D6A4)':'var(--bad)'}">●${esc(e.source)}</span>`).join(' ')||'—';
     return `<tr class="${x.stale?'stale':''} matrix-link" data-caller="${esc(x.caller)}" title="点击下钻到 ${esc(x.caller)} 单项目视图"><td>${esc(x.caller)}</td><td>${x.searches}</td>
     <td>${x.hit_rate==null?'—':(x.hit_rate*100).toFixed(1)+'%'}</td>
     <td><div style="display:flex;height:10px;min-width:90px;border-radius:3px;overflow:hidden;background:#ffffff14">${bar}</div></td>
-    <td>${health}</td><td>${esc(x.last_ts.slice(0,16))}</td>
+    <td>${health}</td><td>${fmtTs(x.last_ts)}</td>
     <td>${x.stale?'⚠ trace 掉线(>14d)':'活跃'}</td></tr>`;}).join('');
   $('matrix').querySelectorAll('.matrix-link').forEach(tr=>tr.onclick=()=>{
-    view='single';caller=tr.dataset.caller;render();
+    view='single';caller=tr.dataset.caller;render(true);   // 下钻入栈: 返回键可回联邦
     banner('ok',`已下钻到项目 <b>${esc(caller)}</b>(单项目视图)`);});
 }
-function feedItem(ev,isGet){
-  const d=document.createElement('div');d.className='feed-item';
-  if(isGet){const g=$('feed').querySelector(`[data-tid="${CSS.escape(ev.trace_id||'')}"]`);
-    if(g){const rd=g.querySelector('.readset');if(rd)rd.textContent=` · 已读 ${ev.id}`;
-      g.querySelector('.dot').className='dot w';
-      if(g.dataset)g.dataset.rd='1';
-      if(g.raw){g.raw.read=g.raw.read||[];if(ev.id)g.raw.read.push(ev.id);}
-      applyFilter();}  // 回放时带已读态
-    return;}
-  const hits=(ev.returned||[]);const tid=ev.trace_id||'';
-  d.dataset.tid=tid;
-  const scanned=(ev.layers||[]).map(l=>`${l.repo}:${l.scanned}扫描/词-${l.rejected?.query??'?'}`).join(' ');
-  d.innerHTML=`<span class="dot ${hits.length?'g':'r'}"></span>
-    <span>${hits.length?`命中 <b>${hits.slice(0,3).map(esc).join(', ')}</b>${hits.length>3?' …+':' '}`
-      :`零命中「${esc(ev.query)}」— <span style="color:var(--bad)">${esc(scanned)}</span>`}</span>
-    <span class="readset"></span>
-    <span class="mono">${view==='fed'?esc(ev.caller_repo)+' · ':''}${esc(ev.query||'')} · ${ev.duration_ms??'?'}ms</span>`;
-  d.raw=ev;feedBuf[tid]=ev;
-  d.tabIndex=0;d.setAttribute('role','button');d.setAttribute('aria-label','回放蜘蛛动画: '+(ev.query||tid));
+// ---- 检索流: 数组真源 + 过滤 + 客户端分页(50/页) ----
+// feedArr 新→旧; SSE search 事件 unshift, get(已读)事件并入对应 trace 的 read。
+const PAGE=50;
+const fState={q:'',f:'all',page:1,n:0};
+let feedArr=[];
+const hitTitle=(raw,id)=>{const t=(raw.details&&raw.details[id]&&raw.details[id].title)||'';
+  return t.replace(/^source:\/\/\S+\/\s*/,'').trim();};
+// 条目可读标签: 标题优先截断 24 字(与 SVG 弹层 hitLabel 同口径), 悬停 title 显完整标题+id
+const feedLabel=(raw,id)=>{const t=hitTitle(raw,id);
+  return t?t.slice(0,24)+(t.length>24?'…':''):id;};
+function feedMatch(ev){
+  if(fState.f==='hit')return (ev.returned||[]).length>0;
+  if(fState.f==='zero')return !(ev.returned||[]).length;
+  if(fState.f==='read')return (ev.read||[]).length>0;
+  return true;}
+function feedHay(ev){return String(ev.query||'')+' '+(ev.returned||[]).join(' ')
+  +' '+(ev.returned||[]).map(id=>hitTitle(ev,id)).join(' ')+' '+(ev.caller_repo||'');}
+function itemDom(ev,isNew){
+  const d=document.createElement('div');d.className='feed-item'+(isNew?' new':'');
+  const hits=ev.returned||[],reads=ev.read||[],tid=ev.trace_id||'';
+  d.dataset.tid=tid;d.raw=ev;d.tabIndex=0;d.setAttribute('role','button');
+  d.setAttribute('aria-label','回放蜘蛛动画: '+(ev.query||tid));
   d.dataset.st=hits.length?'hit':'zero';
-  d.dataset.f=String(ev.query||'')+' '+hits.join(' ')+' '+(ev.caller_repo||'');
-  $('feed').prepend(d);
-  while($('feed').children.length>80)$('feed').lastChild.remove();
-  applyFilter();
+  if(reads.length)d.dataset.rd='1';
+  const lab=id=>`<span title="${esc((hitTitle(ev,id)||'')+' · '+id)}">${esc(feedLabel(ev,id))}</span>`;
+  d.innerHTML=`<span class="dot ${reads.length?'w':(hits.length?'g':'r')}"></span>
+    <span>${hits.length?`命中 <b>${hits.slice(0,3).map(lab).join(', ')}</b>${hits.length>3?' …+':''}${reads.length?` · 已读 ${reads.slice(0,2).map(lab).join(', ')}`:''}`
+      :`零命中「${esc(ev.query)}」`}</span>
+    <span class="mono">${view==='fed'?esc(ev.caller_repo)+' · ':''}${esc(ev.query||'')} · <span class="dur">${ev.duration_ms??'?'}ms</span> · ${fmtTs(ev.ts)}</span>`;
+  return d;}
+function renderFeed(){
+  const f=$('feed');f.innerHTML='';
+  const q=fState.q.trim().toLowerCase();
+  const list=feedArr.filter(ev=>feedMatch(ev)&&(!q||feedHay(ev).toLowerCase().includes(q)));
+  fState.n=list.length;
+  const pages=Math.max(1,Math.ceil(list.length/PAGE));
+  if(fState.page>pages)fState.page=pages;
+  list.slice((fState.page-1)*PAGE,fState.page*PAGE)
+    .forEach(ev=>f.appendChild(itemDom(ev,!!ev._new)));
+  $('fcnt').textContent=feedArr.length?`${list.length}/${feedArr.length}`:'';
+  const pg=$('fpage');
+  if(pages>1){pg.hidden=false;
+    // 页码窗口≤5(当前页尽量居中), 首尾+滑动省略号
+    const s=Math.max(1,Math.min(fState.page-2,pages-4)),e=Math.min(pages,s+4);
+    let h=`<button ${fState.page===1?'disabled':''} data-p="${fState.page-1}" aria-label="上一页">‹</button>`;
+    if(s>1)h+=`<button data-p="1">1</button><span class="gap">…</span>`;
+    for(let i=s;i<=e;i++)h+=`<button data-p="${i}" class="${i===fState.page?'on':''}">${i}</button>`;
+    if(e<pages)h+=`<span class="gap">…</span><button data-p="${pages}">${pages}</button>`;
+    h+=`<button ${fState.page===pages?'disabled':''} data-p="${fState.page+1}" aria-label="下一页">›</button>`
+      +`<span class="pgn">第 ${fState.page}/${pages} 页 · 每页 ${PAGE}</span>`;
+    pg.innerHTML=h;}
+  else pg.hidden=true;
+  if(!list.length){const e=document.createElement('div');e.className='empty';
+    e.innerHTML=feedArr.length
+      ?`没有匹配的条目 — 试试更短的关键词或切回<b>全部</b>。${feedArr.length>=500?'<br>(仅载入最近 500 条, 更早记录请缩小时间窗口)':''}`
+      :'还没有检索记录。<br>在业务仓跑一次 <b>kb search</b>(或让 Agent 走 MCP 检索), ≤2s 内会实时出现在这里。';
+    f.appendChild(e);}
+}
+function onEvent(ev,isGet){           // SSE 入口: 并入真源; 仅第 1 页重渲染(不打断阅读旧页)
+  if(isGet){const t=feedArr.find(x=>x.trace_id===ev.trace_id);
+    if(t){t.read=t.read||[];if(ev.id&&!t.read.includes(ev.id))t.read.push(ev.id);
+      if(fState.page===1)renderFeed();}
+    return;}
+  ev._new=1;feedArr.unshift(ev);feedBuf[ev.trace_id]=ev;
+  if(fState.page===1)renderFeed();
+  else $('fcnt').textContent=`${fState.n+1}/${feedArr.length}`;
 }
 function stream(){
   if(es)es.close();
   const c=view==='fed'?'*':caller;
-  const tok=qs.get('token')?`&token=${encodeURIComponent(qs.get('token'))}`:'';
-  es=new EventSource(`/api/stream?caller=${encodeURIComponent(c||'')}${tok}`);
-  es.addEventListener('search',e=>feedItem(JSON.parse(e.data)));
-  es.addEventListener('get',e=>feedItem(JSON.parse(e.data),true));
+  es=new EventSource(apiUrl(`/api/stream?caller=${encodeURIComponent(c||'')}`));
+  es.addEventListener('search',e=>onEvent(JSON.parse(e.data)));
+  es.addEventListener('get',e=>onEvent(JSON.parse(e.data),true));
+  es.onopen=()=>{conn(true);};   // 重连成功即恢复指示器(否则断连后永久显"重试中"误导)
   es.onerror=()=>{conn(false);};
 }
-async function loadFeed(){
-  $('feed').innerHTML='';
-  const r=await fetch(`/api/feed?${callerParam()}${callerParam()?'&':''}limit=30`);
+async function loadFeed(){          // 一次拉足(百条级), 分页纯前端; 追因无需再扩查
+  const r=await fetch(apiUrl(`/api/feed?${callerParam()}${callerParam()?'&':''}limit=500`));
+  if(r.status==401)return;   // token 中途失效: 401 JSON 不是数组, 交给 loadStats 统一出横幅
   const rows=await r.json();
-  rows.slice().reverse().forEach(f=>{
-    const hits=f.returned||[];
-    const d=document.createElement('div');d.className='feed-item';d.dataset.tid=f.trace_id;
-    d.tabIndex=0;d.setAttribute('role','button');d.setAttribute('aria-label','回放蜘蛛动画: '+(f.query||f.trace_id||''));
-    d.innerHTML=`<span class="dot ${f.read.length?'w':(hits.length?'g':'r')}"></span>
-      <span>${hits.length?`命中 <b>${hits.slice(0,3).map(esc).join(', ')}</b>${f.read.length?` · 已读 ${f.read.map(esc).join(', ')}`:''}`
-        :`零命中「${esc(f.query)}」`}</span>
-      <span class="mono">${esc(f.query||'')} · ${f.duration_ms??'?'}ms · ${esc((f.ts||'').slice(5,16))}</span>`;
-    d.raw=f;feedBuf[f.trace_id]=f;
-    d.dataset.st=hits.length?'hit':'zero';
-    if((f.read||[]).length)d.dataset.rd='1';
-    d.dataset.f=String(f.query||'')+' '+hits.join(' ')+' '+(f.caller_repo||'');
-    $('feed').prepend(d);
-  });
-  if(!rows.length){const e=document.createElement('div');e.className='empty';e.id='feedEmpty';
-    e.innerHTML='还没有检索记录。<br>在业务仓跑一次 <b>kb search</b>(或让 Agent 走 MCP 检索), ≤2s 内会实时出现在这里。';
-    $('feed').appendChild(e);}
-  applyFilter();
+  feedArr=rows;feedArr.forEach(x=>feedBuf[x.trace_id]=x);   // API 已是新→旧, 直存(API 序变须同步改这里)
+  fState.page=1;renderFeed();
 }
-// ---- 检索流过滤(纯前端, 不动数据源) ----
-const fState={q:'',f:'all'};
-function applyFilter(){
-  const items=[...$('feed').querySelectorAll('.feed-item')];
-  const q=fState.q.trim().toLowerCase();
-  let n=0;
-  for(const d of items){
-    let ok=true;
-    if(fState.f==='hit')ok=d.dataset.st==='hit';
-    else if(fState.f==='zero')ok=d.dataset.st!=='hit';
-    else if(fState.f==='read')ok=d.dataset.rd==='1';
-    if(ok&&q)ok=(d.dataset.f||'').toLowerCase().includes(q)||d.textContent.toLowerCase().includes(q);
-    d.classList.toggle('hide',!ok);if(ok)n++;
-  }
-  $('fcnt').textContent=items.length?`${n}/${items.length}`:'';
-  const empty=$('feedEmpty');
-  if(items.length&&!n&&!empty){const e=document.createElement('div');e.className='empty';e.id='feedEmpty';
-    e.innerHTML='没有匹配的条目 — 试试更短的关键词或切回<b>全部</b>。';$('feed').appendChild(e);}
-  else if(empty&&(n||!items.length))empty.remove();
-}
+function applyFilter(){fState.page=1;renderFeed();}   // 过滤条件变化: 回到第 1 页重切
 $('fq').oninput=e=>{fState.q=e.target.value;applyFilter();};
 $('fseg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
   fState.f=b.dataset.f;syncFseg();applyFilter();});
+$('fpage').addEventListener('click',e=>{const b=e.target.closest('button[data-p]');if(!b||b.disabled)return;
+  fState.page=+b.dataset.p;renderFeed();
+  $('feed').scrollIntoView({behavior:'smooth',block:'start'});});
 function syncFseg(){$('fseg').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.f===fState.f));}
 function banner(cls,html){const b=document.createElement('div');b.className='banner '+cls;b.innerHTML=html;
   $('banners').prepend(b);setTimeout(()=>b.remove(),12000);}
@@ -269,9 +325,15 @@ function banner(cls,html){const b=document.createElement('div');b.className='ban
 function normSearch(ev){            // SSE 原始事件 与 feed 快照 → 统一动画数据
   const returned=ev.returned||[];let details=ev.details||null;
   if(!details){details={};for(const ly of ev.layers||[])for(const m of ly.matched||[])
-    if(returned.includes(m.id)&&!(m.id in details))details[m.id]={repo:ly.repo,hit_fields:m.hit_fields||[]};}
+    if(returned.includes(m.id)&&!(m.id in details))details[m.id]={repo:ly.repo,hit_fields:m.hit_fields||[],title:m.title||''};}
   return {trace_id:ev.trace_id,query:ev.query,caller:ev.caller_repo||ev.caller,duration_ms:ev.duration_ms,
     returned,details,read:ev.read||[],layers:(ev.layers||[]).map(l=>({repo:l.repo,scanned:l.scanned,rejected:l.rejected}))};
+}
+// 命中行标签: 人类可读标题优先, id 退居悬停; 与 spider_export.label_of 同口径(改一处须同步)
+function hitLabel(id,d,i){
+  const t=(d&&d.title||'').replace(/^source:\/\/\S+\/\s*/,'').trim();
+  if(t)return `${i+1}. ${t}`.slice(0,30);
+  return `${i+1}. ${id}·${((d&&d.hit_fields)||[]).join('+')||'?'}`.slice(0,34);
 }
 // 舞台配色与 spider 步态移植自 prompt-spider-ui(renderer.js PALETTE / spider.js / live-layout.js),
 // 与全屏回放页同源; 数据仍由 trace 现算, 不依赖外件。
@@ -297,14 +359,12 @@ function heartbeatAt(t){                     // spider.js heartbeatAt 等价
   return {beat,size:8.5+6*beat,glow:4+10*beat,intensity:.66+.34*beat,
           roundness:1.1+1.8*beat,rotation:Math.sin(t*2.7)*.1+beat*.12};
 }
-function playSpider(ev){
+function playSpider(ev){              // SVG 弹层回放: 桥不就绪/失败时的降级路线
   closeSpider();
   const f=normSearch(ev);$('modalHead').innerHTML=
-    `蜘蛛回放 · <b>${esc(f.query)}</b> · ${esc(f.caller||'')} · ${f.duration_ms??'?'}ms · trace ${esc(f.trace_id||'')}`;
+    `蜘蛛回放 · <b>${esc(f.query)}</b> · ${esc(f.caller||'')} · ${f.duration_ms??'?'}ms · trace ${esc(f.trace_id||'')}`+
+    (ev._replayErr?`<br><span style="color:var(--ext)">桥不可用: ${esc(ev._replayErr)}(已降级 SVG 动画)</span>`:'');
   const svg=$('spider');svg.innerHTML='';
-  fullTid=f.trace_id||'';                 // 全屏按钮的数据源(每次开新 trace 重置)
-  $('fullWrap').style.display='none';$('fullFrame').src='about:blank';
-  $('fullSpider').style.display=fullTid?'inline-block':'none';
   $('spiderHint').textContent='点击任意处关闭';
   const NS='http://www.w3.org/2000/svg';
   const mk=(t,a,p=svg)=>{const n=document.createElementNS(NS,t);
@@ -328,7 +388,7 @@ function playSpider(ev){
     const d=f.details[id]||{};const isRead=(f.read||[]).includes(id);
     const route=isRead?'you':(d.repo==='ext'||String(id).startsWith('ext:'))?'ext'
       :(d.repo&&d.repo!==projRepo?'model':'code');
-    return {id,route,label:`${i+1}. ${id}·${(d.hit_fields||[]).join('+')||'?'}`.slice(0,34)};});
+    return {id,route,label:hitLabel(id,d,i)};});
   const bx=792,bw=140,bh=76,bgap=10,btop=100;
   const binMid=BINS.map((b,i)=>btop+i*(bh+bgap)+bh/2);
   BINS.forEach(([key,label,color],i)=>{const y=btop+i*(bh+bgap);
@@ -348,7 +408,10 @@ function playSpider(ev){
     const color=BINS.find(x=>x[0]===it.route)[2];
     web.push(mk('path',{d:`M${a.x} ${a.y} Q${c.x} ${c.y} ${b.x} ${b.y}`,fill:'none',stroke:alpha(color,.22),'stroke-width':.7}));
     txt(rx,y+4,String(i+1).padStart(2,'0'),SP.mu,9);
-    txt(rx+22,y+4,it.label,color,10);
+    const labEl=txt(rx+22,y+4,it.label,color,10);
+    {const tp=document.createElementNS(NS,'title');    // 悬停看完整标题 + 条目 id
+      const dt=(f.details[it.id]||{}).title;
+      tp.textContent=(dt?dt+' · ':'')+it.id;labEl.appendChild(tp);}
     dots.push({it,a,b,c,color,i,lane:mk('rect',{x:0,y:0,width:0,height:0,fill:'transparent'})});
     mk('rect',{x:rx+rw-10,y:y-4,width:5,height:5,fill:color,opacity:.35}).setAttribute('data-sq',i);});
   // 背景淡蛛网(参考端 24 条 mesh 曲线, 按尺寸裁剪)
@@ -434,48 +497,59 @@ function playSpider(ev){
 }
 function conn(ok){$('conn').textContent=ok?'● 已连接':'● 断连(重试中)';
   $('conn').classList.toggle('bad',!ok);}
-function render(){
+function render(push){
   $('vSingle').classList.toggle('on',view==='single');
   $('vFed').classList.toggle('on',view==='fed');
   $('matrixCard').style.display=view==='fed'?'block':'none';
   document.querySelectorAll('[data-w]').forEach(c=>c.classList.toggle('on',+c.dataset.w===win));
+  syncUrl(push);
   loadStats(); loadFeed(); stream(); if(view==='fed')loadMatrix();
 }
 $('vSingle').onclick=()=>{view='single';render();};
 $('vFed').onclick=()=>{view='fed';render();};
 document.querySelectorAll('[data-w]').forEach(c=>c.onclick=()=>{win=+c.dataset.w;render();});
 function openFeed(it){const tid=it&&(it.dataset.tid||'');const raw=it&&it.raw||feedBuf[tid];
-  if(raw&&raw.kind!=='get')playSpider(raw);}
+  if(raw&&raw.kind!=='get'){spiderReady?openReplay(raw):playSpider(raw);}}
 $('feed').addEventListener('click',e=>openFeed(e.target.closest('.feed-item')));
 $('feed').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();
   openFeed(e.target.closest('.feed-item'));}});
-// 全屏蜘蛛回放(B-2): 首次点击才让 serve 懒启动克隆仓 MCP 导入本 trace, iframe 加载 previewUrl
-let fullTid='';
-$('fullSpider').onclick=async e=>{
-  e.stopPropagation();
-  const btn=$('fullSpider');
-  if($('fullWrap').style.display!=='none'){   // 已展开 → 收起
-    $('fullWrap').style.display='none';$('fullFrame').src='about:blank';
-    btn.textContent='⤢ 全屏蜘蛛回放';return;}
-  btn.disabled=true;btn.textContent='连接蜘蛛会话…';
+// 回放: 桥就绪(spider_ready)→ 大浮层 iframe 加载克隆仓整页 session 视图(原生 topbar/
+// transport/词墙切换全保留; serve 导入后已配自动重播+循环)。浮层开着点别的流条目=就地换
+// src(会话 serve 端缓存)。⤢ 可另开整页标签。桥不就绪/失败→回落 SVG 弹层(降级不变)。
+let spiderReady=false,rpUrl='';
+async function openReplay(raw){
+  const tid=raw.trace_id||'';if(!tid){playSpider(raw);return;}
+  $('rp').classList.add('open');$('rpMeta').textContent=(raw.query||'-')+' · 连接蜘蛛会话…';
   try{
-    const r=await fetch(`/api/spider/${encodeURIComponent(fullTid)}?token=${qs.get('token')||''}`);
+    const r=await fetch(apiUrl(`/api/spider/${encodeURIComponent(tid)}`));
     const d=await r.json();
     if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);
-    $('fullFrame').src=d.previewUrl;$('fullWrap').style.display='block';
-    btn.textContent='⤡ 收起全屏';$('spiderHint').textContent='全屏=克隆仓回放页(可导入导出/换肤); 关闭面板即释放桥进程内会话';
-  }catch(err){btn.textContent='⤢ 全屏蜘蛛回放';$('spiderHint').innerHTML=
-    `全屏不可用: ${esc(err.message)} — 需 Node 20+ 与克隆仓 mcp/ 依赖(npm --prefix mcp ci), 或设 KB_SPIDER_HOME; 当前 SVG 回放不受影响`;}
-  finally{btn.disabled=false;}
-};
-$('fullWrap').onclick=e=>e.stopPropagation();
+    rpUrl=d.previewUrl;$('rpFrame').src=rpUrl;
+    $('rpTitle').textContent='▶ '+(raw.query||'-');
+    $('rpMeta').textContent=`trace ${tid} · 自动重播·循环`;
+  }catch(err){rpClose();playSpider(Object.assign({},raw,{_replayErr:err.message}));}
+}
+function rpClose(){$('rp').classList.remove('open');$('rpFrame').src='about:blank';rpUrl='';}
+$('rpClose').onclick=rpClose;
+$('rpPop').onclick=()=>{if(rpUrl)window.open(rpUrl,'kb-spider-replay');};
+$('rp').onclick=e=>{if(e.target===$('rp'))rpClose();};   // 点遮罩空白关闭
 $('modal').onclick=e=>{if(e.target===$('modal')||e.target===$('modalHead'))closeSpider(),$('modal').classList.remove('open');};
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSpider(),$('modal').classList.remove('open');});
-(async()=>{try{const h=await fetch('/api/health');const d=await h.json();
+document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;
+  if($('modal').classList.contains('open'))closeSpider(),$('modal').classList.remove('open');
+  else if($('rp').classList.contains('open'))rpClose();});   // Esc: 先关 SVG 弹层, 再关回放浮层
+(async()=>{try{const h=await fetch(apiUrl('/api/health'));const d=await h.json();
+  spiderReady=!!d.spider_ready;   // 桥就绪→点条目弹回放浮层; 不就绪→SVG 弹层降级
   if(!d.exists)banner('','<b>traces/ 目录不存在</b> — 观测尚未开启: 业务仓 .mcp.json 加 <code>"env":{"KB_TRACE":"1"}</code> 或重跑 <code>kb init</code>。检索本身不受影响。');
   if(qs.get('degraded'))banner('bad',`已配置团队观测服务端 <code>${esc(qs.get('serve_url')||'')}</code> 但不可达, 当前为<b>本机降级视图</b>(数据仅本机, 非团队全量)`);
 }catch(e){conn(false);}
+history.replaceState({view,caller,win},'',location.href);   // 固化初始态, 保证首条 popstate 有 state
 render();})();
+// 浏览器前进/后退: 从 state 恢复视图三元组(history 只带 state 不带 URL 参数差异时以 URL 为准)
+addEventListener('popstate',e=>{const p=new URLSearchParams(location.search);
+  view=p.get('caller')==='*'?'fed':'single';
+  caller=p.get('caller')&&p.get('caller')!=='*'?p.get('caller'):'';
+  if([7,30,0].includes(+p.get('w')))win=+p.get('w');
+  render();});
 </script>
 </body>
 </html>

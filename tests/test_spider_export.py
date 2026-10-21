@@ -40,6 +40,8 @@ def test_record_shape():
     assert rec["config"]["unit"] == "task"
     labels = {r["label"] for r in rec["config"]["routes"].values()}
     assert labels == {"项目层命中", "通用层命中", "外接源命中", "已读消费"}
+    # 词墙布局(参考演示同款观感): 克隆仓 config.js 白名单已含 wall
+    assert rec["config"]["layout"] == "wall"
 
 
 def test_spider_id_sanitizes_and_roundtrips():
@@ -83,6 +85,48 @@ def test_log_monotonic_and_revision_ordered():
     assert log[0]["at"] >= 0
 
 
+def test_timeline_staggered_not_all_at_once():
+    """gif 节奏回归守护: 命中不得再全挤 0.5/1.5 两点(动画 1s 闪完=蜘蛛空转);
+    逐条 running 必须错开, 且每条先 running 后 completed。stagger<fly 交错时
+    仍须 at 非递减(排序后编 revision)。"""
+    tr = _trace()
+    ids = [f"kb-{i}" for i in range(12)]
+    tr["returned"] = ids
+    tr["layers"] = [{"repo": "docs", "scanned": 40, "rejected": {"filter": 0, "query": 28},
+                     "matched": [{"id": i, "title": f"t{i}", "scope": "project",
+                                   "confidence": "verified", "hit_fields": ["title"],
+                                   "hit_spans": [[0, 1]], "rank": n}
+                                  for n, i in enumerate(ids)],
+                     "taken": 12, "truncated_at_limit": False}]
+    rec = spider_export.to_record(tr, [])
+    log = rec["log"]
+    assert all(b["at"] >= a["at"] for a, b in itertools.pairwise(log))
+    run_at = [e["at"] for e in log if e["type"] == "events"
+              and e["events"][0]["status"] == "running"]
+    assert len(run_at) == 12
+    assert len(set(run_at)) >= 8          # 至少大部分错开(round 到 0.01s 可同刻)
+    assert run_at == sorted(run_at)
+    first, last = min(run_at), max(run_at)
+    assert last - first >= 6.0            # 12 条按上限 0.6s 错开 ≈6.6s
+    assert rec["duration"] <= 14.5        # 封顶: 不至于久等
+    assert rec["duration"] == log[-1]["at"]
+
+
+def test_timeline_zero_and_all_you_short_loop():
+    """零命中/全已读是静帧展示, 无动画可看 → 短循环不让人等。"""
+    tr = _trace()
+    tr["layers"] = [{**tr["layers"][0], "matched": [], "taken": 0}]
+    tr["returned"] = []
+    assert spider_export.to_record(tr, [])["duration"] == spider_export._ZERO_END
+    rec = spider_export.to_record(_trace(), _gets())   # kb-a you + kb-b model 非全 you
+    tr2 = _trace()
+    tr2["returned"] = ["kb-a"]
+    rec2 = spider_export.to_record(tr2, _gets())       # 唯一命中即 you → 全 you 短轴
+    assert rec2["duration"] == spider_export._ZERO_END
+    assert any(e["type"] == "events" for e in rec2["log"])   # you 仍要入 log, 不能丢
+    assert rec["duration"] > spider_export._ZERO_END
+
+
 def test_zero_hit_trace_valid():
     tr = _trace()
     tr["layers"] = [{**tr["layers"][0], "matched": [], "taken": 0}]
@@ -105,6 +149,20 @@ def test_unrelated_get_ignored():
     rec = spider_export.to_record(_trace(), _gets())   # kb-z/t-9 不在本 trace
     assert {e["id"] for e in rec["events"]} == {"kb-a", "kb-b"}
     assert rec["events"][0]["status"] == "completed"
+
+
+def test_sparse_legacy_trace_no_crash():
+    """手工构造/早期 schema 的 trace: matched 可缺 title, rejected 可缺 filter/query。
+    实测踩坑: serve /api/replay|spider 遇此形态 KeyError 直接掐连接(浏览器只见 Failed to fetch)。"""
+    tr = {"kind": "search", "trace_id": "trc-sparse", "ts": "2026-10-21T10:00:00",
+          "caller_repo": "agent-kb", "source": "cli", "query": "稀疏验证",
+          "returned": ["kb-1"], "duration_ms": 5,
+          "layers": [{"repo": "agent-kb", "scanned": 10,
+                      "rejected": {"query": 9},          # 无 filter 键
+                      "matched": [{"id": "kb-1", "hit_fields": ["title"]}]}]}  # 无 title 键
+    rec = spider_export.to_record(tr, [])
+    assert rec["events"][0]["label"] == "kb-1"           # 缺 title 回退 id
+    assert "agent-kb" in rec["config"]["subtitle"]
 
 
 def test_deterministic():

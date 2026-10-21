@@ -89,6 +89,8 @@ def test_top_consumed_and_feed():
     assert stats.top_consumed(S, G, limit=1)[0] == {"id": "k1", "title": "Tk1", "count": 2}
     feed = stats.feed_events(S, G, caller="a", limit=10)
     assert len(feed) == 2 and feed[0]["read"] == ["k1"]
+    # details 必须透传 title: 蜘蛛回放命中行显示人类可读标题而非裸 id
+    assert feed[0]["details"]["k1"]["title"] == "Tk1"
 
 
 def test_callers_stale_detection():
@@ -133,6 +135,9 @@ def test_serve_health_stats_and_page(tmp_path):
         assert st == 200 and body["kpi"]["searches"] == 0
         st, body = _get_url(f"{base}/api/health")
         assert body["exists"] is True
+        # 桥就绪标志: 跨环境只断类型(本机可能 True, CI False), 值本身环境相关
+        assert isinstance(body["spider_ready"], bool)
+        assert body["spider_ready"] == srv.spider.ready()   # ready() 结果缓存一致
         req = urllib.request.Request(f"{base}/")
         with urllib.request.urlopen(req, timeout=5) as r:
             html = r.read().decode()
@@ -166,6 +171,20 @@ def test_bind_without_token_refused():
         pass
     assert serve.resolve_bind("0.0.0.0", "tok") == "0.0.0.0"
     assert serve.resolve_bind("127.0.0.1", None) == "127.0.0.1"
+
+
+def test_panel_api_requests_use_apiurl():
+    """token 态回归守护: 面板所有 /api/* 请求(fetch 与 EventSource)必须经 apiUrl() 统一
+    注入 token, 禁止手拼 — 实测踩坑: stats/feed/health 曾漏带导致 token 态静默 401 全空。"""
+    import re
+    from pathlib import Path
+    from kb.serve import _asset_dir
+    html = (Path(_asset_dir()) / "index.html").read_text(encoding="utf-8")
+    bad = [m.group(0)[:70] for m in
+           re.finditer(r"(?:fetch|EventSource)\(\s*(`[^`]*`|'[^']*')", html)
+           if "/api/" in m.group(0)]
+    assert not bad, f"面板 /api/* 请求未经 apiUrl() 手拼 URL(须走 apiUrl 注入 token): {bad}"
+    assert "function apiUrl(" in html, "apiUrl() 统一注入器必须存在"
 
 
 # ---- B-2: /api/replay 与 /api/spider(懒启动桥) ----------------------------
@@ -217,9 +236,15 @@ def test_api_spider_uses_bridge_and_caches(tmp_path, monkeypatch):
     try:
         st, body = _get_url(f"{base}/api/spider/rb-2")
         assert st == 200 and body["previewUrl"].startswith("http://127.0.0.1:9/")
+        # 整页回放: previewUrl 原样透传(不注 chrome=none、不动 #token), 面板直接新标签打开
+        assert "chrome=none" not in body["previewUrl"]
+        assert body["previewUrl"].endswith("#token=t")
         st2, body2 = _get_url(f"{base}/api/spider/rb-2")   # 缓存命中: 不再 import
         assert body2 == body
         assert sum(1 for n, _ in calls if n == "spider_import_session") == 1
+        # 导入后默认"自动重播+循环"(用户诉求): restart+loop 必须下发
+        ctrl = [a for n, a in calls if n == "spider_control_playback"]
+        assert ctrl and ctrl[0]["command"] == {"loop": True, "action": "restart"}
         st, _ = _get_any(f"{base}/api/spider/nope")
         assert st == 404
     finally:

@@ -11,6 +11,7 @@ from kb import trace as kbtrace
 from kb.gate import DuplicateCandidate, GateViolation, create_draft, export_entry
 from kb.gate import review as gate_review
 from kb.gate import set_scope as gate_set_scope
+from kb.entry import dump_entry, parse_entry
 from kb.index import build_indexes, check_indexes
 from kb.layers import get_layered, related_layers, search_layers_report
 from kb.lint import lint_repo
@@ -35,6 +36,9 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_new.add_argument("--title", required=True)
     p_new.add_argument("--generated", action="store_true")
     p_new.add_argument("--body-file", default=None)
+    # pitfall/rca 需要 severity(模板默认 medium); 对齐 MCP kb_create, 显式覆盖用本参数
+    p_new.add_argument("--severity", default=None,
+                       choices=["low", "medium", "high", "critical"])
 
     p_lint = sub.add_parser("lint", parents=[common])
     # choices 严格校验, 拼错立即 exit 2 而非静默关闭落位检查
@@ -176,10 +180,15 @@ def _dispatch(argv: list[str] | None = None) -> int:
                 print("note: generated entries are always scope=project", file=sys.stderr)
             body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else None
             e = create_draft(repo, type=args.type, domain=args.domain, title=args.title,
-                             body=body, agent_kbs=tuple(Path(p) for p in args.agent_kb))
+                             body=body, severity=args.severity,
+                             agent_kbs=tuple(Path(p) for p in args.agent_kb))
         else:
             e = create_entry(repo, type=args.type, domain=args.domain, scope=args.scope,
                              title=args.title, generated=False, today=dt.date.today())
+            if args.severity:
+                cur = parse_entry(e.path)
+                cur.fm["severity"] = args.severity
+                e.path.write_text(dump_entry(cur), encoding="utf-8")
         print(e.path)
         return 0
     if args.cmd == "review":

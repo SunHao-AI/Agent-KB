@@ -78,7 +78,7 @@ class AggCache:
 
 
 class SpiderBridge:
-    """B-2 全屏回放桥: 懒启动克隆仓 MCP, trace_id → previewUrl(iframe 数据源)。
+    """回放桥: 懒启动克隆仓 MCP, trace_id → previewUrl(整页回放, 面板新标签打开)。
 
     首次请求才 spawn node; 缺 Node/克隆依赖时记住错误不再重试(失败面收敛一次)。
     会话缓存有界(≤15, 克隆进程上限 20): 超限先 close 最旧会话, 防 create 被拒。
@@ -93,6 +93,21 @@ class SpiderBridge:
         self._dead: str | None = None
         self._urls: OrderedDict[str, tuple[str, str]] = OrderedDict()
         self._lock = threading.Lock()
+        self._ready: bool | None = None
+
+    def ready(self) -> bool:
+        """全屏回放桥是否就绪(轻量探测: node + 克隆仓 + mcp 依赖), 不启动子进程。
+        结果缓存, 供 /api/health 暴露给面板决定"默认 iframe 还是 SVG 降级"。"""
+        if self._ready is None:
+            import shutil
+            try:
+                from kb.spider_live import find_spider_home
+                home = find_spider_home()
+                self._ready = bool(shutil.which("node")) and \
+                    (home / "mcp" / "node_modules").exists()
+            except (FileNotFoundError, OSError):
+                self._ready = False
+        return self._ready
 
     def replay_url(self, record: dict, tid: str) -> str:
         with self._lock:
@@ -109,6 +124,12 @@ class SpiderBridge:
                 url, sid = res.get("previewUrl"), res.get("id")
                 if not url or not sid:
                     raise RuntimeError(f"spider import 无 previewUrl: {res}")
+                try:  # 默认自动重播+循环(imported 会话允许 loop); 失败不影响回放本身
+                    self._mcp.tool("spider_control_playback", {
+                        "sessionId": sid,
+                        "command": {"loop": True, "action": "restart"}})
+                except RuntimeError:
+                    pass
             except (RuntimeError, FileNotFoundError, OSError) as exc:
                 self._dead = str(exc)
                 raise
@@ -281,7 +302,8 @@ class _Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/health":
                 self._json({"ok": True, "schema": kbtrace.SCHEMA,
                             "traces_dir": str(kbtrace.traces_dir(srv.root)),
-                            "exists": kbtrace.traces_dir(srv.root).exists()})
+                            "exists": kbtrace.traces_dir(srv.root).exists(),
+                            "spider_ready": srv.spider.ready()})
             elif u.path == "/api/stats":
                 ck = ("stats", q.get("caller", ""), q.get("since", ""), q.get("until", ""))
                 self._json(srv.agg.get(ck, lambda: _stats_payload(srv, q)))

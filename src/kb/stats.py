@@ -172,7 +172,8 @@ def feed_events(searches: list[dict], gets: list[dict], *, caller: str | None = 
                 mid = m.get("id")
                 if mid in ret_set and mid not in details:
                     details[mid] = {"repo": ly.get("repo"),
-                                    "hit_fields": m.get("hit_fields") or []}
+                                    "hit_fields": m.get("hit_fields") or [],
+                                    "title": m.get("title") or ""}
         out.append({
             "trace_id": tid, "ts": s.get("ts"), "caller": s.get("caller_repo"),
             "query": s.get("query"), "duration_ms": s.get("duration_ms"),

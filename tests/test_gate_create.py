@@ -34,6 +34,24 @@ def test_dup_by_title_token_rejected(tmp_repo):
         create_draft(tmp_repo, type="pitfall", domain="frontend",
                      title="vite hmr 又失效", body="## 根因\n完全不相干的另一个根因说明。\n")
 
+
+# --- B3: 单 token / 泛词命中不判重(2026-10-21 误报治理) ---
+def test_dup_single_specific_token_not_rejected(tmp_repo):
+    # 仅 1 个非泛词 token(vite)重合 → 不拒(旧规则 any 单 token 即拒, 误报主源)
+    _accepted_entry(tmp_repo, "kb-20261012-6666", "Vite HMR 失效", "无关根因甲。")
+    e = create_draft(tmp_repo, type="pitfall", domain="frontend",
+                     title="vite 构建缓存击穿", body="## 根因\n另一机制说明文本内容。\n")
+    assert e.fm["status"] == "draft" and e.path.exists()
+
+
+def test_dup_stopword_token_not_rejected(tmp_repo):
+    # 标题 token 全为泛词(windows/append)时 specific 为空 → 不判重;
+    # 即历史误报场景: "windows 追加丢行" 曾被 chmod/TZ 等 windows 条目拦截
+    _accepted_entry(tmp_repo, "kb-20261012-7777", "Windows chmod 不生效", "无关根因甲。")
+    e = create_draft(tmp_repo, type="pitfall", domain="devops",
+                     title="windows append 丢行", body="## 根因\n另一机制说明文本内容。\n")
+    assert e.fm["status"] == "draft" and e.path.exists()
+
 def test_no_hit_creates(tmp_repo):
     _accepted_entry(tmp_repo, "kb-20261012-3333", "无关主题", "无关根因甲。")
     e = create_draft(tmp_repo, type="pitfall", domain="frontend",

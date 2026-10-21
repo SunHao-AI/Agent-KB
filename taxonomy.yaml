@@ -56,3 +56,12 @@ enums:
   status:     [draft, proposed, accepted, deprecated, superseded]
   severity:   [low, medium, high, critical]
   confidence: [verified, probable, speculative]
+
+# 查重门控(gate._dup_hits)标题匹配用泛词表: 平台/环境等高频词单独命中
+# 不足以判重, 从"≥2 个非泛词 token 命中"的计数中剔除。改这一处即生效。
+# 注意: 只收跨主题泛词; 具体工具名(vite/webpack 等)是判定信号, 勿入表。
+dedup:
+  stopwords: [windows, linux, macos, android, ios, docker, kubernetes, k8s,
+              http, https, api, cli, web, ui, db, sql, json, yaml, csv,
+              html, css, py, md, git, npm, node, python, java, golang, rust,
+              jsonl, append, fix, bug, issue, error, write, read]

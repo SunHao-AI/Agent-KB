@@ -20,8 +20,21 @@ class DuplicateCandidate(Exception):
                          + ", ".join(str(e.get("id")) for e in entries))
 
 
+def _dedup_stopwords() -> frozenset[str]:
+    return frozenset(load_taxonomy().get("dedup", {}).get("stopwords", []))
+
+
+def _cjk_phrase(t: str) -> bool:
+    """整段中文 token(≥3 字)在标题中是"词组"级信号, 单个命中即可判重;
+    拉丁单词(vite/hmr 等)信息量低, 需多个同时命中."""
+    return len(t) >= 3 and any("\u4e00" <= c <= "\u9fff" for c in t)
+
+
 def _title_tokens(title: str) -> list[str]:
-    toks = [t for t in re.split(r"[^0-9a-z\u4e00-\u9fff]+", title.lower()) if len(t) >= 2]
+    """判重用标题 token(最多 3 个): 先剔泛词再截断, 防前 3 个全是泛词时无信号."""
+    stops = _dedup_stopwords()
+    toks = [t for t in re.split(r"[^0-9a-z\u4e00-\u9fff]+", title.lower())
+            if len(t) >= 2 and t not in stops]
     return toks[:3]
 
 
@@ -37,9 +50,20 @@ def _tmp_entry(body: str) -> Entry:
 
 
 def _dup_hits(repos: list[Path], fp: str, title: str) -> list[dict]:
+    """判重: 指纹相等, 或标题 token 命中既有标题且信号足够.
+
+    信号规则(2026-10-21 误报治理, 原 any 单 token 即拒):
+    - 泛词(windows/docker/append 等, 见 taxonomy dedup.stopwords)不计;
+    - ≥3 字中文词组在标题中信息量高(中文不分词, 整段即一个 token),
+      单个命中即判;
+    - 拉丁/短词(vite/hmr)信息量低, 需 ≥2 个同时命中。
+    指纹兜底不受本规则影响。
+    """
     hits: list[dict] = []
     seen: set[str] = set()
-    toks = _title_tokens(title)
+    specific = _title_tokens(title)
+    phrases = [t for t in specific if _cjk_phrase(t)]
+    weak = [t for t in specific if not _cjk_phrase(t)]
     for rp in repos:
         for r in _index_records(rp):
             rid = r.get("id")
@@ -48,7 +72,8 @@ def _dup_hits(repos: list[Path], fp: str, title: str) -> list[dict]:
             hit = bool(fp) and r.get("dedup_key") == fp
             if not hit:
                 hay = (r.get("title") or "").lower()
-                hit = any(t in hay for t in toks)
+                hit = (any(t in hay for t in phrases)
+                       or sum(1 for t in weak if t in hay) >= 2)
             if hit:
                 hits.append({**r, "layer": rp.name})
                 seen.add(rid)
@@ -178,6 +203,16 @@ def set_scope(repo, id: str, scope: str, today: dt.date | None = None) -> Entry:
     return _save(p, fm, e.body, today or dt.date.today())
 
 
+def _project_name(path) -> str:
+    """业务仓名: 取最近的 .git 祖先目录名(--repo 对 docs/kb 结构是仓内子目录,
+    直接取尾段会得到 'docs' 这类无意义值), 无 .git 时退回目录名本身."""
+    p = Path(path).resolve()
+    for cand in (p, *p.parents):
+        if (cand / ".git").exists():
+            return cand.name
+    return p.name
+
+
 def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
                  today: dt.date | None = None) -> Path:
     """人工 CLI: 将项目库条目搬到 Agent-KB 库(stack/universal), 回填 source.project."""
@@ -193,7 +228,7 @@ def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
     fm["scope"] = to_scope
     fm["tags"] = [t for t in (fm.get("tags") or []) if t != "needs-scope-review"]
     fm["source"] = {**(fm.get("source") or {}),
-                    "project": fm.get("source", {}).get("project") or Path(project_repo).resolve().name}
+                    "project": fm.get("source", {}).get("project") or _project_name(project_repo)}
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(dump_entry(Entry(fm=fm, body=e.body, path=dst)), encoding="utf-8")
     src.unlink()

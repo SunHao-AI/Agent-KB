@@ -120,6 +120,33 @@ def test_export_moves_entry(tmp_repo, tmp_path):
     assert e.fm["scope"] == "stack" and "needs-scope-review" not in e.fm.get("tags", [])
 
 
+def test_export_project_name_prefers_git_root(tmp_repo, tmp_path):
+    # B2: --repo 指仓内子目录(docs/kb 结构)时, source.project 取 .git 祖先名
+    # 而非目录尾段(旧行为会把 'docs' 写进 source.project)
+    fake = tmp_path / "my-business-repo"
+    (fake / ".git").mkdir(parents=True)
+    kb_dir = fake / "docs"
+    (kb_dir / "kb" / "pitfall" / "frontend").mkdir(parents=True)
+    (kb_dir / "kb" / "pitfall" / "frontend" / "kb-20261014-0d0d.md").write_text(
+        make_entry(id="kb-20261014-0d0d"), encoding="utf-8")
+    kb2 = tmp_path / "agentkb2"
+    (kb2 / "kb").mkdir(parents=True)
+    dst = export_entry(kb_dir, kb2, "kb-20261014-0d0d", to_scope="stack", today=TODAY)
+    assert parse_entry(dst).fm["source"]["project"] == "my-business-repo"
+
+
+def test_export_keeps_existing_source_project(tmp_repo, tmp_path):
+    # 已有 source.project 不被覆盖
+    kb2 = tmp_path / "agentkb3"
+    (kb2 / "kb").mkdir(parents=True)
+    _mk(tmp_repo, "kb-20261014-0e0e")
+    p = tmp_repo / "kb" / "pitfall" / "frontend" / "kb-20261014-0e0e.md"
+    p.write_text(make_entry(id="kb-20261014-0e0e",
+                            source={"project": "orig-name"}), encoding="utf-8")
+    dst = export_entry(tmp_repo, kb2, "kb-20261014-0e0e", to_scope="stack", today=TODAY)
+    assert parse_entry(dst).fm["source"]["project"] == "orig-name"
+
+
 def test_export_conflict_rejected(tmp_repo, tmp_path):
     kb2 = tmp_path / "agentkb"
     (kb2 / "kb" / "pitfall" / "frontend").mkdir(parents=True)

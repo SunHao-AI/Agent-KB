@@ -73,6 +73,12 @@ def _dispatch(argv: list[str] | None = None) -> int:
         choices=["draft", "proposed", "accepted", "deprecated", "superseded"])
     p_rev.add_argument("--evidence", default=None,
                        help="实测证据(仅 --to accepted 生效): 写入 verification.evidence 留痕")
+    p_rev.add_argument("--confidence", default=None,
+                       choices=["verified", "probable", "speculative"],
+                       help="提升 confidence(仅 --to accepted 生效); accepted 前须非 speculative")
+    p_rev.add_argument("--as-agent", action="store_true",
+                       help="agent 自审语义: accepted 写 verified_by=agent + auto-reviewed "
+                            "标签(与 MCP kb_review 对齐), 供事后抽查回滚")
     p_ss = sub.add_parser("set-scope", parents=[common])
     p_ss.add_argument("id"); p_ss.add_argument("scope", choices=["project", "stack", "universal"])
     p_ex = sub.add_parser("export", parents=[common])
@@ -177,7 +183,14 @@ def _dispatch(argv: list[str] | None = None) -> int:
         print(e.path)
         return 0
     if args.cmd == "review":
-        e = gate_review(repo, args.id, args.to, evidence=args.evidence)
+        # 与 MCP kb_review 对齐: agent 自审 accepted 必须带 evidence
+        # (gate 层拒绝 speculative, 但"空证据自审 accepted"仅在此工具面拦)
+        if args.as_agent and args.to == "accepted" and not (args.evidence or "").strip():
+            print("kb error: --as-agent --to accepted 需先完成自行验证并附 --evidence",
+                  file=sys.stderr)
+            return 1
+        e = gate_review(repo, args.id, args.to, by="agent" if args.as_agent else None,
+                        confidence=args.confidence, evidence=args.evidence)
         print(json.dumps({**e.fm, "path": str(e.path)}, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "set-scope":

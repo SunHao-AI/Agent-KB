@@ -131,6 +131,30 @@ def test_cli_review_accepted_with_evidence_writes_verification(tmp_repo, capsys)
     assert "auto-reviewed" not in (out.get("tags") or [])
 
 
+def test_cli_review_as_agent_accept_writes_audit_trail(tmp_repo, capsys):
+    # B1: --as-agent 对齐 MCP kb_review 自审留痕(verified_by + auto-reviewed)
+    d = tmp_repo / "kb" / "pitfall" / "frontend"; d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261014-c5c5", status="draft",
+                                       confidence="speculative"), encoding="utf-8")
+    assert main(["review", "kb-20261014-c5c5", "--to", "accepted", "--as-agent",
+                 "--confidence", "verified", "--evidence", "ab-bench 0 丢行",
+                 "--repo", str(tmp_repo)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "accepted" and out["confidence"] == "verified"
+    assert out["verified_by"] == "agent" and "auto-reviewed" in out["tags"]
+    assert out["verification"]["evidence"] == "ab-bench 0 丢行"
+
+
+def test_cli_review_as_agent_accept_requires_evidence(tmp_repo, capsys):
+    # B1: 自审 accepted 缺 evidence 在 CLI 面即拒(与 MCP GateViolation 对齐)
+    d = tmp_repo / "kb" / "pitfall" / "frontend"; d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261014-c6c6", status="draft",
+                                       confidence="verified"), encoding="utf-8")
+    assert main(["review", "kb-20261014-c6c6", "--to", "accepted", "--as-agent",
+                 "--repo", str(tmp_repo)]) == 1
+    assert "--evidence" in capsys.readouterr().err
+
+
 def test_cli_set_scope_success_prints_json(tmp_repo, capsys):
     # 成功路径必须可 JSON 序列化输出(与 review 同款缺陷, Entry 不可直接 dumps)
     d = tmp_repo / "kb" / "pitfall" / "frontend"; d.mkdir(parents=True)

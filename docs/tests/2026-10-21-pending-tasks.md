@@ -11,7 +11,7 @@
 - **状态更新(2026-10-21 新会话)**: prompt-spider-ui 已全部提交(基线 781bad5 + 缓动
   b1a0898/0a06636/4b756b5); Agent-KB 功能改动已提交(bf37d6d 功能 + 14f79d3 文档沉淀,
   提交前 pytest 278 过、`kb index --check` 无漂移, traces 未混入)。
-  **唯一遗留**: `preview.gif` 仍未入库(用户拍板"不含 preview.gif", 是否入库待后续确认)。
+  **`preview.gif` 用户已拍板不入库**(保持工作区未跟踪, 无需处理)。
 - 原改动清单(现均已入库, 留作索引): `src/kb/{cli,serve,spider_export,stats}.py`、
   `src/kb/web/index.html`、`tests/{test_spider_export,test_stats_serve}.py`、
   `docs/kb/INDEX.md`、`docs/kb/index.jsonl`、`docs/tests/`、`docs/kb/pitfall/` 新条目。

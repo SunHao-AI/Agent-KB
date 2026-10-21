@@ -56,7 +56,7 @@
 ### 4.1 单测(`tests/live-ui.test.mjs` 追加, `npm test`)
 
 1. `easeOrbit` 单调逼近目标; `dt→∞` 收敛到目标;
-2. 大 dt(0.5s)/τ=0.35 时单帧步进 < 60% 距离(防跳);
+2. dt=0.25s/τ=0.35 时单帧步进 < 60% 距离、dt=1/60s 时 < 10%(防跳; dt>0.5s 本就走 snap, 不进缓动);
 3. `poseFromOrbit(orbitTarget(layout,tight),t,omega)` 与旧路径 `livePose(layout,t,false,tight)` 深相等(重构无回归)。
 
 ### 4.2 浏览器实测(4321 serve, 先按 D1 宽正则清残留进程再重启; 探针确认 served HTML)

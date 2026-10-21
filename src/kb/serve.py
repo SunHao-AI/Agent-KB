@@ -24,6 +24,59 @@ _POLL_SEC = 1.0
 _SSE_KEEPALIVE_SEC = 15.0
 
 
+class AggCache:
+    """聚合响应缓存: 按 traces 目录签名(mtime_ns+size 汇总)失效 + 单飞合并发车。
+
+    观测面板是"≤2s 轮询式读"场景, 同参数重复请求占绝对多数; 并发打进来时
+    只让一个线程真算, 其余等结果 — 消除 ThreadingHTTPServer 下 GIL 串行放大。
+    正确性: append-only 语义下任何写入必然改变 size → 签名变 → 缓存自动失效,
+    因此无需 TTL 也不会读到旧数据(读侧最新事件即刻可见)。
+    """
+
+    KEYS = 64
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+        self._lock = threading.Lock()
+        self._memo: dict[tuple, tuple[str, object]] = {}
+        self._keys: dict[tuple, threading.Lock] = {}
+
+    def _sig(self) -> str:
+        d = kbtrace.traces_dir(self.root)
+        if not d.exists():
+            return "none"
+        parts = []
+        for f in sorted(d.glob("*.jsonl")):
+            try:
+                st = f.stat()
+                parts.append(f"{f.name}:{st.st_mtime_ns}:{st.st_size}")
+            except OSError:
+                parts.append(f"{f.name}:gone")
+        return "|".join(parts)
+
+    def get(self, key: tuple, compute):
+        """命中走全局锁(O(1)); 未命中只锁本 key — 冷算 callers 不阻塞已缓存的 feed。"""
+        sig = self._sig()
+        with self._lock:
+            hit = self._memo.get(key)
+            if hit and hit[0] == sig:
+                return hit[1]
+            klock = self._keys.setdefault(key, threading.Lock())
+        with klock:  # 单飞: 同 key 并发只算一次
+            with self._lock:  # 双检(等锁期间同 key 可能已算好)
+                hit = self._memo.get(key)
+                if hit and hit[0] == sig:
+                    return hit[1]
+            val = compute()
+            with self._lock:
+                if len(self._memo) >= self.KEYS:  # 参数组合有界(含 query 抖动)
+                    self._memo.clear()
+                    self._keys.clear()
+                self._memo[key] = (sig, val)
+                self._keys.pop(key, None)
+            return val
+
+
 class SpiderBridge:
     """B-2 全屏回放桥: 懒启动克隆仓 MCP, trace_id → previewUrl(iframe 数据源)。
 
@@ -230,17 +283,11 @@ class _Handler(BaseHTTPRequestHandler):
                             "traces_dir": str(kbtrace.traces_dir(srv.root)),
                             "exists": kbtrace.traces_dir(srv.root).exists()})
             elif u.path == "/api/stats":
-                s, g, warns = kbtrace.read_traces(root=srv.root)
-                s, g = srv.filter_caller(s, g, q)
-                self._json({"kpi": stats.aggregate(s, g, since=q.get("since"),
-                                                   until=q.get("until")),
-                            "top_consumed": stats.top_consumed(s, g, limit=10),
-                            "top_queries": stats.top_queries(s, limit=10),
-                            "zero_hits": stats.zero_hit_board(s, limit=10),
-                            "warns": warns})
+                ck = ("stats", q.get("caller", ""), q.get("since", ""), q.get("until", ""))
+                self._json(srv.agg.get(ck, lambda: _stats_payload(srv, q)))
             elif u.path == "/api/callers":
-                s, _, _ = kbtrace.read_traces(root=srv.root)
-                self._json(stats.callers(s))
+                self._json(srv.agg.get(("callers",),
+                                       lambda: stats.callers(kbtrace.read_traces(root=srv.root)[0])))
             elif u.path.startswith("/api/replay/"):
                 tid = u.path[len("/api/replay/"):]
                 rec = _replay_record(srv.root, tid)
@@ -260,10 +307,10 @@ class _Handler(BaseHTTPRequestHandler):
                     # 缺 Node/克隆依赖不是 500: 面板拿 message 引导降级(原生 SVG 回放仍在)
                     self._json({"error": str(exc)}, 503)
             elif u.path == "/api/feed":
-                s, g, _ = kbtrace.read_traces(root=srv.root)
-                s, g = srv.filter_caller(s, g, q)
-                self._json(stats.feed_events(s, g, caller=srv.resolve_caller(q),
-                                             limit=int(q.get("limit", 50))))
+                ck = ("feed", q.get("caller", ""), q.get("limit", "50"))
+                self._json(srv.agg.get(ck, lambda: stats.feed_events(
+                    *srv.filter_caller(*kbtrace.read_traces(root=srv.root)[:2], q),
+                    caller=srv.resolve_caller(q), limit=int(q.get("limit", 50)))))
             elif u.path == "/api/stream":
                 self._sse(srv.watcher, srv.resolve_caller(q))
             else:
@@ -312,6 +359,7 @@ class ServeServer(ThreadingHTTPServer):
         self.ingest_cap = 50_000
         self.watcher = TraceWatcher(self.root, quiet=quiet)
         self.spider = SpiderBridge()
+        self.agg = AggCache(self.root)
         self.index_html = (_asset_dir() / "index.html").read_text(encoding="utf-8")
 
     @staticmethod
@@ -325,6 +373,17 @@ class ServeServer(ThreadingHTTPServer):
     def resolve_caller(self, q) -> str | None:
         c = q.get("caller") or self.default_caller or ""
         return None if c == "*" else (c or None)
+
+
+def _stats_payload(srv: "ServeServer", q: dict) -> dict:
+    """FR-1.2 出数(口径全在 kb.stats), 经 AggCache 按 trace 签名缓存。"""
+    s, g, warns = kbtrace.read_traces(root=srv.root)
+    s, g = srv.filter_caller(s, g, q)
+    return {"kpi": stats.aggregate(s, g, since=q.get("since"), until=q.get("until")),
+            "top_consumed": stats.top_consumed(s, g, limit=10),
+            "top_queries": stats.top_queries(s, limit=10),
+            "zero_hits": stats.zero_hit_board(s, limit=10),
+            "warns": warns}
 
 
 def _asset_dir() -> Path:

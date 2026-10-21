@@ -8,13 +8,16 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import threading
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 
 SCHEMA = 2  # v2: search 事件+returned_chars, get 事件+chars(FR-1.2 估算节省 token 自包含)
 _MARKER = ".kb-trace"
 _ENV = "KB_TRACE"
 _FALSY = ("", "0", "false", "False", "no")
+_APPEND_LOCK = threading.Lock()  # 同进程多线程 append 互斥(Windows 并发写共享文件指针会丢/碎行)
 
 
 def kb_root() -> Path:
@@ -57,13 +60,12 @@ def append_event(event: dict, root: Path | None = None, *,
     try:
         f = _today_file(root)
         f.parent.mkdir(parents=True, exist_ok=True)
-        lines = []
-        if not f.exists():
-            lines.append(json.dumps({"kind": "meta", "schema": SCHEMA},
-                                    ensure_ascii=False))
-        lines.append(json.dumps(event, ensure_ascii=False))
-        with f.open("a", encoding="utf-8") as fh:
-            fh.write("".join(ln + "\n" for ln in lines))
+        line = json.dumps(event, ensure_ascii=False)
+        with _APPEND_LOCK:  # 锁内一次写完多行, 保证行完整性
+            head = [] if f.exists() else [json.dumps({"kind": "meta", "schema": SCHEMA},
+                                                     ensure_ascii=False)]
+            with f.open("a", encoding="utf-8") as fh:
+                fh.write("".join(ln + "\n" for ln in [*head, line]))
     except OSError:
         return
     if ingest:
@@ -87,6 +89,57 @@ def _post_ingest(event: dict) -> None:
         return
 
 
+_parse_cache: "OrderedDict[Path, tuple[tuple, list, list, list]]" = OrderedDict()  # 序 = LRU
+_cache_lock = threading.Lock()  # ThreadingHTTPServer 多线程读路径共用缓存
+_CACHE_CAP = 32  # 解析缓存文件数上限; 实测 28 日文件/2.15万事件常驻 ≈85MB, 高量团队态约 100MB 封顶
+
+
+def _parse_file(f: Path) -> tuple[list, list, list]:
+    """单文件解析(mtime_ns+size 签名缓存, LRU)。append-only 语义下签名不变=内容不变;
+    缓存出的事件 dict 按只读约定共享(全消费侧无原地改写), 勿新增写入方。
+    文件 IO 在锁外(避免并发读互相串行), 锁只护缓存表; 冷路径重复解析同文件仅浪费一次。"""
+    st = f.stat()
+    sig = (st.st_mtime_ns, st.st_size)
+    with _cache_lock:
+        hit = _parse_cache.get(f)
+        if hit and hit[0] == sig:
+            _parse_cache.move_to_end(f)
+            return hit[1], hit[2], hit[3]
+    searches: list[dict] = []
+    gets: list[dict] = []
+    warns: list[str] = []
+    lines = [ln for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    if not lines:
+        warns.append(f"{f.name}: 空文件, 跳过")
+    else:
+        try:
+            meta = json.loads(lines[0])
+        except json.JSONDecodeError:
+            meta = {}
+        if meta.get("kind") != "meta":
+            warns.append(f"{f.name}: 缺 meta 首行, 跳过")
+        elif int(meta.get("schema", 0)) > SCHEMA:
+            warns.append(f"{f.name}: schema={meta.get('schema')} "
+                         f"高于本地 {SCHEMA}, 跳过")
+        else:
+            for ln in lines[1:]:
+                try:
+                    ev = json.loads(ln)
+                except json.JSONDecodeError:
+                    warns.append(f"{f.name}: bad line 跳过")
+                    continue
+                if ev.get("kind") == "search":
+                    searches.append(ev)
+                elif ev.get("kind") == "get":
+                    gets.append(ev)
+    with _cache_lock:
+        _parse_cache[f] = (sig, searches, gets, warns)
+        _parse_cache.move_to_end(f)
+        while len(_parse_cache) > _CACHE_CAP:  # LRU 逐出(按日分片, 最久未用先出)
+            _parse_cache.popitem(last=False)
+    return searches, gets, warns
+
+
 def _iter_raw(root: Path) -> tuple[list[dict], list[dict], list[str]]:
     searches: list[dict] = []
     gets: list[dict] = []
@@ -95,31 +148,10 @@ def _iter_raw(root: Path) -> tuple[list[dict], list[dict], list[str]]:
     if not d.exists():
         return searches, gets, warns
     for f in sorted(d.glob("*.jsonl")):
-        lines = [ln for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
-        if not lines:
-            warns.append(f"{f.name}: 空文件, 跳过")
-            continue
-        try:
-            meta = json.loads(lines[0])
-        except json.JSONDecodeError:
-            meta = {}
-        if meta.get("kind") != "meta":
-            warns.append(f"{f.name}: 缺 meta 首行, 跳过")
-            continue
-        if int(meta.get("schema", 0)) > SCHEMA:
-            warns.append(f"{f.name}: schema={meta.get('schema')} "
-                         f"高于本地 {SCHEMA}, 跳过")
-            continue
-        for ln in lines[1:]:
-            try:
-                ev = json.loads(ln)
-            except json.JSONDecodeError:
-                warns.append(f"{f.name}: bad line 跳过")
-                continue
-            if ev.get("kind") == "search":
-                searches.append(ev)
-            elif ev.get("kind") == "get":
-                gets.append(ev)
+        s, g, w = _parse_file(f)
+        searches.extend(s)
+        gets.extend(g)
+        warns.extend(w)
     return searches, gets, warns
 
 

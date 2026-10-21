@@ -23,15 +23,24 @@ def _within(ev: dict, since: str | None, until: str | None) -> bool:
     return not ((since and day < since) or (until and day > until))
 
 
+def _gets_by_trace(gets: list[dict]) -> dict[str, set[str]]:
+    """trace_id → 该 trace 内 ok 的 get id 集合(一次建索引, 免逐 search 全量扫 gets)。"""
+    out: dict[str, set[str]] = {}
+    for g in gets:
+        tid = g.get("trace_id")
+        if tid and g.get("ok"):
+            out.setdefault(tid, set()).add(g.get("id"))
+    return out
+
+
 def _consumed_ids(searches: list[dict], gets: list[dict]) -> set[str]:
     """消费口径: 被返回 且 同 trace_id 有 ok 的 get(与 UI"已读"态同一判定)。"""
+    by_tid = _gets_by_trace(gets)
     out: set[str] = set()
     for s in searches:
-        tid = s.get("trace_id")
-        if not tid:
-            continue
-        got = {g.get("id") for g in gets if g.get("trace_id") == tid and g.get("ok")}
-        out.update(i for i in s.get("returned", []) if i in got)
+        got = by_tid.get(s.get("trace_id") or "")
+        if got:
+            out.update(i for i in s.get("returned", []) if i in got)
     return out
 
 
@@ -151,6 +160,7 @@ def feed_events(searches: list[dict], gets: list[dict], *, caller: str | None = 
     (项目层绿 / 通用层橙), read 命中的再叠加"已读"黄覆盖层。
     """
     S = [s for s in searches if not caller or s.get("caller_repo") == caller]
+    got_by_tid = _gets_by_trace(gets)
     out = []
     for s in sorted(S, key=lambda e: str(e.get("ts", "")), reverse=True)[:limit]:
         tid = s.get("trace_id")
@@ -168,8 +178,7 @@ def feed_events(searches: list[dict], gets: list[dict], *, caller: str | None = 
             "query": s.get("query"), "duration_ms": s.get("duration_ms"),
             "returned": returned,
             "details": details,
-            "read": sorted(g.get("id") for g in gets
-                           if g.get("trace_id") == tid and g.get("ok")),
+            "read": sorted(got_by_tid.get(tid or "", ())),
             "layers": [{"repo": ly.get("repo"), "scanned": ly.get("scanned"),
                         "rejected": ly.get("rejected")} for ly in s.get("layers", [])],
         })
@@ -222,15 +231,17 @@ def by_source(searches: list[dict]) -> dict:
         ext_ids: set[str] = set()
         for e in s.get("ext", []) or []:
             ext_ids.update(e.get("hits", []))
+        # id → 层序 一次建索引, 避免逐 returned 条目重扫全部层的全部 matched
+        layer_of: dict[str, int] = {}
+        for i, ly in enumerate(layers):
+            for m in ly.get("matched", []):
+                layer_of.setdefault(m.get("id"), i)
         for hid in s.get("returned", []):
             if hid in ext_ids or str(hid).startswith("source://"):
                 name = source_of(hid, layers) or "ext:?"
             else:
-                name = "stack"  # 归层: 首层 matched=project, 其余层=stack
-                for i, ly in enumerate(layers):
-                    if any(m.get("id") == hid for m in ly.get("matched", [])):
-                        name = "project" if i == 0 else "stack"
-                        break
+                i = layer_of.get(hid)
+                name = "stack" if i is None else ("project" if i == 0 else "stack")
             row[name] = row.get(name, 0) + 1
     return out
 

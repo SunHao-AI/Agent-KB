@@ -8,3 +8,4 @@
 - [traces 分片缺 meta 首行导致整文件事件被静默跳过](pitfall/devops/2026-10-21-traces-meta.md) · pitfall · devops · accepted · 给观测面板注入历史 trace 测 stale 标记: 直接向 `traces/<date>.jsonl` append 了一条 search 事件, 但面板与 `/api/callers` 完全读不到该 caller, 无任何报错。
 - [动画轨道几何须对准内容实际bbox且目标参数突变须缓动](pitfall/frontend/2026-10-21-bbox.md) · pitfall · frontend · accepted · prompt-spider-ui 词墙回放中蜘蛛绕椭圆轨道巡游, 两个先后问题: 1. 轨道对准"名义区域"(wallArea)而非词团实际位置, 事件少时词团紧凑在顶部而蜘蛛绕大区域中心转, 像在空处转圈(测试文档 §16)。 2. 改为
 - [前端多处手拼鉴权 token 参数漂移导致部分 API 静默 401](pitfall/frontend/2026-10-21-token-api-401.md) · pitfall · frontend · accepted · 观测面板(`kb serve` 自带 index.html)在 `--token` 团队态下, 用户按引导带 `?token=…` 打开页面, 页面能加载但 KPI/双榜/检索流全空, 且只显示"需要访问令牌"横幅 — 明明 URL 已带 
+- [browseruse press_key 空格的 keydown.key 为空串致键盘逻辑误判失效](pitfall/testing/2026-10-21-browseruse-press-key-keydown-key.md) · pitfall · testing · accepted · 用 browseruse `browser_press_key({key:' '})` 验证"检索流条目聚焦后按空格开回放"的键盘逻辑, 连续两次页面无反应, 一度误判为产品缺陷(Enter 正常、空格失效)。

@@ -12,16 +12,30 @@
   main{max-width:1080px;margin:0 auto}
   header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px}
   h1{font-size:19px;margin-right:auto}
-  .chip{background:var(--panel2);border:1px solid var(--bd);border-radius:16px;color:var(--mu);
-        padding:3px 13px;font-size:12.5px;cursor:pointer}
-  .chip.on{border-color:var(--ok);color:var(--ok)}
+  .brand{display:flex;align-items:center;gap:12px;margin-right:auto;min-width:0}
+  .brand svg{width:27px;height:27px;flex:none}
+  .brand h1{font-family:Consolas,monospace;font-size:17px;letter-spacing:1px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .brand .sub{font-size:11px;color:var(--mu);letter-spacing:.5px;border-left:1px solid var(--bd);padding-left:10px;font-weight:400}
+  .seg{display:inline-flex;border:1px solid var(--bd);background:var(--panel);padding:3px;gap:3px;border-radius:9px}
+  .seg button{background:none;border:1px solid transparent;color:var(--mu);padding:5px 13px;font-size:12px;
+        cursor:pointer;border-radius:6px;font-family:inherit;white-space:nowrap;
+        transition:color .15s,border-color .15s,background .15s}
+  .seg button:hover{border-color:#3a4658;color:var(--tx)}
+  .seg button.on{background:var(--panel2);color:var(--ok);border-color:#275848}
+  .conn{font-family:Consolas,monospace;font-size:11px;border:1px solid var(--bd);color:var(--ok);
+        padding:4px 12px;border-radius:14px;letter-spacing:1px;flex:none}
+  .conn.bad{color:var(--bad);border-color:#5a2d26;animation:pulse 1.4s infinite}
+  @keyframes pulse{50%{opacity:.45}}
+  button:focus-visible,input:focus-visible,.feed-item:focus-visible,.drill:focus-visible{outline:2px solid var(--ext);outline-offset:2px}
   .card{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:16px 18px;margin:14px 0}
   .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
-  .kpi{background:var(--panel2);border:1px solid var(--bd);border-radius:10px;padding:13px}
-  .kpi .v{font-size:24px;font-weight:700;color:var(--ok);font-family:Consolas,monospace}
+  .kpi{background:var(--panel2);border:1px solid var(--bd);border-radius:10px;padding:13px;transition:border-color .18s}
+  .kpi:hover{border-color:#39534a}
+  .kpi .v{font-size:24px;font-weight:700;color:var(--ok);font-family:Consolas,monospace;font-variant-numeric:tabular-nums}
   .kpi .l{font-size:12px;color:var(--mu)}
   .kpi .s{font-size:11.5px;color:var(--mu)}
-  .bar{display:grid;grid-template-columns:230px 1fr 110px;align-items:center;gap:8px;font-size:12.5px;margin:5px 0}
+  .bar{display:grid;grid-template-columns:minmax(120px,220px) 1fr 96px;align-items:center;gap:8px;font-size:12.5px;margin:5px 0}
+  .bar>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .track{background:#0b1017;border-radius:4px;height:13px;overflow:hidden}
   .fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--ok),#2ea87f)}
   .fill.zero{background:linear-gradient(90deg,var(--bad),#b25646)}
@@ -33,7 +47,6 @@
   .mono{font-family:Consolas,monospace;color:var(--mu);margin-left:auto;font-size:11px;white-space:nowrap}
   .banner{border-left:3px solid var(--warn);background:#1a2130;padding:9px 13px;border-radius:0 8px 8px 0;margin:10px 0;font-size:13px}
   .banner.bad{border-color:var(--bad)} .banner.ok{border-color:var(--ok)}
-  h3{font-size:14px;margin-bottom:8px;color:#eaf1f8}
   .est{color:var(--ext);cursor:help}
   a{color:var(--link);text-decoration:none}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -42,34 +55,69 @@
   .stale td{color:var(--bad)}
   .feed-item{cursor:pointer}
   .feed-item:hover{outline:1px solid var(--bd)}
+  .feed-item.hide{display:none}
+  .fbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+  .fbar input{flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--bd);color:var(--tx);
+        border-radius:7px;padding:6px 11px;font:inherit;font-size:12.5px}
+  .fbar input::placeholder{color:#5c6878}
+  .fbar .seg button{padding:4px 11px;font-size:11.5px}
+  .cnt{font-size:11px;color:var(--mu);font-family:Consolas,monospace;margin-left:auto}
+  .empty{border:1px dashed var(--bd);border-radius:10px;padding:26px 18px;text-align:center;color:var(--mu);font-size:12.5px;line-height:2}
+  .empty b{color:var(--tx)}
+  .boards2{display:grid;grid-template-columns:1fr 1fr;gap:0 26px}
+  .colhd{font-size:11px;color:var(--mu);letter-spacing:1px;margin:6px 0 2px;font-family:Consolas,monospace}
+  .drill{background:none;border:0;color:var(--link);font:inherit;font-size:11.5px;cursor:pointer;padding:0;text-decoration:underline dotted}
+  .matrix-link{cursor:pointer}
+  .matrix-link:hover td{background:#1b2331}
+  h3{font-size:14px;margin-bottom:8px;color:#eaf1f8;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  h3 .tip{color:var(--mu);font-weight:400;font-size:11.5px}
   #modal{position:fixed;inset:0;background:rgba(5,8,12,.88);display:none;z-index:9}
   #modal.open{display:flex;align-items:center;justify-content:center;flex-direction:column}
   #modal .head{color:var(--mu);font-size:13px;margin-bottom:6px}
   #modal .head b{color:var(--tx)}
-  #spider{width:min(860px,94vw)}
+  #spider{width:min(960px,94vw);background:#080909;border:1px solid #29292e;border-radius:8px}
   @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
-  @media(max-width:700px){.bar{grid-template-columns:120px 1fr 60px}}
+  @media(max-width:700px){.bar{grid-template-columns:110px 1fr 60px}.boards2{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <main>
 <header>
-  <h1>Agent-KB 观测面板</h1>
-  <span class="chip on" id="vSingle">单项目</span>
-  <span class="chip" id="vFed">多项目联邦</span>
-  <span class="chip on" data-w="7">7天</span>
-  <span class="chip" data-w="30">30天</span>
-  <span class="chip" data-w="0">全部</span>
-  <span class="chip" id="conn">连接中…</span>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#f34a87" stroke-width="1.3" stroke-linecap="round" aria-hidden="true">
+      <path d="M12 8.5v7M12 8.5 5 4m7 4.5L19 4M12 15.5 5.5 20m6.5-4.5L18.5 20M3 12h18M5.5 8.5 18.5 15.5M18.5 8.5 5.5 15.5"/>
+      <circle cx="12" cy="12" r="3.1" fill="#0d1117"/>
+    </svg>
+    <h1>Agent-KB 观测面板<span class="sub">EVERY SEARCH, ONE WEB</span></h1>
+  </div>
+  <div class="seg" role="group" aria-label="视图切换">
+    <button class="on" id="vSingle">单项目</button><button id="vFed">多项目联邦</button>
+  </div>
+  <div class="seg" role="group" aria-label="时间窗口">
+    <button class="on" data-w="7">7天</button><button data-w="30">30天</button><button data-w="0">全部</button>
+  </div>
+  <span class="conn" id="conn">连接中…</span>
 </header>
 <div id="banners"></div>
 <div id="kpi" class="card"><div class="kpi-row" id="kpis"></div></div>
-<div class="card" id="boards"><h3>热门被消费条目 / 零命中榜</h3><div id="boardBars"></div></div>
-<div class="card" id="matrixCard" style="display:none"><h3>项目矩阵</h3><table id="matrix"></table></div>
-<div class="card"><h3>实时命中流 <span style="color:var(--mu);font-weight:400">(≤2s · SSE · 点击条目回放蜘蛛动画)</span></h3>
+<div class="card" id="boards"><h3>热门被消费条目 / 零命中榜
+  <span class="tip">条目标题悬停看 id · 零命中行可一键去检索流追因</span></h3>
+  <div class="boards2"><div><div class="colhd">▲ 热门被消费 TOP6</div><div id="hotBars"></div></div>
+  <div><div class="colhd">▼ 零命中(知识缺口)</div><div id="zeroBars"></div></div></div></div>
+<div class="card" id="matrixCard" style="display:none"><h3>项目矩阵
+  <span class="tip">点击项目行 → 下钻到该项目单项目视图</span></h3><table id="matrix"></table></div>
+<div class="card"><h3>实时命中流 <span class="tip">点击条目回放蜘蛛动画 · Enter/空格 同样可回放</span></h3>
+  <div class="fbar">
+    <input id="fq" type="search" placeholder="过滤 query / 命中 id / 项目…" aria-label="过滤检索流" autocomplete="off">
+    <div class="seg" role="group" aria-label="状态过滤" id="fseg">
+      <button class="on" data-f="all">全部</button><button data-f="hit">命中</button>
+      <button data-f="zero">零命中</button><button data-f="read">已读</button>
+    </div>
+    <span class="cnt" id="fcnt"></span>
+  </div>
   <div id="feed"></div></div>
 </main>
-<div id="modal"><div class="head" id="modalHead"></div><svg id="spider" viewBox="0 0 860 380"></svg>
+<div id="modal"><div class="head" id="modalHead"></div><svg id="spider" viewBox="0 0 960 480"></svg>
   <button id="fullSpider" style="margin-top:10px;display:none;background:var(--ac);color:#08110c;border:0;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer">⤢ 全屏蜘蛛回放</button>
   <div id="fullWrap" style="display:none;width:min(1200px,96vw);height:82vh;margin-top:8px"><iframe id="fullFrame" style="width:100%;height:100%;border:1px solid var(--bd);border-radius:8px;background:#080909" title="全屏蜘蛛回放"></iframe></div>
   <div id="spiderHint" style="color:var(--mu);font-size:12px;margin-top:8px">点击任意处关闭</div></div>
@@ -101,13 +149,17 @@ async function loadStats(){
       `${k.consumed_total} 读 / ${k.returned_total} 返回`],
     ['知识库自身开销', fmt(k.overhead_chars)+' 字','检索返回字符累计'],
   ].map(([l,v,s])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div><div class="s">${s}</div></div>`).join('');
-  const top=d.top_consumed.slice(0,6), zh=d.zero_hits.slice(0,4);
+  const top=d.top_consumed.slice(0,6), zh=d.zero_hits.slice(0,5);
   const mx=Math.max(1,...top.map(t=>t.count));
-  $('boardBars').innerHTML=top.map(t=>
+  $('hotBars').innerHTML=top.map(t=>
     `<div class="bar"><span title="${esc(t.id)}">${esc(t.title||t.id)}</span><div class="track"><div class="fill" style="width:${100*t.count/mx}%"></div></div><span>${t.count} 次消费</span></div>`
-  ).join('')+zh.map(z=>
-    `<div class="bar"><span>零命中「${esc(z.query)}」×${z.count}</span><div class="track"><div class="fill zero" style="width:${100*Math.min(z.count,mx)/mx}%"></div></div><span>${z.digested?'已消化 ✅':'<span style="color:var(--bad)">未消化</span>'}</span></div>`
-  ).join('')||'<div style="color:var(--mu)">暂无数据</div>';
+  ).join('')||'<div style="color:var(--mu);font-size:12px;padding:8px 0">暂无消费记录 — Agent 读全文后出现在这里</div>';
+  $('zeroBars').innerHTML=zh.map(z=>
+    `<div class="bar"><span title="${esc(z.query)}">「${esc(z.query)}」×${z.count}</span><div class="track"><div class="fill zero" style="width:${100*Math.min(z.count,mx)/mx}%"></div></div><span>${z.digested?'已消化 ✅':`<button class="drill" data-zq="${esc(z.query)}" title="在检索流中定位这些零命中记录, 点击回放看各层淘汰">追因→</button>`}</span></div>`
+  ).join('')||'<div style="color:var(--mu);font-size:12px;padding:8px 0">窗口内没有零命中 🎉</div>';
+  $('zeroBars').querySelectorAll('.drill').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();$('fq').value=b.dataset.zq;fState.q=b.dataset.zq;fState.f='zero';
+    syncFseg();applyFilter();$('feed').scrollIntoView({behavior:'smooth',block:'center'});});
   (d.warns||[]).forEach(w=>banner('',`trace 文件告警: ${esc(w)}`));
 }
 async function loadMatrix(){
@@ -121,18 +173,23 @@ async function loadMatrix(){
       '#F34A87'])].filter(([k])=>bs[k]);
     const bar=srcs.map(([k,,c],i)=>`<div title="${k}: ${bs[k]} 次(${(100*bs[k]/total).toFixed(0)}%)" style="flex:${bs[k]};background:${c}${i?';border-left:1px solid rgba(255,255,255,.25)':''}"></div>`).join('');
     const health=(x.ext||[]).map(e=>`<span title="${esc(e.error||'ok')}" style="color:${e.ok?'var(--ok,#42D6A4)':'var(--bad)'}">●${esc(e.source)}</span>`).join(' ')||'—';
-    return `<tr class="${x.stale?'stale':''}"><td>${esc(x.caller)}</td><td>${x.searches}</td>
+    return `<tr class="${x.stale?'stale':''} matrix-link" data-caller="${esc(x.caller)}" title="点击下钻到 ${esc(x.caller)} 单项目视图"><td>${esc(x.caller)}</td><td>${x.searches}</td>
     <td>${x.hit_rate==null?'—':(x.hit_rate*100).toFixed(1)+'%'}</td>
     <td><div style="display:flex;height:10px;min-width:90px;border-radius:3px;overflow:hidden;background:#ffffff14">${bar}</div></td>
     <td>${health}</td><td>${esc(x.last_ts.slice(0,16))}</td>
     <td>${x.stale?'⚠ trace 掉线(>14d)':'活跃'}</td></tr>`;}).join('');
+  $('matrix').querySelectorAll('.matrix-link').forEach(tr=>tr.onclick=()=>{
+    view='single';caller=tr.dataset.caller;render();
+    banner('ok',`已下钻到项目 <b>${esc(caller)}</b>(单项目视图)`);});
 }
 function feedItem(ev,isGet){
   const d=document.createElement('div');d.className='feed-item';
   if(isGet){const g=$('feed').querySelector(`[data-tid="${CSS.escape(ev.trace_id||'')}"]`);
     if(g){const rd=g.querySelector('.readset');if(rd)rd.textContent=` · 已读 ${ev.id}`;
       g.querySelector('.dot').className='dot w';
-      if(g.raw){g.raw.read=g.raw.read||[];if(ev.id)g.raw.read.push(ev.id);}}  // 回放时带已读态
+      if(g.dataset)g.dataset.rd='1';
+      if(g.raw){g.raw.read=g.raw.read||[];if(ev.id)g.raw.read.push(ev.id);}
+      applyFilter();}  // 回放时带已读态
     return;}
   const hits=(ev.returned||[]);const tid=ev.trace_id||'';
   d.dataset.tid=tid;
@@ -143,8 +200,12 @@ function feedItem(ev,isGet){
     <span class="readset"></span>
     <span class="mono">${view==='fed'?esc(ev.caller_repo)+' · ':''}${esc(ev.query||'')} · ${ev.duration_ms??'?'}ms</span>`;
   d.raw=ev;feedBuf[tid]=ev;
+  d.tabIndex=0;d.setAttribute('role','button');d.setAttribute('aria-label','回放蜘蛛动画: '+(ev.query||tid));
+  d.dataset.st=hits.length?'hit':'zero';
+  d.dataset.f=String(ev.query||'')+' '+hits.join(' ')+' '+(ev.caller_repo||'');
   $('feed').prepend(d);
   while($('feed').children.length>80)$('feed').lastChild.remove();
+  applyFilter();
 }
 function stream(){
   if(es)es.close();
@@ -158,17 +219,50 @@ function stream(){
 async function loadFeed(){
   $('feed').innerHTML='';
   const r=await fetch(`/api/feed?${callerParam()}${callerParam()?'&':''}limit=30`);
-  (await r.json()).slice().reverse().forEach(f=>{
+  const rows=await r.json();
+  rows.slice().reverse().forEach(f=>{
     const hits=f.returned||[];
     const d=document.createElement('div');d.className='feed-item';d.dataset.tid=f.trace_id;
+    d.tabIndex=0;d.setAttribute('role','button');d.setAttribute('aria-label','回放蜘蛛动画: '+(f.query||f.trace_id||''));
     d.innerHTML=`<span class="dot ${f.read.length?'w':(hits.length?'g':'r')}"></span>
       <span>${hits.length?`命中 <b>${hits.slice(0,3).map(esc).join(', ')}</b>${f.read.length?` · 已读 ${f.read.map(esc).join(', ')}`:''}`
         :`零命中「${esc(f.query)}」`}</span>
       <span class="mono">${esc(f.query||'')} · ${f.duration_ms??'?'}ms · ${esc((f.ts||'').slice(5,16))}</span>`;
     d.raw=f;feedBuf[f.trace_id]=f;
+    d.dataset.st=hits.length?'hit':'zero';
+    if((f.read||[]).length)d.dataset.rd='1';
+    d.dataset.f=String(f.query||'')+' '+hits.join(' ')+' '+(f.caller_repo||'');
     $('feed').prepend(d);
   });
+  if(!rows.length){const e=document.createElement('div');e.className='empty';e.id='feedEmpty';
+    e.innerHTML='还没有检索记录。<br>在业务仓跑一次 <b>kb search</b>(或让 Agent 走 MCP 检索), ≤2s 内会实时出现在这里。';
+    $('feed').appendChild(e);}
+  applyFilter();
 }
+// ---- 检索流过滤(纯前端, 不动数据源) ----
+const fState={q:'',f:'all'};
+function applyFilter(){
+  const items=[...$('feed').querySelectorAll('.feed-item')];
+  const q=fState.q.trim().toLowerCase();
+  let n=0;
+  for(const d of items){
+    let ok=true;
+    if(fState.f==='hit')ok=d.dataset.st==='hit';
+    else if(fState.f==='zero')ok=d.dataset.st!=='hit';
+    else if(fState.f==='read')ok=d.dataset.rd==='1';
+    if(ok&&q)ok=(d.dataset.f||'').toLowerCase().includes(q)||d.textContent.toLowerCase().includes(q);
+    d.classList.toggle('hide',!ok);if(ok)n++;
+  }
+  $('fcnt').textContent=items.length?`${n}/${items.length}`:'';
+  const empty=$('feedEmpty');
+  if(items.length&&!n&&!empty){const e=document.createElement('div');e.className='empty';e.id='feedEmpty';
+    e.innerHTML='没有匹配的条目 — 试试更短的关键词或切回<b>全部</b>。';$('feed').appendChild(e);}
+  else if(empty&&(n||!items.length))empty.remove();
+}
+$('fq').oninput=e=>{fState.q=e.target.value;applyFilter();};
+$('fseg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  fState.f=b.dataset.f;syncFseg();applyFilter();});
+function syncFseg(){$('fseg').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.f===fState.f));}
 function banner(cls,html){const b=document.createElement('div');b.className='banner '+cls;b.innerHTML=html;
   $('banners').prepend(b);setTimeout(()=>b.remove(),12000);}
 // ---- 蜘蛛回放动画(FR-2.3 P1 视觉层): 原生 SVG, trace 数据现算, 不依赖外件 ----
@@ -179,7 +273,32 @@ function normSearch(ev){            // SSE 原始事件 与 feed 快照 → 统�
   return {trace_id:ev.trace_id,query:ev.query,caller:ev.caller_repo||ev.caller,duration_ms:ev.duration_ms,
     returned,details,read:ev.read||[],layers:(ev.layers||[]).map(l=>({repo:l.repo,scanned:l.scanned,rejected:l.rejected}))};
 }
+// 舞台配色与 spider 步态移植自 prompt-spider-ui(renderer.js PALETTE / spider.js / live-layout.js),
+// 与全屏回放页同源; 数据仍由 trace 现算, 不依赖外件。
+const SP={bg:'#080909',panel:'#101013',panelTop:'#19191c',bd:'#29292e',tx:'#e8e8e9',mu:'#77767d',
+          spider:'#48d7a6',accent:'#f23c83',mono:'Consolas,"Cascadia Code",monospace'};
+let spiderRaf=0;
+function closeSpider(){if(spiderRaf)cancelAnimationFrame(spiderRaf);spiderRaf=0;}
+const mix=(a,b,t)=>a+(b-a)*t;
+const smoothstep=t=>t*t*(3-2*t);
+function legPoseAt(time,side,index,speed){   // spider.js legPose 等价(无 gaitPhase/curl 降级)
+  const stride=13+Math.min(speed*.11,13),freq=1.8+Math.min(speed/200,.65);
+  const row=(index-3.5)/3.8,spread=Math.sin((index+.75)/8.5*Math.PI);
+  const cyc=time*freq+(index%2)*.5+(side>0?.5:0)+index*.035,ph=cyc-Math.floor(cyc);
+  let along,lift;if(ph<.64){along=(.5-ph/.64)*stride;lift=0;}
+  else{const s=(ph-.64)/.36;along=(smoothstep(s)-.5)*stride;lift=Math.sin(s*Math.PI);}
+  return {root:{x:side*(22.2*Math.sqrt(1-row*row)),y:row*27},
+    knee:{x:side*(30+spread*9)-side*lift*4,y:row*34+(index<4?-5.5:5.5)-lift*5},
+    foot:{x:side*(39+spread*17)+.12*along-side*lift*7.5,y:row*52+.99*along-lift*10},lift};
+}
+function heartbeatAt(t){                     // spider.js heartbeatAt 等价
+  const ph=t/.86-Math.floor(t/.86);
+  const beat=Math.min(1,Math.exp(-(((ph-.16)/.055)**2))+.62*Math.exp(-(((ph-.38)/.07)**2)));
+  return {beat,size:8.5+6*beat,glow:4+10*beat,intensity:.66+.34*beat,
+          roundness:1.1+1.8*beat,rotation:Math.sin(t*2.7)*.1+beat*.12};
+}
 function playSpider(ev){
+  closeSpider();
   const f=normSearch(ev);$('modalHead').innerHTML=
     `蜘蛛回放 · <b>${esc(f.query)}</b> · ${esc(f.caller||'')} · ${f.duration_ms??'?'}ms · trace ${esc(f.trace_id||'')}`;
   const svg=$('spider');svg.innerHTML='';
@@ -187,33 +306,134 @@ function playSpider(ev){
   $('fullWrap').style.display='none';$('fullFrame').src='about:blank';
   $('fullSpider').style.display=fullTid?'inline-block':'none';
   $('spiderHint').textContent='点击任意处关闭';
-  const NS='http://www.w3.org/2000/svg';const mk=(t,a)=>{const n=document.createElementNS(NS,t);
-    for(const k in a)n.setAttribute(k,a[k]);svg.appendChild(n);return n;};
-  mk('circle',{cx:430,cy:190,r:12,fill:'#42D6A4'});
-  mk('text',{x:430,y:222,fill:'#8b98a9','font-size':'12','text-anchor':'middle'}).textContent=`query: ${f.query||'-'}`;
-  (f.layers||[]).forEach((l,i)=>{const x=120+i*230+(f.layers.length===1?310:0);
-    mk('rect',{x:x-80,y:300,width:160,height:44,rx:8,fill:'#1c2330',stroke:'#2d3646'});
-    mk('text',{x,y:318,fill:'#d7dee8','font-size':'12','text-anchor':'middle'}).textContent=`层 ${esc(l.repo)}`;
-    mk('text',{x,y:335,fill:'#8b98a9','font-size':'11','text-anchor':'middle'}).textContent=
-      `扫描${l.scanned} · 词-${l.rejected?.query??'?'} 过滤-${l.rejected?.filter??'?'}`;
-    mk('line',{x1:430,y1:190,x2:x,y2:300,stroke:'#2d3646','stroke-dasharray':'4 4'});});
-  const items=f.returned.slice(0,10);const projRepo=(f.layers||[])[0]?.repo;
-  items.forEach((id,i)=>{const x=items.length===1?430:110+i*(640/(items.length-1));
-    const d=f.details[id]||{};const isProj=d.repo===projRepo;const isRead=(f.read||[]).includes(id);
-    const color=isRead?'#F0CA57':(isProj?'#42D6A4':'#F28A76');
-    const ln=mk('line',{x1:430,y1:190,x2:x,y2:60,stroke:color,'stroke-width':1.4,opacity:0});
-    const c=mk('circle',{cx:430,cy:190,r:5,fill:color});
-    const t=mk('text',{x,y:48,fill:'#d7dee8','font-size':'11','text-anchor':'middle',opacity:0});
-    t.textContent=`${id}·${(d.hit_fields||[]).join('+')||'?'}`;
-    c.animate([{cx:430,cy:190},{cx:x,cy:60}],{duration:420,delay:i*140,fill:'forwards',easing:'ease-out'});
-    ln.animate([{opacity:0},{opacity:.85}],{duration:300,delay:i*140,fill:'forwards'});
-    t.animate([{opacity:0},{opacity:1}],{duration:250,delay:i*140+380,fill:'forwards'});});
-  if(!items.length){const z=mk('text',{x:430,y:120,fill:'#F28A76','font-size':'14','text-anchor':'middle'});
-    z.textContent='零命中 — 死因见各层淘汰计数';z.animate([{opacity:0},{opacity:1}],{duration:400,fill:'forwards'});}
+  const NS='http://www.w3.org/2000/svg';
+  const mk=(t,a,p=svg)=>{const n=document.createElementNS(NS,t);
+    for(const k in a)n.setAttribute(k,a[k]);p.appendChild(n);return n;};
+  const txt=(x,y,s,fill,size,anchor='start',p=svg)=>
+    {const t=mk('text',{x,y,fill,'font-size':size,'font-family':SP.mono,'text-anchor':anchor},p);t.textContent=s;return t;};
+  const alpha=(hex,v)=>`rgba(${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)},${v})`;
+  const W=960,H=480;
+  mk('rect',{x:0,y:0,width:W,height:H,fill:SP.bg});
+  mk('rect',{x:16,y:16,width:W-32,height:H-32,fill:SP.panel,stroke:SP.bd});
+  mk('rect',{x:17,y:17,width:W-34,height:30,fill:SP.panelTop});
+  txt(30,37,'▪ KB SEARCH / SPIDER REPLAY',SP.mu,11);
+  const nHit=f.returned.length;
+  txt(W-30,37,`TRACE ${f.trace_id||'-'} · ${nHit} HITS`,SP.mu,10,'end');
+  txt(30,66,`query: ${f.query||'-'}`,SP.tx,17);
+  txt(30,83,`${f.caller||''} · ${f.duration_ms??'?'}ms · EVERY SEARCH, ONE WEB`,SP.accent,10);
+  // 右侧路由分箱(spider_export.ROUTES 四色): 项目层/通用层/外接源/已读
+  const projRepo=(f.layers||[])[0]?.repo;
+  const BINS=[['code','项目层','#42D6A4'],['model','通用层','#F28A76'],['ext','外接源','#F34A87'],['you','已读','#F0CA57']];
+  const items=f.returned.slice(0,14).map((id,i)=>{
+    const d=f.details[id]||{};const isRead=(f.read||[]).includes(id);
+    const route=isRead?'you':(d.repo==='ext'||String(id).startsWith('ext:'))?'ext'
+      :(d.repo&&d.repo!==projRepo?'model':'code');
+    return {id,route,label:`${i+1}. ${id}·${(d.hit_fields||[]).join('+')||'?'}`.slice(0,34)};});
+  const bx=792,bw=140,bh=76,bgap=10,btop=100;
+  const binMid=BINS.map((b,i)=>btop+i*(bh+bgap)+bh/2);
+  BINS.forEach(([key,label,color],i)=>{const y=btop+i*(bh+bgap);
+    mk('rect',{x:bx,y,width:bw,height:bh,fill:SP.panel,stroke:alpha(color,.8)});
+    mk('rect',{x:bx,y,width:bw,height:4,fill:color});
+    txt(bx+12,y+24,label,color,11);txt(bx+12,y+42,key.toUpperCase(),SP.mu,9);});
+  // 左侧事件流行
+  const rx=34,rw=246,lh=20,r0=132;
+  const rowY=i=>r0+i*lh;
+  (f.layers||[]).forEach((l,i)=>txt(30,84+22+i*13,
+    `层 ${l.repo} · 扫描${l.scanned} 词-${l.rejected?.query??'?'} 过滤-${l.rejected?.filter??'?'}`,SP.mu,10));
+  const web=[];   // 蛛丝: 行右缘 → 分箱左缘(参考端 live-renderer 的贝塞尔连线)
+  const dots=[];
+  const targetOf=route=>({x:bx,y:bx?binMid[BINS.findIndex(b=>b[0]===route)]:0});
+  const bez=(a,c,b,t)=>{const q=1-t;return{x:q*q*a.x+2*q*t*c.x+t*t*b.x,y:q*q*a.y+2*q*t*c.y+t*t*b.y};};
+  items.forEach((it,i)=>{const y=rowY(i),a={x:rx+rw,y},b=targetOf(it.route),c={x:a.x+150,y:b.y};
+    const color=BINS.find(x=>x[0]===it.route)[2];
+    web.push(mk('path',{d:`M${a.x} ${a.y} Q${c.x} ${c.y} ${b.x} ${b.y}`,fill:'none',stroke:alpha(color,.22),'stroke-width':.7}));
+    txt(rx,y+4,String(i+1).padStart(2,'0'),SP.mu,9);
+    txt(rx+22,y+4,it.label,color,10);
+    dots.push({it,a,b,c,color,i,lane:mk('rect',{x:0,y:0,width:0,height:0,fill:'transparent'})});
+    mk('rect',{x:rx+rw-10,y:y-4,width:5,height:5,fill:color,opacity:.35}).setAttribute('data-sq',i);});
+  // 背景淡蛛网(参考端 24 条 mesh 曲线, 按尺寸裁剪)
+  for(let i=0;i<10;i++){const y=110+i*32;
+    mk('path',{d:`M380 ${y} Q560 ${y} ${bx} ${binMid[i%4]}`,fill:'none',stroke:alpha(SP.spider,.055),'stroke-width':.65});}
+  // 零命中
+  if(!items.length){txt(520,250,'零命中 — 死因见左侧各层淘汰计数','#F28A76',14,'middle')
+    .animate([{opacity:0},{opacity:1}],{duration:400,fill:'forwards'});}
+  // ---- 蜘蛛(线框腹 + 8 腿步态 + 粉色心跳, 参考端 drawSpider/live-renderer.spider 等价) ----
+  const defs=mk('defs',{});
+  const flt=mk('filter',{id:'heartGlow',x:'-200%',y:'-200%',width:'500%',height:'500%'},defs);
+  mk('feGaussianBlur',{stdDeviation:'3.5',result:'b'},flt);
+  const mg=mk('feMerge',{},flt);mk('feMergeNode',{in:'b'},mg);mk('feMergeNode',{in:'SourceGraphic'},mg);
+  const body={cx:452,cy:262,rx:64,ry:118,w:Math.PI*2/16};
+  const gBody=mk('g',{});   // 局部系: translate+rotate 与参考端 live-renderer.spider 相同
+  const legEls=[],footEls=[];
+  for(let k=0;k<8;k++)for(let s=0;s<2;s++){        // 腿先画、腹后盖(参考端顺序)
+    legEls.push([mk('polyline',{fill:'none',stroke:alpha(SP.spider,.16),'stroke-width':2.2,'stroke-linecap':'round'},gBody),
+                 mk('polyline',{fill:'none',stroke:alpha(SP.spider,.76),'stroke-width':1,'stroke-linecap':'round'},gBody)]);
+    footEls.push(mk('rect',{width:2,height:2,fill:SP.spider},gBody));}
+  mk('ellipse',{cx:0,cy:0,rx:24,ry:30,fill:alpha(SP.spider,.10),stroke:SP.spider,'stroke-width':1},gBody);
+  for(let i=-3;i<=3;i++){mk('ellipse',{cx:i*5,cy:0,rx:Math.max(2,8-Math.abs(i)),ry:26,fill:'none',stroke:alpha(SP.spider,.3),'stroke-width':.6},gBody);
+    mk('ellipse',{cx:0,cy:i*7,rx:21,ry:6,fill:'none',stroke:alpha(SP.spider,.3),'stroke-width':.6},gBody);}
+  const heart=mk('rect',{x:-6,y:-6,width:12,height:12,fill:SP.accent,filter:'url(#heartGlow)'},gBody);
+  // 触须臂(参考端 probes.js: 伸向词条的虚线曲线, reach/hold/retract)
+  const armPath=mk('path',{fill:'none',stroke:alpha(SP.spider,.85),'stroke-width':1.1,'stroke-dasharray':'1.8 4',opacity:0});
+   const armTip=mk('rect',{width:2.2,height:2.2,fill:'#effff5',opacity:0});
+   const binValEls=BINS.map((b,i)=>{const el=txt(bx+bw-12,btop+i*(bh+bgap)+58,'0',b[2],26,'end');el.setAttribute('font-weight','700');return el;});
+   const arrived={};
+  // ---- 时间线: 触须先行 → 彩点沿蛛丝飞入分箱(参考端 launchTime+flight) ----
+  const lead=.6,step=.45,FLY=.9;
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const endT=reduced?0:lead+items.length*step+FLY+.6;
+  const sqs=[...svg.querySelectorAll('[data-sq]')];
+  function frame(t){
+    // 蜘蛛巡游(参考端 livePose 闭合椭圆轨道)
+    const ang=reduced?1.3:t*body.w;
+    const px=body.cx+Math.cos(ang)*body.rx,py=body.cy+Math.sin(ang)*body.ry;
+    const vx=-Math.sin(ang)*body.rx*body.w,vy=Math.cos(ang)*body.ry*body.w;
+    const sp=Math.hypot(vx,vy),hd=Math.atan2(vx,-vy)||0;
+    const hb=reduced?{beat:.15,size:10,glow:5,intensity:.8,roundness:1.5,rotation:0}:heartbeatAt(t);
+    const rot=hd+(reduced?0:hb.rotation);
+    gBody.setAttribute('transform',`translate(${px} ${py}) rotate(${rot*180/Math.PI})`);
+    heart.setAttribute('x',-hb.size/2);heart.setAttribute('y',-hb.size/2);
+    heart.setAttribute('width',hb.size);heart.setAttribute('height',hb.size);
+    heart.setAttribute('rx',hb.roundness);heart.setAttribute('opacity',hb.intensity);
+    legEls.forEach((pair,n)=>{const side=n%2?1:-1,k=n>>1;
+      const p=legPoseAt(reduced?0:t,side,k,sp);
+      const pts=`${p.root.x},${p.root.y} ${p.knee.x},${p.knee.y} ${p.foot.x},${p.foot.y}`;
+      pair[0].setAttribute('points',pts);pair[1].setAttribute('points',pts);
+      footEls[n].setAttribute('x',p.foot.x-1);footEls[n].setAttribute('y',p.foot.y-1);});
+    // 触须臂: 依次伸向各命中行(reach .3 / hold .3 / retract .3)
+    let arm=null;
+    dots.forEach(d=>{const L=lead+d.i*step,age=t-(L-.3);
+      if(age>=0&&age<.9){const ext=age<.3?smoothstep((age/.3)**1.35):age<.6?1:1-smoothstep(((age-.6)/.3)**0.9);
+        if(!arm||L>arm.L)arm={L,ext,age,d};}});
+    if(arm){const d=arm.d;
+      const tip={x:mix(px+(d.a.x>px?26:-26),d.a.x,arm.ext),y:mix(py,d.a.y,arm.ext)};
+      const mid={x:mix(px,tip.x,.5)+18,y:mix(py,tip.y,.5)-26};
+      armPath.setAttribute('d',`M${px} ${py} Q${mid.x} ${mid.y} ${tip.x} ${tip.y}`);
+      armPath.setAttribute('opacity',arm.age<.15?arm.age/.15:arm.age>.75?Math.max(0,(0.9-arm.age)/.15):.9);
+      armTip.setAttribute('x',tip.x-1.1);armTip.setAttribute('y',tip.y-1.1);
+      armTip.setAttribute('opacity',armPath.getAttribute('opacity'));}
+    else{armPath.setAttribute('opacity',0);armTip.setAttribute('opacity',0);}
+    // 飞行彩点 → 落箱计数
+    dots.forEach(d=>{const L=lead+d.i*step,age=t-(L+.52);
+      if(age<0)return;const p=reduced?1:Math.min(1,age/FLY);
+      const pos=bez(d.a,d.c,d.b,1-(1-p)**3);
+      d.lane.setAttribute('x',pos.x-3);d.lane.setAttribute('y',pos.y-3);
+      d.lane.setAttribute('width',6);d.lane.setAttribute('height',6);
+      d.lane.setAttribute('fill',d.color);
+      web[d.i].setAttribute('stroke',alpha(d.color,.55));web[d.i].setAttribute('stroke-width',1.2);
+      if(p>=1&&!arrived[d.i]){arrived[d.i]=1;
+        binValEls[BINS.findIndex(b=>b[0]===d.it.route)].textContent=String(
+          dots.filter(x=>arrived[x.i]&&x.it.route===d.it.route).length);
+        sqs[d.i]&&sqs[d.i].setAttribute('opacity',1);}});
+    if(!reduced&&t<endT)spiderRaf=requestAnimationFrame(()=>frame((performance.now()-t0)/1000));
+    else spiderRaf=0;
+  }
+  let t0=performance.now();
+  if(reduced)frame(endT+.1);else spiderRaf=requestAnimationFrame(()=>frame((performance.now()-t0)/1000));
   $('modal').classList.add('open');
 }
 function conn(ok){$('conn').textContent=ok?'● 已连接':'● 断连(重试中)';
-  $('conn').style.color=ok?'var(--ok)':'var(--bad)';}
+  $('conn').classList.toggle('bad',!ok);}
 function render(){
   $('vSingle').classList.toggle('on',view==='single');
   $('vFed').classList.toggle('on',view==='fed');
@@ -224,9 +444,11 @@ function render(){
 $('vSingle').onclick=()=>{view='single';render();};
 $('vFed').onclick=()=>{view='fed';render();};
 document.querySelectorAll('[data-w]').forEach(c=>c.onclick=()=>{win=+c.dataset.w;render();});
-$('feed').addEventListener('click',e=>{const it=e.target.closest('.feed-item');
-  const tid=it&&(it.dataset.tid||'');const raw=it&&it.raw||feedBuf[tid];
-  if(raw&&raw.kind!=='get')playSpider(raw);});
+function openFeed(it){const tid=it&&(it.dataset.tid||'');const raw=it&&it.raw||feedBuf[tid];
+  if(raw&&raw.kind!=='get')playSpider(raw);}
+$('feed').addEventListener('click',e=>openFeed(e.target.closest('.feed-item')));
+$('feed').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();
+  openFeed(e.target.closest('.feed-item'));}});
 // 全屏蜘蛛回放(B-2): 首次点击才让 serve 懒启动克隆仓 MCP 导入本 trace, iframe 加载 previewUrl
 let fullTid='';
 $('fullSpider').onclick=async e=>{
@@ -247,8 +469,8 @@ $('fullSpider').onclick=async e=>{
   finally{btn.disabled=false;}
 };
 $('fullWrap').onclick=e=>e.stopPropagation();
-$('modal').onclick=e=>{if(e.target===$('modal')||e.target===$('modalHead'))$('modal').classList.remove('open');};
-document.addEventListener('keydown',e=>{if(e.key==='Escape')$('modal').classList.remove('open');});
+$('modal').onclick=e=>{if(e.target===$('modal')||e.target===$('modalHead'))closeSpider(),$('modal').classList.remove('open');};
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSpider(),$('modal').classList.remove('open');});
 (async()=>{try{const h=await fetch('/api/health');const d=await h.json();
   if(!d.exists)banner('','<b>traces/ 目录不存在</b> — 观测尚未开启: 业务仓 .mcp.json 加 <code>"env":{"KB_TRACE":"1"}</code> 或重跑 <code>kb init</code>。检索本身不受影响。');
   if(qs.get('degraded'))banner('bad',`已配置团队观测服务端 <code>${esc(qs.get('serve_url')||'')}</code> 但不可达, 当前为<b>本机降级视图</b>(数据仅本机, 非团队全量)`);

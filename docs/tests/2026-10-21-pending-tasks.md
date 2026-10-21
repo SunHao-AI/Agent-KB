@@ -7,16 +7,14 @@
 
 ## A. 交付完整性(优先处理, 防止工作丢失)
 
-### A1. 两仓改动全部未提交
+### A1. 两仓改动全部未提交 — ✅ 已提交(2026-10-21, 用户授权)
 - **状态更新(2026-10-21 新会话)**: prompt-spider-ui 已全部提交(基线 781bad5 + 缓动
-  b1a0898/0a06636/4b756b5, 见 `.superpowers/sdd/2026-10-21-spider-orbit-easing/progress.md`);
-  **Agent-KB 侧功能改动仍未提交**(下表所列 src/kb、web/index.html、tests、docs/kb 生成物等)。
-- **Agent-KB** (`D:\Workplace\Agent-KB`): 修改 `src/kb/{cli,serve,spider_export,stats}.py`、
+  b1a0898/0a06636/4b756b5); Agent-KB 功能改动已提交(bf37d6d 功能 + 14f79d3 文档沉淀,
+  提交前 pytest 278 过、`kb index --check` 无漂移, traces 未混入)。
+  **唯一遗留**: `preview.gif` 仍未入库(用户拍板"不含 preview.gif", 是否入库待后续确认)。
+- 原改动清单(现均已入库, 留作索引): `src/kb/{cli,serve,spider_export,stats}.py`、
   `src/kb/web/index.html`、`tests/{test_spider_export,test_stats_serve}.py`、
-  `docs/kb/INDEX.md`、`docs/kb/index.jsonl`; 未跟踪 `docs/tests/`(测试文档+本清单)、
-  `docs/kb/pitfall/` 新条目(3 条沉淀)、`preview.gif`(用户提供的示例动图, 是否入库需确认)。
-- **注意**: 提交前跑 `kb index --check --repo .` 确认生成物无漂移; `traces/` 由定时任务
-  自动提交, 勿混入功能提交(AGENTS.md 红线)。提交需用户明确要求。
+  `docs/kb/INDEX.md`、`docs/kb/index.jsonl`、`docs/tests/`、`docs/kb/pitfall/` 新条目。
 
 ### A2. 知识沉淀差一条(门控名额下轮可用) — ✅ 已完成(2026-10-21)
 - 已沉淀 `kb-20261021-3471`(docs/kb/pitfall/frontend/2026-10-21-bbox.md):

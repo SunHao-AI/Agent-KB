@@ -536,3 +536,20 @@ async/await 箭头链易被包装层拒("window is not defined"是发进了 Exec
 `python -m kb.cli search --query docker --trace --repo .`(kb 不在 PATH, 本轮实测踩的坑)
 现场构造 `t-20261021-9a46`(46 命中恰好 2 页, 覆盖翻页场景比原计划更充分)。
 
+## §18 使用者视角新一轮走查(2026-10-21)
+
+C1-C6 上线后以"第一次上手的用户"心智在 4321 全旅程走查(browseruse 实测), **未发现需修复的产品缺陷**:
+首屏无 token 加载与 ● 已连接; C1 tooltip `起始 ≈ 2026-10-14(含当天往前 7 天)`、"全部"=不设起始日;
+C2 点零命中行左段即追因(网关→1/10)且与按钮不双触发; C3 空白处 `/` 聚焦过滤框、框内输入 `a/b` 不被劫持;
+C4 热门榜 title=`完整标题 · kb-20261012-…`; C5 条目 aria-label="打开回放: xxx"; C6 浮层右侧停靠与
+main 零重叠、开着时鼠标点另一条目 src 就地更换(正斜杠→Windows→网关)、✕/Esc 关闭均生效; 回放画布
+词墙+缓动轨道+控制条正常, 零命中 trace 蜘蛛稳定巡航; 状态过滤命中 3/7+零命中 4/7=全部 7 自洽;
+URL 状态 `?w=7&caller=agent-kb` 刷新恢复窗口与下钻; 联邦视图 KPI/双榜/项目矩阵(命中率、活跃、
+data-caller 下钻)正常。控制台仅切换会话时旧 SSE `net::ERR_ABORTED /api/sessions/<id>/events`
+(预期 abort, 无害)。
+
+**走查方法论教训(自我纠错, 非产品缺陷)**: 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除
+`.open` 类, 断言误用 `!!querySelector('#rp')`(元素存在性)所致; 修正为 `.classList.contains('open')` 后
+重测全部通过。systematic-debugging 的"先根因后结论"在此拦下了一轮假修复。browseruse evaluate 返回值
+需取 `content[0].text`, 手写 IIFE 会被二次包装吃掉返回值(用纯表达式)。
+

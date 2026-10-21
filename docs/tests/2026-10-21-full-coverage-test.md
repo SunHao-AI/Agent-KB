@@ -584,8 +584,12 @@ URL 状态正确联动(`?w=7&caller=*`)、feed 正常刷新✅——rp 独立于
 **a11y 焦点归还(结论已纠错)**: 条目聚焦→Enter 开浮层→Esc 关→`document.activeElement` 回到原条目
 (`isItem=true`)→再 Enter 还能开(键盘循环不中断)✅。**但根因不是"rpClose 实现了焦点归还"**
 ——源码核实 `rpClose()` 无任何 `focus()` 调用: 真实机制是开浮层时焦点从未移入面板(纯视觉浮层),
-Esc 处理不移动焦点, 焦点原生停留在条目。已知局限: 若用户鼠标点浮层内 ✕ 关闭, 焦点落 body,
-后续键盘需重新 Tab——轻量面板可接受, 若做焦点归还应记 lastFocus 并在 rpClose 恢复。
+Esc 处理不移动焦点, 焦点原生停留在条目。~~已知局限: 若用户鼠标点浮层内 ✕ 关闭, 焦点落 body~~
+ **已修复(增强项落地)**: `openReplay` 首次开层记 `rpLastFocus=document.activeElement`(换 trace
+ 不覆盖), `rpClose` 关闭时 `document.contains(el)&&el.focus()` 归还(幂等, 焦点本就在则无副作用)。
+ 实测: 原生聚焦条目→开层→✕ 关闭 → `activeElement` 回到条目(AE=DIV.feed-item)。
+ 归因附注: browser_click 自动化工具点击 div 不触发原生 focus(测得 AE=BODY 属工具假象),
+ 真实浏览器 mousedown 会给 tabindex=0 元素焦点, 合成 MouseEvent+focus 序列复现真实路径验证。
 **回放控制条**(直接导航桥页面绕跨端口 snapshot 限制): 暂停后进度冻结(1.81→1.81)✅; 速度选
 4×生效✅; 重播进度回绕(4× 下 1s 实时≈1.6 trace 秒, 数值合理)✅。
 注: 桥 iframe 跨端口(59769≠4321), browser snapshot 不进入 iframe 内部, 控制条需直接导航桥

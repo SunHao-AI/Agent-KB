@@ -573,7 +573,7 @@ $('feed').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.prev
 // 回放: 桥就绪(spider_ready)→ 大浮层 iframe 加载克隆仓整页 session 视图(原生 topbar/
 // transport/词墙切换全保留; serve 导入后已配自动重播+循环)。浮层开着点别的流条目=就地换
 // src(会话 serve 端缓存)。⤢ 可另开整页标签。桥不就绪/失败→回落 SVG 弹层(降级不变)。
-let spiderReady=false,rpUrl='';
+let spiderReady=false,rpUrl='',rpLastFocus=null;   // §23 a11y: 开层时记录触发元素, 关闭后归还焦点
 // 停靠分档: 面板(56vw, 上限 1080)之外还能给 main 留 ≥400px 才并排(rp-wide),
 // 否则退回居中大面板(rp-center, feed 被盖属预期)。纯 CSS 媒体查询无法与
 // min()/vw 表达式精确联动, 用实测视口宽判定, resize 时重算。
@@ -585,6 +585,7 @@ function rpLayout(){const b=document.body.classList;
 addEventListener('resize',rpLayout);
 async function openReplay(raw){
   const tid=raw.trace_id||'';if(!tid){playSpider(raw);return;}
+  if(!$('rp').classList.contains('open'))rpLastFocus=document.activeElement;   // 首次开层才记(换 trace 不覆盖)
   $('rp').classList.add('open');rpLayout();   // rp-wide/rp-center: main 让出左列或居中回退
   $('rpMeta').textContent=(raw.query||'-')+' · 连接蜘蛛会话…';
   try{
@@ -597,7 +598,10 @@ async function openReplay(raw){
   }catch(err){rpClose();playSpider(Object.assign({},raw,{_replayErr:err.message}));}
 }
 function rpClose(){$('rp').classList.remove('open');rpLayout();
-  $('rpFrame').src='about:blank';rpUrl='';}
+  $('rpFrame').src='about:blank';rpUrl='';
+  // §23 a11y: 焦点归还触发条目(✕ 按钮自身即将随层不可见, 不归还则焦点落 body 断键盘循环)
+  const el=rpLastFocus;rpLastFocus=null;
+  if(el&&document.contains(el))el.focus();}
 $('rpClose').onclick=rpClose;
 $('rpPop').onclick=()=>{if(rpUrl)window.open(rpUrl,'kb-spider-replay');};
 // (B1) 遮罩改 pointer-events:none 后不再接收点击, 原"点遮罩空白关闭"取消;

@@ -11,7 +11,9 @@
   *{box-sizing:border-box;margin:0;padding:0}
   body{background:var(--bg);color:var(--tx);font:14px/1.65 "PingFang SC","Microsoft YaHei",system-ui,sans-serif;padding:24px 20px 80px}
   main{max-width:1080px;margin:0 auto}
-  header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px}
+  html{scrollbar-width:thin;scrollbar-color:#2d3646 transparent}
+  header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:-6px 0 12px;padding:6px 0 10px;
+        position:sticky;top:0;z-index:5;background:linear-gradient(180deg,var(--bg) 70%,rgba(13,17,23,.85) 92%,rgba(13,17,23,0));backdrop-filter:blur(6px)}
   h1{font-size:19px;margin-right:auto}
   .brand{display:flex;align-items:center;gap:12px;margin-right:auto;min-width:0}
   .brand svg{width:27px;height:27px;flex:none}
@@ -38,7 +40,9 @@
   .bar{display:grid;grid-template-columns:minmax(120px,220px) 1fr 96px;align-items:center;gap:8px;font-size:12.5px;margin:5px 0}
   .bar>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .track{background:#0b1017;border-radius:4px;height:13px;overflow:hidden}
-  .fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--ok),#2ea87f)}
+  .fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--ok),#2ea87f);
+        transform-origin:left center;animation:barIn .5s cubic-bezier(.22,.8,.3,1)}
+  @keyframes barIn{from{transform:scaleX(.04)}to{transform:scaleX(1)}}
   .fill.zero{background:linear-gradient(90deg,var(--bad),#b25646)}
   .feed-item{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:7px 9px;
              border-radius:6px;margin:5px 0;background:var(--panel2)}
@@ -48,7 +52,8 @@
   .w{background:var(--warn);box-shadow:0 0 6px var(--warn)}
   .mono{font-family:Consolas,monospace;color:var(--mu);margin-left:auto;font-size:11px;white-space:nowrap}
   .mono .dur{display:inline-block;min-width:5.5ch;text-align:right}   /* 耗时定宽: 跨行右缘与时间列对齐 */
-  .banner{border-left:3px solid var(--warn);background:#1a2130;padding:9px 13px;border-radius:0 8px 8px 0;margin:10px 0;font-size:13px}
+  .banner{border-left:3px solid var(--warn);background:#1a2130;padding:9px 13px;border-radius:0 8px 8px 0;margin:10px 0;font-size:13px;animation:bIn .3s cubic-bezier(.22,.8,.3,1)}
+  @keyframes bIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
   .banner.bad{border-color:var(--bad)} .banner.ok{border-color:var(--ok)}
   .est{color:var(--ext);cursor:help}
   a{color:var(--link);text-decoration:none}
@@ -56,8 +61,10 @@
   th,td{border:1px solid var(--bd);padding:5px 8px;text-align:left}
   th{background:var(--panel2);white-space:nowrap}
   .stale td{color:var(--bad)}
-  .feed-item{cursor:pointer}
-  .feed-item:hover{outline:1px solid var(--bd)}
+  .feed-item{cursor:pointer;border:1px solid transparent;transition:background .16s,border-color .16s,transform .16s}
+  .feed-item:hover{background:#222b3c;border-color:#33415a;transform:translateX(2px)}
+  .feed-item[data-rd]{opacity:.82}
+  .feed-item[data-rd]:hover{opacity:1}
   .feed-item.hide{display:none}
   .feed-skel{height:31px;border-radius:6px;margin:5px 0;
         background:linear-gradient(90deg,var(--panel2) 25%,#242e40 50%,var(--panel2) 75%);
@@ -69,6 +76,7 @@
   .fbar input::placeholder{color:#5c6878}
   .fbar .seg button{padding:4px 11px;font-size:11.5px}
   .cnt{font-size:11px;color:var(--mu);font-family:Consolas,monospace;margin-left:auto}
+  #feed{scroll-margin-top:64px}   /* sticky header 让位: 分页/追因 scrollIntoView 起点不被遮 */
   #fpage{display:flex;gap:5px;align-items:center;margin-top:9px;flex-wrap:wrap}
   #fpage button{background:var(--panel2);border:1px solid var(--bd);color:var(--mu);min-width:26px;
         border-radius:6px;padding:2px 8px;font:12px Consolas,monospace;cursor:pointer}
@@ -98,9 +106,11 @@
      停靠形态(B1): 面板停靠右侧、main 让出左列——检索流整列鼠标始终可达
      (浮层开着点另一条目=就地换 src); 遮罩 pointer-events:none 纯视觉压暗,
      关闭走 ✕/Esc 显式路径, 面板内 iframe 回放不被误关。 */
-  #rp{position:fixed;inset:0;background:rgba(4,6,9,.78);display:none;z-index:8;align-items:center;justify-content:flex-end;pointer-events:none}
+  #rp{position:fixed;inset:0;background:rgba(4,6,9,.78);display:none;z-index:8;align-items:center;justify-content:flex-end;pointer-events:none;animation:rpfade .22s ease-out}
+  @keyframes rpfade{from{opacity:0}to{opacity:1}}
   #rp.open{display:flex}
-  #rpBox{width:var(--rpw);height:92vh;background:#080909;border:1px solid var(--ac);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.6);pointer-events:auto}
+  #rpBox{width:var(--rpw);height:92vh;background:#080909;border:1px solid var(--ac);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.6);pointer-events:auto;animation:rpIn .26s cubic-bezier(.22,.8,.3,1)}
+  @keyframes rpIn{from{opacity:0;transform:translateX(26px) scale(.985)}to{opacity:1;transform:none}}
   /* 宽窄两档由 JS 实测加类(body.rp-wide/rp-center, 见 rpLayout): 宽屏并排, 窄屏居中回退 */
   body.rp-wide main{max-width:min(1080px,calc(100vw - var(--rpw) - 36px));margin-left:0}
   body.rp-center #rp{justify-content:center}
@@ -112,6 +122,10 @@
   #rpStage{flex:1;min-height:0}
   #rpStage iframe{width:100%;height:100%;border:0;background:#080909}
   @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
+  /* 动效安全: 系统降级偏好下全部装饰动画停用(SVG 回放另有 JS 侧 reduced 分支) */
+  @media(prefers-reduced-motion:reduce){
+    .fill,.feed-item,.feed-item.new,.feed-skel,#rp,#rpBox,.banner,.conn.bad{animation:none!important;transition:none!important}
+    .feed-item:hover{transform:none}}
   @media(max-width:700px){.bar{grid-template-columns:110px 1fr 60px}.boards2{grid-template-columns:1fr}}
 </style>
 </head>

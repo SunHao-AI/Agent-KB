@@ -581,8 +581,11 @@ SSE 稳定 9s+ "● 已连接"。控制台仅两类预期噪声: 切会话旧 SS
 (popstate)→回联邦 `caller=*` 且矩阵重新显示✅。
 **浮层×主面板互扰**: 浮层开着切时间窗口(7天)与切视图(联邦), 浮层保持打开、rpTitle 回放标题不丢、
 URL 状态正确联动(`?w=7&caller=*`)、feed 正常刷新✅——rp 独立于 render() 刷新路径。
-**a11y 焦点归还**: 条目聚焦→Enter 开浮层→Esc 关→`document.activeElement` 回到原条目
-(`isItem=true`)→再 Enter 还能开(键盘循环不中断)✅——rpClose 实现了焦点归还(或原生焦点保留)。
+**a11y 焦点归还(结论已纠错)**: 条目聚焦→Enter 开浮层→Esc 关→`document.activeElement` 回到原条目
+(`isItem=true`)→再 Enter 还能开(键盘循环不中断)✅。**但根因不是"rpClose 实现了焦点归还"**
+——源码核实 `rpClose()` 无任何 `focus()` 调用: 真实机制是开浮层时焦点从未移入面板(纯视觉浮层),
+Esc 处理不移动焦点, 焦点原生停留在条目。已知局限: 若用户鼠标点浮层内 ✕ 关闭, 焦点落 body,
+后续键盘需重新 Tab——轻量面板可接受, 若做焦点归还应记 lastFocus 并在 rpClose 恢复。
 **回放控制条**(直接导航桥页面绕跨端口 snapshot 限制): 暂停后进度冻结(1.81→1.81)✅; 速度选
 4×生效✅; 重播进度回绕(4× 下 1s 实时≈1.6 trace 秒, 数值合理)✅。
 注: 桥 iframe 跨端口(59769≠4321), browser snapshot 不进入 iframe 内部, 控制条需直接导航桥

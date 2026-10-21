@@ -291,15 +291,18 @@ class _Handler(BaseHTTPRequestHandler):
         if u.path == "/healthz":
             self._json({"ok": True, "schema": kbtrace.SCHEMA})
             return
+        if u.path == "/":
+            # 静态壳免鉴权(不含数据, 数据全在 /api/* 逐个鉴权): 否则无 token 用户
+            # 看到浏览器裸 JSON 401, 前端专门的"需要访问令牌"友好横幅永远没机会渲染(§24 实测)
+            self._send(200, srv.index_html.encode("utf-8"),
+                       "text/html; charset=utf-8")
+            return
         if not self._authorized():
             self._json({"error": "unauthorized"}, 401)
             return
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         try:
-            if u.path == "/":
-                self._send(200, srv.index_html.encode("utf-8"),
-                           "text/html; charset=utf-8")
-            elif u.path == "/api/health":
+            if u.path == "/api/health":
                 self._json({"ok": True, "schema": kbtrace.SCHEMA,
                             "traces_dir": str(kbtrace.traces_dir(srv.root)),
                             "exists": kbtrace.traces_dir(srv.root).exists(),

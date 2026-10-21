@@ -320,9 +320,11 @@ function renderFeed(){
     pg.innerHTML=h;}
   else pg.hidden=true;
   if(!list.length){const e=document.createElement('div');e.className='empty';
+    // §22: 零数据空态区分"下钻项目没有"与"全局还没有"(feed 不受窗口过滤, 窗口不列入文案)
     e.innerHTML=feedArr.length
       ?`没有匹配的条目 — 试试更短的关键词或切回<b>全部</b>。${feedArr.length>=500?'<br>(仅载入最近 500 条, 更早记录请缩小时间窗口)':''}`
-      :'还没有检索记录。<br>在业务仓跑一次 <b>kb search</b>(或让 Agent 走 MCP 检索), ≤2s 内会实时出现在这里。';
+      :(caller?`项目 <b>${esc(caller)}</b> 还没有检索记录。<br>返回<b>多项目联邦</b>看全局; 或在业务仓跑一次 <b>kb search</b>, ≤2s 内会实时出现在这里。`
+               :'还没有检索记录。<br>在业务仓跑一次 <b>kb search</b>(或让 Agent 走 MCP 检索), ≤2s 内会实时出现在这里。');
     f.appendChild(e);}
 }
 function onEvent(ev,isGet){           // SSE 入口: 并入真源; 仅第 1 页重渲染(不打断阅读旧页)

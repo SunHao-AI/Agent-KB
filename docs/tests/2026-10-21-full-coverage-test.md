@@ -456,6 +456,43 @@ evaluate 脚本里 `\\d` 等双反斜杠转义会被传输层吃掉, 用 `substr
 教训: **动画轨道要对准"内容实际在哪", 不能对准"区域名义多大"**——区域随数据量伸缩时,
 固定几何必错位; 用可见内容反推 bbox 是通用解。
 
+### §16 补充实测(B1/B2, 2026-10-21, 浏览器实测)
+
+**B1 浮层"就地换 trace"**(serve 4321, `spider_ready=true`; iframe load 事件计数钩子验证
+整文档重载, 只读观测不改页面逻辑):
+
+| 步骤 | 断言 | 结果 |
+| --- | --- | --- |
+| 点条目 docker(`t-20261021-9a46`) | 浮层打开: 标题`▶ docker`、meta `trace t-20261021-9a46`、src=session f61ffdb4 | ✅ |
+| 浮层开着→键盘 Enter 切 uvicorn(`t-20261020-ddb5`) | 标题→`▶ uvicorn`、meta→`trace t-20261020-ddb5`、src→session 6a954fdc(就地换, `rp.open` 全程未关); loads +2 = iframe 整文档重载 | ✅ |
+| 换后 ~2s 截图 | iframe 内已是 ddb5 回放(页面标题/query 行/分箱 5 HITS 均与 ddb5 一致), 进度条位于最左 = 新会话**从 0 起播**, 无旧会话(docker 13.95s 循环)进度残留; 独立标签实测该 session 播放连续(1.42→5.00/5.35) | ✅ |
+| 三切零命中 正斜杠 穿越(`t-20261020-0931`) | 标题/meta/src(session 53f8be69)全换; iframe 独立标签验证页面标题`KB 命中回放 t-20261020-0931 · 0 命中`, 画面无任何 docker/uvicorn 旧数据 | ✅ |
+| Esc | 浮层关闭, frame src=`about:blank`(卸 iframe 语义在换 trace 后仍成立) | ✅ |
+
+![换 trace 前(docker)](b1-switch-from-docker.jpg)
+![换到 uvicorn 后 ~2s: 回放对象全换、进度条最左从 0 起播](b1-switch-to-uvicorn-t0.jpg)
+
+**B2 降级路径(桥不就绪→SVG 弹层)**: 独立 4322 serve, 环境仅该进程内改:
+`$env:PATH` 剔除 hermes node 目录(`Get-Command node` 已为空) + `$env:KB_SPIDER_HOME`
+指向不存在目录 + `.venv\Scripts\kb.exe serve --port 4322`; 探针 `/api/health`
+`spider_ready:false`。测毕按 PID 只杀 4322, 4321 复核仍 `spider_ready:true`。
+
+- 点条目 → 打开的是 `#modal` SVG 弹层(`modalOpen=true, rpOpen=false`, 浮层未参与);
+- 弹层头 `蜘蛛回放 · docker · agent-kb · 22ms · trace t-20261021-9a46`;
+- 命中行为人类可读标题(`1. Docker Desktop 资源上限的真实来源与 Resource Saver 卡死…`),
+  id 只作后缀/悬停, **非裸 kb-id**; 分箱计数 46 HITS(项目层 14)与 9a46 数据一致;
+- Escape → 弹层关闭(`modalOpen=false`), Escape 分发(先 SVG 后浮层)在浮层版下正常。
+
+![降级 SVG 弹层](b2-svg-degraded.jpg)
+
+**偏离/注意**: ① 代码注释称"浮层开着点别的流条目=就地换 src", 但实测鼠标点击被浮层
+遮挡未能到达条目(点击后状态不变、也不关闭); 就地换 src 分支实际经键盘到达
+(feed 条目 tabIndex+Enter/Space, 与 click 同走 `openFeed`)且断言全通。鼠标可达性
+是否要恢复(如浮层态下 feed 仍可点)留产品判断, 非本次回归。
+② 4322 未带 `--repo`, 默认 kb_root 解析到 `E:\Workplace\Agent-KB`(同仓另一盘符挂载),
+traces 一致, 不影响结论。③ evaluate 返回值经 `text()` 输出在部分调用里被序列化吞掉
+(`[object Object]`/undefined), 改传纯字符串表达式后稳定——browseruse 踩坑补充。
+
 ## 17. 蜘蛛轨道缓动过渡(2026-10-21, 浏览器逐帧实测)
 
 **现象**: 词墙回放里蜘蛛会"瞬移"——首词到达(t≈0.5s)词团 bbox 一变, 蜘蛛一步跳到新轨道;

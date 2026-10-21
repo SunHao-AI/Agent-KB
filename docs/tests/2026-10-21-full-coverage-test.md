@@ -548,7 +548,20 @@ URL 状态 `?w=7&caller=agent-kb` 刷新恢复窗口与下钻; 联邦视图 KPI/
 data-caller 下钻)正常。控制台仅切换会话时旧 SSE `net::ERR_ABORTED /api/sessions/<id>/events`
 (预期 abort, 无害)。
 
-**走查方法论教训(自我纠错, 非产品缺陷)**: 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除
+## §19 打磨后回归走查(2026-10-21, commit 4a78064 后)
+
+针对观感打磨(sticky header/动效/悬停态)做使用者回归, **无回归、无需修复**:
+滚动 900px 后 header `top=0` 且线性渐隐底生效(截图确认无内容泄漏); 浮层入场 `rpIn` 动画挂载、
+开着时点另一条目就地换 trace(src 更换、头部标题同步)、Esc 关闭(`.open` 类判定)正常; 追因
+scrollIntoView 后 `#feed` 顶边 421 > header 底缘 51, scroll-margin 让位有效; 已读弱化
+`[data-rd]`/hover 过渡/reduced-motion 三条 CSS 规则均在样式表在场; 联邦矩阵下钻
+`caller=agent-kb` 后切窗口 `?w=7&caller=agent-kb` 两维状态互不踩踏; 重启 serve 后新加载页面
+SSE 稳定 9s+ "● 已连接"。控制台仅两类预期噪声: 切会话旧 SSE `ERR_ABORTED`(主动 abort)与
+旧标签跨 serve 重启的 `ERR_CONNECTION_RESET`(服务器重启复位存量连接, 非缺陷)。
+
+## 走查方法论教训(§18 自我纠错, 保留原样)
+
+曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除
 `.open` 类, 断言误用 `!!querySelector('#rp')`(元素存在性)所致; 修正为 `.classList.contains('open')` 后
 重测全部通过。systematic-debugging 的"先根因后结论"在此拦下了一轮假修复。browseruse evaluate 返回值
 需取 `content[0].text`, 手写 IIFE 会被二次包装吃掉返回值(用纯表达式)。

@@ -292,10 +292,14 @@ function itemDom(ev,isNew){
   d.dataset.st=hits.length?'hit':'zero';
   if(reads.length)d.dataset.rd='1';
   const lab=id=>`<span title="${esc((hitTitle(ev,id)||'')+' · '+id)}">${esc(feedLabel(ev,id))}</span>`;
+  // §25: query 展示截断(全文进 title, 与 feedLabel 24 字约定一致)——.mono nowrap + 无空格长串
+  // 的 flex min-content 都会把整行撑出米级横向溢出(实测 sw=13681px)
+  const qShort=q=>q.length>24?q.slice(0,24)+'…':q;
+  const qTxt=String(ev.query||'');
   d.innerHTML=`<span class="dot ${reads.length?'w':(hits.length?'g':'r')}"></span>
     <span>${hits.length?`命中 <b>${hits.slice(0,3).map(lab).join(', ')}</b>${hits.length>3?' …+':''}${reads.length?` · 已读 ${reads.slice(0,2).map(lab).join(', ')}`:''}`
-      :`零命中「${esc(ev.query)}」`}</span>
-    <span class="mono">${view==='fed'?esc(ev.caller_repo)+' · ':''}${esc(ev.query||'')} · <span class="dur">${ev.duration_ms??'?'}ms</span> · ${fmtTs(ev.ts)}</span>`;
+      :`零命中「<span title="${esc(qTxt)}">${esc(qShort(qTxt))}</span>」`}</span>
+    <span class="mono" title="${esc(qTxt)}">${view==='fed'?esc(ev.caller_repo)+' · ':''}${esc(qShort(qTxt))} · <span class="dur">${ev.duration_ms??'?'}ms</span> · ${fmtTs(ev.ts)}</span>`;
   return d;}
 function renderFeed(){
   const f=$('feed');f.innerHTML='';

@@ -574,6 +574,35 @@ SSE 稳定 9s+ "● 已连接"。控制台仅两类预期噪声: 切会话旧 SS
 已补入。人工复核(DevTools Rendering → emulate prefers-reduced-motion)按清单执行: 浮层直接出现
 无滑入、条形瞬间成宽、悬停无位移动效, 用户操作回放浮层开/关流程正常。
 
+## §25 第七轮走查: 数据边界与容错(2026-10-21)
+
+用临时仓(`$env:TEMP\kb-walk7`, 独立 serve 4323)造极端数据, 不污染真实 traces/。
+**发现并修复 1 个真实缺陷**: 超长查询(1200 字)整行渲染 → `.mono{white-space:nowrap}` 加上
+无空格长串的 flex min-content 不可收缩, 把 `#feed` 撑出 **13681px 横向溢出**(页面 sw=13682 vs
+cw=1000)。定位手法: 遍历 `#feed *` 找 `scrollWidth>clientWidth+2` 的元素, 一击命中
+`.feed-item`。**修复**: 条目 query 展示统一截断 24 字(与既有 `feedLabel` 约定一致)+ 全文进
+`title`(悬停看全); 复验 sw=cw=1000、页面 1078 无横滚, 截断条 `title` 长度=1200 全文可达。
+
+**XSS 防护三探针全过**(数据含 `<script>` 赋值、`<img onerror>`、`<b>` 标签):
+`#feed script` 节点数=0、`window.__xss`/`__xss2` 均未定义(payload 未执行)、
+条目显示字面量文本——`esc()` 转义有效。
+
+**脏数据容错**(jsonl 混入非法 JSON 行 / 空行 / 缺 trace_id 的对象): 服务端逐行 try 解析
+静默跳过(`_parse_file` 的 bad line 分支), feed 正常返回有效事件, 页面渲染无异常。
+**契约陷阱**: 首版造数据缺 `{"kind":"meta","schema":2}` 首行 → 整文件被 `read_traces`
+判"缺 meta 首行, 跳过"(feed=0), 一度误以为服务端崩; 补 meta 行即恢复。造 trace 必须写 meta 头。
+
+**海量与性能**: 603 条 → API 按 `limit=500` 截断(首条为最新, 新→旧正确);
+空态附"仅载入最近 500 条, 更早记录请缩小时间窗口"引导(实测命中该分支);
+翻到第 10 页 50 条渲染 11.3ms; 多文件(10-20 + 10-21)聚合正常。
+**缺失 trace**: `/api/replay/t-not-exist` → 404 + `{"error":"trace ... not found"}`, 服务不炸。
+
+**对比度抽查(WCAG AA)**: 背景 `rgb(13,17,23)` 下正文/链接 13.97、muted 6.45,
+均 >4.5 阈值 ✅。
+
+**走查自我纠错**: 一度以为"过滤框输入无效"(设 `#fquery` 后 `.empty` 仍 NO-EMPTY),
+探测 DOM 发现实际 id 是 `#fq`——测试脚本用错选择器, 非产品缺陷; 改正后空态/500 提示正常。
+
 ## §24 第六轮走查: 访问控制与多标签并行(2026-10-21)
 
 **发现并修复 1 个真实缺陷**: token 态下 `GET /` 面板首页也被鉴权拦截返回裸 JSON 401——

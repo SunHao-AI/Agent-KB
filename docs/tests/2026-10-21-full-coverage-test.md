@@ -574,6 +574,36 @@ SSE 稳定 9s+ "● 已连接"。控制台仅两类预期噪声: 切会话旧 SS
 已补入。人工复核(DevTools Rendering → emulate prefers-reduced-motion)按清单执行: 浮层直接出现
 无滑入、条形瞬间成宽、悬停无位移动效, 用户操作回放浮层开/关流程正常。
 
+## §26 第八轮走查: 真实路径与脏数据韧性(2026-10-21)
+
+**发现并修复 3 个关联真实缺陷**(同一根因链: 读侧把 trace 文件当可信输入):
+1. **聚合层裸崩**: `returned:null` 使 `len()` 抛 TypeError、`chars:"abc"` 使 `int()` 抛错——
+   stats/feed/callers 三端点连接被直接掐断(无响应, 比 500 更糟, 面板只剩转圈)。
+   直接调 `kb.stats` 复现: aggregate/feed/callers/by_source 4 函数 FAIL。
+   **修复**: `trace._coerce()` 解析期归一化(显式 null→[]、非列表 returned→[]+告警、
+   非数值 chars→None+告警; 语义脏值如负耗时/怪 ts 如实呈现不篡改)。
+   注意缓存契约"入缓存后只读", 故归一必须在 `_parse_file` 解析时做(对象此刻私有)。
+2. **watcher 单 tick 丢事件**: SSE 增量读对每行 `ev.get(...)` 无类型守卫, JSON 数组/标量行
+    (`[1,2,3]`)会让 `_tick` 抛 AttributeError。`run()` 有兜底不会线程死, 但该 tick 剩余
+    合法事件全部丢失(偏移已推进, 不再重读)——非对象行每出现一次丢一批。
+    **修复**: `isinstance(ev, dict)` 守卫 + 与读侧同口径 `_coerce` 后广播。
+3. **do_GET 只兜 BrokenPipeError**: 数据引发的异常裸穿→连接重置。**修复**: 追加
+   `except Exception` 回 500 带错误体(面板可提示而非转圈)。
+验证: 修复后 6 个聚合函数全 OK(3 条告警如实记录)、脏数据仓三端点 200、
+watcher 在 3 条非对象行后仍存活(10/10→11/11 正常推送)、pytest 278 全过。
+
+**深链直开**: `/?w=30&caller=agent-kb` 新页面完整恢复(30天高亮+单项目视图+下钻横幅)✅
+**Tab 可达性**: 32 个交互元素按 DOM 序可达无重复; `:focus-visible` outline 规则覆盖
+button/input/feed-item/bar; 自动化窗口无系统焦点致 `matches(':focus-visible')=false`
+属测试局限(同 §19 reduced-motion 处理), 人工 Tab 复核可见焦点框。
+**连续推送**: 阅读第 2 页时新推不打断(停留 page=2, DOM 保持 1 条)✅; DOM 恒定≤50(分页)✅;
+翻回第 1 页新事件在顶带"新"态✅。已知微瑕(不修, 自愈): 旧页时 fcnt 分子用 `n+1` 近似,
+连推 3 条显示 52/54(真实 54/54), 回第 1 页即恢复——轻量面板不值得为计数器加累计状态。
+**zoom 200%**(CSS zoom 近似浏览器缩放): 页面无横向溢出(1078/1078);
+榜单 span `sw>cw` 但带 `text-overflow:ellipsis+overflow:hidden`, 属设计内截断非缺陷。
+**测试自我纠错×2**: ①推前数据仅 11 条不足一页, 点"第2页"按钮不存在导致误判"翻页被打断"——
+读 onEvent 源码确认设计后补足数据重测; ②Exec 桥内嵌套引号转义 SyntaxError, 改转义写法。
+
 ## §25 第七轮走查: 数据边界与容错(2026-10-21)
 
 用临时仓(`$env:TEMP\kb-walk7`, 独立 serve 4323)造极端数据, 不污染真实 traces/。

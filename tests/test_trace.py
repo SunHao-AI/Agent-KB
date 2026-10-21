@@ -118,6 +118,25 @@ def test_read_skips_bad_line_and_warns(kbroot):
     assert any("bad line" in w for w in warns)
 
 
+def test_read_coerces_dirty_types_and_warns(kbroot):
+    """§26 回归: 脏类型(null/非列表 returned/非数值 chars)解析期归一, 不再让 stats 崩。"""
+    bad_ret, bad_chars = _ev(2), _ev(3)
+    bad_ret["returned"] = "abc"
+    bad_chars["returned_chars"] = "xyz"
+    _write(kbroot, f"{dt.date.today():%Y-%m-%d}.jsonl",
+           [{"kind": "meta", "schema": 1}, dict(_ev(1), returned=None),
+            bad_ret, bad_chars, "[1,2,3]", '"bare"'])
+    searches, _, warns = trace.read_traces(root=kbroot)
+    by = {s["trace_id"]: s for s in searches}
+    assert by["t-1"]["returned"] == []                 # 显式 null → 零命中
+    assert by["t-2"]["returned"] == []                 # 非列表 → 零命中 + 告警
+    assert by["t-3"]["returned_chars"] is None         # 非数值 → 不计入
+    assert any("returned 非列表" in w for w in warns)
+    assert any("chars 非数值" in w for w in warns)
+    from kb import stats
+    stats.aggregate(searches, [])                      # 归一后聚合不再 TypeError
+
+
 def test_read_filters_and_ordering(kbroot):
     for i, caller in enumerate(["web", "algo", "web"]):
         ev = _ev(i, caller=caller, returned=())

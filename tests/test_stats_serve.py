@@ -173,6 +173,30 @@ def test_bind_without_token_refused():
     assert serve.resolve_bind("127.0.0.1", None) == "127.0.0.1"
 
 
+def test_serve_survives_dirty_events(tmp_path):
+    """§26 回归: 脏事件(null returned / 非列表 / 非数值 chars / 非对象行)不得让
+    API 连接裸断(旧行为: TypeError 穿透 → 客户端"无法连接")。"""
+    import datetime as _dt
+    srv, base = _serve(tmp_path)
+    try:
+        f = tmp_path / "traces" / f"{_dt.date.today():%Y-%m-%d}.jsonl"
+        rows = [{"kind": "meta", "schema": serve.kbtrace.SCHEMA},
+                {"kind": "search", "trace_id": "t1", "ts": "2026-10-21T10:00:00+08:00",
+                 "caller_repo": "x", "query": "q", "returned": None, "filters": {}},
+                {"kind": "search", "trace_id": "t2", "ts": "2026-10-21T10:01:00+08:00",
+                 "caller_repo": "x", "query": "q", "returned": "abc", "filters": {}},
+                {"kind": "get", "trace_id": "t1", "id": "kb-1", "ok": True, "chars": "abc"},
+                [1, 2, 3]]
+        f.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows),
+                     encoding="utf-8")
+        for ep in ("stats?w=0", "feed?limit=10", "callers"):
+            st, _ = _get_url(f"{base}/api/{ep}")
+            assert st == 200, ep
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_panel_api_requests_use_apiurl():
     """token 态回归守护: 面板所有 /api/* 请求(fetch 与 EventSource)必须经 apiUrl() 统一
     注入 token, 禁止手拼 — 实测踩坑: stats/feed/health 曾漏带导致 token 态静默 401 全空。"""

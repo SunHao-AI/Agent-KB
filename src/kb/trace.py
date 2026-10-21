@@ -94,6 +94,25 @@ _cache_lock = threading.Lock()  # ThreadingHTTPServer 多线程读路径共用�
 _CACHE_CAP = 32  # 解析缓存文件数上限; 实测 28 日文件/2.15万事件常驻 ≈85MB, 高量团队态约 100MB 封顶
 
 
+def _coerce(ev: dict, warns: list[str], src: str) -> None:
+    """解析期就地归一化(对象此刻尚未入缓存, 私有可写; 入缓存后一律只读):
+    trace 文件由各客户端/手工写入, 属不可信输入; stats 用 len(returned)/int(chars)
+    直接消费, 脏类型会让 API 线程抛 TypeError → 连接被重置(§26 实测: returned=null
+    使 stats/feed/callers 三端点全挂)。原则: 只归一"会让算术崩"的类型,
+    语义脏值(负耗时/怪 ts)如实呈现不篡改。"""
+    ret = ev.get("returned")
+    if "returned" in ev and ret is None:
+        ev["returned"] = []                      # 显式 null 视为零命中(字段缺失本已安全)
+    elif ret is not None and not isinstance(ret, list):
+        warns.append(f"{src}: returned 非列表({type(ret).__name__}), 按零命中处理")
+        ev["returned"] = []
+    for k in ("chars", "returned_chars"):
+        v = ev.get(k)
+        if v is not None and not isinstance(v, (int, float)):
+            warns.append(f"{src}: {k} 非数值({type(v).__name__}), 该次不计入")
+            ev[k] = None                         # 下游 `is None` 分支已正确跳过
+
+
 def _parse_file(f: Path) -> tuple[list, list, list]:
     """单文件解析(mtime_ns+size 签名缓存, LRU)。append-only 语义下签名不变=内容不变;
     缓存出的事件 dict 按只读约定共享(全消费侧无原地改写), 勿新增写入方。
@@ -128,6 +147,10 @@ def _parse_file(f: Path) -> tuple[list, list, list]:
                 except json.JSONDecodeError:
                     warns.append(f"{f.name}: bad line 跳过")
                     continue
+                if not isinstance(ev, dict):
+                    warns.append(f"{f.name}: 非对象事件跳过")
+                    continue
+                _coerce(ev, warns, f.name)
                 if ev.get("kind") == "search":
                     searches.append(ev)
                 elif ev.get("kind") == "get":

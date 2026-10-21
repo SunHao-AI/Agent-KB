@@ -205,7 +205,9 @@ class TraceWatcher(threading.Thread):
                     ev = json.loads(ln)
                 except json.JSONDecodeError:
                     continue
-                if ev.get("kind") in ("search", "get"):
+                # 非对象行(JSON 数组/标量)无 .get → 会让 watcher 线程崩掉, 全局停推(§26)
+                if isinstance(ev, dict) and ev.get("kind") in ("search", "get"):
+                    kbtrace._coerce(ev, [], f.name)   # 与读侧同口径归一, 否则脏事件直达前端
                     self._broadcast(ev)
 
     def _is_new(self, f: Path) -> bool:
@@ -342,6 +344,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"error": "not found"}, 404)
         except BrokenPipeError:
             pass
+        except Exception as exc:   # 数据/参数引发的意外: 回 500 而不是让连接裸断, 面板才能提示(§26)
+            self._json({"error": f"internal: {type(exc).__name__}: {exc}"}, 500)
 
     def _sse(self, watcher: TraceWatcher, caller: str | None) -> None:
         self.send_response(200)

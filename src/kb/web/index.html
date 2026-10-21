@@ -124,9 +124,12 @@
   @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
   /* 动效安全: 系统降级偏好下全部装饰动画停用(SVG 回放另有 JS 侧 reduced 分支) */
   @media(prefers-reduced-motion:reduce){
-    .fill,.feed-item,.feed-item.new,.feed-skel,#rp,#rpBox,.banner,.conn.bad{animation:none!important;transition:none!important}
+    .fill,.feed-item,.feed-item.new,.feed-skel,#rp,#rpBox,.banner,.conn.bad,.kpi,.seg button{animation:none!important;transition:none!important}
     .feed-item:hover{transform:none}}
-  @media(max-width:700px){.bar{grid-template-columns:110px 1fr 60px}.boards2{grid-template-columns:1fr}}
+  @media(max-width:700px){.bar{grid-template-columns:110px 1fr 60px}.boards2{grid-template-columns:1fr}
+    /* 窄屏: .mono 元信息 nowrap+不可收缩会撑破行(实测 387>329→body 横滚 20px), 改可换行右对齐 */
+    .feed-item{flex-wrap:wrap}
+    .feed-item .mono{white-space:normal;text-align:right;max-width:100%}}
 </style>
 </head>
 <body>

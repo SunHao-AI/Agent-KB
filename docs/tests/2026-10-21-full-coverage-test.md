@@ -466,14 +466,14 @@ evaluate 脚本里 `\\d` 等双反斜杠转义会被传输层吃掉, 用 `substr
 `easeOrbit(k=1-exp(-dt/τ), τ=0.35)` + snap 兜底(首帧/reducedMotion/后台恢复 dt>0.5s/
 位移>0.6 对角线)。
 
-**实测数据**(`t-20261021-9a46`, query=docker, 37 命中 2 页, duration=13.95s, 词墙布局;
+**实测数据**(`t-20261021-9a46`, query=docker, 46 命中 2 页, duration=13.95s, 词墙布局;
 serve 4321 重启后, evaluate 以 ~50-60ms 间隔采样 `renderer.orbitPos`/`renderer.orbit`):
 
 | 用例 | 采样 | 最大相邻帧位移 | 断言 | 结果 |
 | --- | --- | --- | --- | --- |
 | 首词到达(t 0→1.42s, 0.54s 首词出场, 轨道 cy 504→252 缓收) | 30 帧 | **37.2px**/66ms 帧 | <40px(瞬移应为 ~250px 一步) | ✅ |
 | 翻页 page1→page0(t=7s 暂停态, 词团 bbox 变) | 21 帧 | **8.5px** | 连续滑移无跳变 | ✅ |
-| 过滤 all→code(词团集合几乎不变) | 22 帧 | **1.0px** | 轨道不动, 蜘蛛仅沿轨巡游 | ✅ |
+| 过滤 all→code(该 trace 46 事件 route 全为 code, 截图 code=46/model=0/ext=0, 过滤后可见集合完全不变) | 22 帧 | **1.0px** | 轨道不动, 蜘蛛仅沿轨巡游; 1.0px 属数据特性而非缓动证据, 缓动以 all→ext(133px)行为准 | ✅ |
 | 过滤 all→ext(0 命中→回落 wallArea, cy 408→505 总位移 ~133px) | 27 帧 | **22.1px** | ~1s 内指数收敛, 无单步 133px | ✅ |
 | seek 0.3s→13.4s | 32 帧 | **286px**(单帧) | 允许 snap 一步落位 | ✅ 且落位后位置锁定(后续帧 ±1px), 无长漂流 |
 | 词墙→列表(wall→landscape) | 22 帧 | **34.4px**(首帧) | 允许 snap 但实测为缓动 | ✅ 34→24→17→14→…单调收敛, **无回抽振荡** |
@@ -495,6 +495,7 @@ seek 保留 snap 语义(一步到位、无漂流); 布局切换走缓动且无�
 直接 `browser_navigate(newTab:true)` 开独立标签即可 evaluate; ② evaluate 的 script 里
 async/await 箭头链易被包装层拒("window is not defined"是发进了 Exec 沙箱), 统一
 `function(){}` + `.then()` 链, 结果先存 `window.__S*` 再另行读取; ③ 计划指定的
-`t-20261021-3219` 已不在 traces/(每日定时任务轮转), 用 `kb search --query docker --trace`
-现场构造 `t-20261021-9a46`(37 命中恰好 2 页, 覆盖翻页场景比原计划更充分)。
+`t-20261021-3219` 已不在 traces/(每日定时任务轮转), 用
+`python -m kb.cli search --query docker --trace --repo .`(kb 不在 PATH, 本轮实测踩的坑)
+现场构造 `t-20261021-9a46`(46 命中恰好 2 页, 覆盖翻页场景比原计划更充分)。
 

@@ -559,6 +559,21 @@ scrollIntoView 后 `#feed` 顶边 421 > header 底缘 51, scroll-margin 让位�
 SSE 稳定 9s+ "● 已连接"。控制台仅两类预期噪声: 切会话旧 SSE `ERR_ABORTED`(主动 abort)与
 旧标签跨 serve 重启的 `ERR_CONNECTION_RESET`(服务器重启复位存量连接, 非缺陷)。
 
+## §20 窄屏与 reduced-motion 人工复核(commit 4a78064 后)
+
+**窄屏(420px iframe 实测)**: 同源定宽 iframe(媒体查询按 iframe 视口生效)验证——`.boards2` 单列
+(328.8px)、`.bar` 110/1fr/60 生效; 但发现既有缺陷: `.mono` 元信息 `white-space:nowrap` 不可收缩
+(221-284px) 撑破 329px 容器, body 横滚 20px(scrollW 426 > clientW 406)。根因定位经排除法
+(全部可见元素 right≤366 而 scrollW=426 → fixed/悬浮 → iframe 内 eval 枚举 scrollWidth>clientWidth)。
+修复: `max-width:700px` 下 `.feed-item{flex-wrap:wrap}` + `.mono` 可换行右对齐;
+复验 `sw=406=cw`、`#feed 329/329` 溢出消除, 截图确认换行观感正常。
+**浮层窄屏回退**: iframe 内开浮层自动 `body.rp-center` 居中、`boxW=392 < vw=417` 不撑破。
+
+**reduced-motion(机械化审计 + DevTools 人工复核)**: 枚举全部 8 个 @keyframes 与 4 处 transition,
+审计发现 `.kpi`(border-color)与 `.seg button`(color/border/background)两处过渡未列入降级选择器,
+已补入。人工复核(DevTools Rendering → emulate prefers-reduced-motion)按清单执行: 浮层直接出现
+无滑入、条形瞬间成宽、悬停无位移动效, 用户操作回放浮层开/关流程正常。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

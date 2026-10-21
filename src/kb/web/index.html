@@ -218,7 +218,9 @@ async function loadStats(){
     e.stopPropagation();drillTo(b.dataset.zq);});
   $('zeroBars').querySelectorAll('.bar.drillable').forEach(r=>{
     r.onclick=()=>drillTo(r.dataset.zq);
-    r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();drillTo(r.dataset.zq);}};});
+    // M-1: 仅焦点在行本身时响应; 内部"追因→"按钮聚焦时走其原生 click, 防 Enter 双触发
+    r.onkeydown=e=>{if(e.target!==r)return;
+      if(e.key==='Enter'||e.key===' '){e.preventDefault();drillTo(r.dataset.zq);}};});
   (d.warns||[]).forEach(w=>banner('',`trace 文件告警: ${esc(w)}`));
 }
 // 追因落空兜底: 零命中榜聚合整个窗口; feed 现已一次拉 500 条, 直接过滤即可命中
@@ -328,11 +330,19 @@ function stream(){
 function feedSkeleton(){const f=$('feed');f.innerHTML='';
   for(let i=0;i<3;i++){const d=document.createElement('div');d.className='feed-skel';
     d.style.animationDelay=(i*.12)+'s';f.appendChild(d);}}
+// I-1: 骨架条必须在 401/网络异常/解析失败路径清掉, 否则无限动画比空白更误导
+function feedFail(msg){$('feed').innerHTML=
+  `<div style="color:var(--mu);font-size:12px;padding:8px 0">${msg}</div>`;}
 async function loadFeed(){          // 一次拉足(百条级), 分页纯前端; 追因无需再扩查
   feedSkeleton();
-  const r=await fetch(apiUrl(`/api/feed?${callerParam()}${callerParam()?'&':''}limit=500`));
-  if(r.status==401)return;   // token 中途失效: 401 JSON 不是数组, 交给 loadStats 统一出横幅
-  const rows=await r.json();
+  let rows;
+  try{
+    const r=await fetch(apiUrl(`/api/feed?${callerParam()}${callerParam()?'&':''}limit=500`));
+    if(r.status==401){   // token 缺失/中途失效: 换静态提示, 401 横幅仍由 loadStats 统一出
+      feedFail('需要访问令牌: 用 <code>kb web</code> 打开(自动携带)或在 URL 加 <code>?token=…</code>');
+      return;}
+    rows=await r.json();
+  }catch(e){feedFail('检索流加载失败: '+esc(String(e&&e.message||e)));return;}
   feedArr=rows;feedArr.forEach(x=>feedBuf[x.trace_id]=x);   // API 已是新→旧, 直存(API 序变须同步改这里)
   fState.page=1;renderFeed();
 }

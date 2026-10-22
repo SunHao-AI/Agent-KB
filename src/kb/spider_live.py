@@ -13,7 +13,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -108,8 +107,10 @@ class SpiderMcp:
 
 def event_to_updates(search: dict) -> tuple[dict, list[dict]]:
     """search 事件 → (会话 config, 事件列表)。route 映射见模块头。"""
-    returned = set(search.get("returned", []))
-    layers = search.get("layers", [])
+    # `or []`: 手工/异客户端 trace 可写 returned/layers/ext=null(_coerce 只归一
+    # returned 且调用方未必都过它), .get 默认值对"键存在但为 null"不生效
+    returned = set(search.get("returned") or [])
+    layers = search.get("layers") or []
     proj_repo = layers[0]["repo"] if layers else None
     events, seen = [], set()
     for ly in layers:
@@ -122,7 +123,7 @@ def event_to_updates(search: dict) -> tuple[dict, list[dict]]:
                            "route": "code" if ly.get("repo") == proj_repo else "model",
                            "status": "running",
                            "detail": "hit: " + "+".join(m.get("hit_fields") or [])})
-    for e in search.get("ext", []):  # 外接源命中 → ext 分支色(粉), label 带源名
+    for e in search.get("ext") or []:  # 外接源命中 → ext 分支色(粉), label 带源名
         for eid in e.get("hits", []):
             if eid not in seen:
                 seen.add(eid)
@@ -148,25 +149,53 @@ def run(root: Path | None = None, *, spider_home: str | None = None,
     offsets: dict[Path, int] = {}
     active: dict[str, dict] = {}   # trace_id → {session, last_ts, pending_reads}
     t0 = time.monotonic()
+    # 首见文件 birth 判定必须用 wall-clock(与 st_ctime 同钟系): 旧实现拿
+    # monotonic 的 t0 与 epoch 秒的 st_ctime 比, 恒 False → 每次启动把所有历史
+    # trace 从头回放(会话洪泛)。serve watcher 用 time.time() 是对的, 此处对齐。
+    birth = time.time()
     try:
         while not max_sec or time.monotonic() - t0 < max_sec:
             d = kbtrace.traces_dir(root)
             if d.exists():
                 for f in sorted(d.glob("*.jsonl")):
-                    pos = offsets.get(f, f.stat().st_size if f.stat().st_ctime < t0 else 0)
-                    if f.stat().st_size <= pos:
-                        offsets[f] = f.stat().st_size
+                    st = f.stat()
+                    size = st.st_size
+                    pos = offsets.get(f)
+                    if pos is None:
+                        # 首见文件: 启动后新文件从头播, 启动前已有的只记偏移不回灌
+                        offsets[f] = 0 if st.st_ctime >= birth else size
                         continue
-                    with f.open("r", encoding="utf-8") as fh:
+                    if size <= pos:
+                        if size < pos:  # 文件被截断/重写: 重置
+                            offsets[f] = 0
+                        continue
+                    # tail 语义(对齐 serve.TraceWatcher §30, 第十二轮走查): 只消费到
+                    # 最后一个换行, 半行留在偏移外等下次轮询。旧实现 `offsets[f]=fh.tell()`
+                    # (文本模式) 把偏移推进越过未写完字节 → 行补全后视为已消费, 该事件在
+                    # 直播流里**永久漏播**(第十二轮同款缺陷, 当时只改了 serve 未同步这里)。
+                    # 二进制读: st_size/偏移/截断检测同字节口径(\n 不在 UTF-8 多字节内)。
+                    with f.open("rb") as fh:
                         fh.seek(pos)
                         chunk = fh.read()
-                        offsets[f] = fh.tell()
-                    for ln in chunk.splitlines():
+                    cut = chunk.rfind(b"\n")
+                    if cut < 0:
+                        continue  # 至今无完整行(写入中), 偏移原地不动
+                    offsets[f] = pos + cut + 1
+                    for ln in chunk[:cut].decode("utf-8", "replace").splitlines():
                         try:
                             ev = json.loads(ln)
                         except json.JSONDecodeError:
                             continue
-                        _dispatch(mcp, ev, active, caller)
+                        if not isinstance(ev, dict):
+                            continue
+                        # 与 serve watcher 同口径的解析期归一(returned=null 等脏
+                        # 类型先归零再进映射, §26 同源); 再逐事件防护兜底:
+                        # 单条坏事件绝不能掀翻整个直播进程。
+                        kbtrace._coerce(ev, [], f.name)
+                        try:
+                            _dispatch(mcp, ev, active, caller)
+                        except Exception:  # noqa: BLE001 - 观测桥故障不影响后续
+                            continue
             now = time.monotonic()
             for tid in [t for t, a in active.items()
                         if now - a["last"] > COMPLETE_AFTER_SEC]:

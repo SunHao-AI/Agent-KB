@@ -1351,6 +1351,45 @@ pytest **313 全绿**; 探针复跑 doctor PASS, 主仓两态(自身/docs)均 up
 不只发生在"集合的枚举", 还发生在**比对所用的参数**上; `check(A, name=X)` 与
 `build(A, name=Y)` 只要 X/Y 来自不同表达式即缺陷, 哪怕 X==Y 碰巧成立。
 
+---
+
+## §46 第二十八轮: spider-live 直播桥(第十二轮修复的第二份拷贝未同步)
+
+**选题**: 观测面剩余未覆盖的 `spider_live.run` 增量读取循环。读码即警觉:
+它与 serve TraceWatcher 是同款 tail 模式, 而 §30 修复只落在 serve 一侧。
+
+**D-30 半行永久漏播(实锤+修复, 高)**:
+- 探针(假 SpiderMcp + 真 run 线程)喂半行再补全: 修复前 `offsets[f]=fh.tell()`
+  (文本模式)推进越过未写完字节, 行补全后 create_session=0——该事件在直播流
+  **永久漏播**; 修复后补播=1。第十二轮同款缺陷在第二份拷贝里潜伏十六轮。
+- 修复: 对齐 serve tail 语义(二进制读 + `rfind(b"\n")` 截行边界 + 偏移只推进到
+  `pos+cut+1` + 截断重置)。
+
+**D-31 历史 trace 每次启动全量回放(实锤+修复, 中)**:
+- 拷贝时顺手复用 `t0 = time.monotonic()` 做首见文件 birth 判定:
+  `st_ctime >= monotonic` 是 epoch 秒与 monotonic 秒跨钟系比较, 恒 False →
+  既有"启动前文件只记偏移不回灌"的设计语义完全失效, 每次启动历史全量回放
+  (会话洪泛)。serve 侧用 `time.time()` 一直是对的。
+- 修复: 分离 `birth = time.time()`; t0 仅留 max_sec 超时用途。
+
+**D-32 脏事件崩直播(实锤+修复, 中)**:
+- `_dispatch` 未经 `_coerce` 归一: `ext:null` / `returned:null` 直接 TypeError;
+  run 循环无逐事件防护 → **一条脏行让直播进程整体崩退**(serve 的 §26 修复同样
+  没同步过来)。修复: 分发前过 `kbtrace._coerce` 同口径归一 + `_dispatch` 外
+  逐事件 try/except; `event_to_updates` 三处 `get(k, [])` 改 `get(k) or []`。
+
+**通过面**: `_dispatch` 的 get→you 分支只动 active 会话不新建, 迟到 get 不炸;
+`COMPLETE_AFTER_SEC` 定格逻辑与 has_hits 判定合理; find_spider_home 候选链清晰。
+
+**回归**: test_spider_live.py +4(半行补全后必须补播 / 历史文件不回灌 /
+毒事件后续播 / null 字段不抛), pytest **317 全绿**; ruff `--select F,E9` 顺带
+清掉 spider_live 死 import sys 与测试文件未用导入。
+
+**沉淀**: 新建 `kb-20261023-463c`(accepted/verified)——D-28 判据的反向情形:
+修一处模式缺陷时先按**代码指纹** grep 全部拷贝再定修复半径; "复制粘贴的模式
+不会随原件一起进化", 且拷贝时的顺手改造(混用 monotonic/wall-clock)会引入
+原件没有的新缺陷。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

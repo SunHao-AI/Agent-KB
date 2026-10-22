@@ -1,5 +1,5 @@
 """FR-2.4 spider-live 的纯映射回归(不依赖 Node)。"""
-from kb.spider_live import event_to_updates, find_spider_home
+from kb.spider_live import event_to_updates
 import pytest
 
 
@@ -62,3 +62,151 @@ def test_find_spider_home_missing_raises(monkeypatch):
     monkeypatch.setattr(spider_live, "COMMON_HOMES", [])
     with pytest.raises(FileNotFoundError):
         spider_live.find_spider_home(r"Z:\不存在的目录")
+
+
+# ---- 第二十八轮走查(§46): run 增量读取的 tail 语义 + 脏事件不崩直播 ------
+
+def test_event_to_updates_tolerates_null_fields():
+    """手工/异客户端 trace 的 returned/layers/ext 可显式为 null: .get 默认值对
+    "键存在但为 null"不生效, 曾让 _dispatch 抛 TypeError(逐事件防护前 = 崩直播)。"""
+    ev = {"kind": "search", "trace_id": "x1", "caller_repo": "p", "query": "q",
+          "returned": None, "layers": None, "ext": None}
+    cfg, events = event_to_updates(ev)   # 不抛
+    assert events == [] and "0 命中" in cfg["subtitle"]
+
+
+def test_run_replays_line_completed_after_partial(tmp_path, monkeypatch):
+    """§46 实锤: 旧实现 `offsets[f]=fh.tell()` 推进越过半行字节, 行补全后视为已
+    消费 → 该事件在直播流永久漏播(第十二轮 serve watcher 同款, 当时未同步这里)。
+    tail 语义修复后: 半行不消费, 补全后的下次轮询必须补播。"""
+    import json
+    import threading
+    import time
+
+    from kb import spider_live
+
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    f = traces / "2026-10-22.jsonl"
+    f.write_text(json.dumps({"kind": "meta", "schema": 2}) + "\n", encoding="utf-8")
+
+    calls = []
+
+    class FakeMcp:
+        p = None
+
+        def tool(self, name, args):
+            calls.append(name)
+            return {"id": "s1", "previewUrl": "http://x/"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(spider_live, "SpiderMcp", lambda home: FakeMcp())
+    monkeypatch.setattr(spider_live, "find_spider_home",
+                        lambda explicit=None: tmp_path)
+    t = threading.Thread(target=spider_live.run, args=(tmp_path,),
+                         kwargs={"max_sec": 2.5}, daemon=True)
+    t.start()
+    time.sleep(0.3)                      # 让 run 首 tick 登记文件偏移
+    line = json.dumps({"kind": "search", "trace_id": "half-1",
+                       "ts": "2026-10-22T13:00:00+08:00", "caller_repo": "p",
+                       "query": "半行", "returned": [], "duration_ms": 1,
+                       "limit": 20, "layers": []}, ensure_ascii=False)
+    with f.open("a", encoding="utf-8") as fh:
+        fh.write(line[: len(line) // 2])          # 半行
+    time.sleep(0.9)
+    assert "spider_create_session" not in calls   # 半行不得消费
+    with f.open("a", encoding="utf-8") as fh:
+        fh.write(line[len(line) // 2:] + "\n")    # 补全
+    time.sleep(0.9)
+    assert "spider_create_session" in calls       # 补全后必须补播(旧实现在此永久漏播)
+    t.join(timeout=5)
+
+
+def test_run_does_not_replay_pre_existing_history(tmp_path, monkeypatch):
+    """§46: 首见文件的 birth 判定曾是 `st_ctime >= time.monotonic()` —— epoch 秒
+    与 monotonic 秒不同钟系恒 False → 每次启动把所有历史 trace 从头回放(会话洪泛)。"""
+    import json
+    import threading
+
+    from kb import spider_live
+
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    # 启动前就存在的历史文件(含一条完整事件)
+    (traces / "2026-10-01.jsonl").write_text(
+        json.dumps({"kind": "meta", "schema": 2}) + "\n" + json.dumps(
+            {"kind": "search", "trace_id": "old-1",
+             "ts": "2026-10-01T10:00:00+08:00", "caller_repo": "p",
+             "query": "历史", "returned": [], "duration_ms": 1,
+             "limit": 20, "layers": []}, ensure_ascii=False) + "\n",
+        encoding="utf-8")
+
+    calls = []
+
+    class FakeMcp:
+        p = None
+
+        def tool(self, name, args):
+            calls.append(name)
+            return {"id": "s1", "previewUrl": "http://x/"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(spider_live, "SpiderMcp", lambda home: FakeMcp())
+    monkeypatch.setattr(spider_live, "find_spider_home",
+                        lambda explicit=None: tmp_path)
+    t = threading.Thread(target=spider_live.run, args=(tmp_path,),
+                         kwargs={"max_sec": 1.5}, daemon=True)
+    t.start()
+    t.join(timeout=5)
+    assert calls == []                   # 历史事件不得回灌
+
+
+def test_run_survives_poisoned_line(tmp_path, monkeypatch):
+    """脏事件(桥工具抛异常)只跳过该条, 直播循环必须续跑到后续好事件。"""
+    import json
+    import threading
+    import time
+
+    from kb import spider_live
+
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    f = traces / "2026-10-22.jsonl"
+    f.write_text(json.dumps({"kind": "meta", "schema": 2}) + "\n", encoding="utf-8")
+
+    calls = []
+
+    class SelectiveMcp:
+        p = None
+
+        def tool(self, name, args):
+            calls.append(name)
+            if name == "spider_create_session" and args["config"]["prompt"] == "毒":
+                raise RuntimeError("桥炸了(模拟)")
+            return {"id": "s1", "previewUrl": "http://x/"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(spider_live, "SpiderMcp", lambda home: SelectiveMcp())
+    monkeypatch.setattr(spider_live, "find_spider_home",
+                        lambda explicit=None: tmp_path)
+    t = threading.Thread(target=spider_live.run, args=(tmp_path,),
+                         kwargs={"max_sec": 2.0}, daemon=True)
+    t.start()
+    time.sleep(0.3)
+    with f.open("a", encoding="utf-8") as fh:
+        for tid, q in (("bad", "毒"), ("good", "好")):
+            fh.write(json.dumps({"kind": "search", "trace_id": tid,
+                                 "ts": "2026-10-22T13:00:00+08:00",
+                                 "caller_repo": "p", "query": q, "returned": [],
+                                 "duration_ms": 1, "limit": 20,
+                                 "layers": []}, ensure_ascii=False) + "\n")
+    time.sleep(0.9)
+    n = calls.count("spider_create_session")
+    assert n >= 2                        # 毒事件后的"好"事件仍被直播(未被崩退带走)
+    t.join(timeout=5)

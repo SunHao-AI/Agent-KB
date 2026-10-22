@@ -155,6 +155,18 @@ def _save(p: Path, fm: dict, body: str, today: dt.date) -> Entry:
     return parse_entry(p)
 
 
+def _reindex(repo) -> None:
+    """写路径改完源文件后重建本仓索引(第二十五轮走查 §43)。
+
+    search/去重的 live 池读 index.jsonl, 而 draft→accepted 流转让条目从"只在源文件
+    (draft 池现算可见)"变为"应进 live 池"——不重建则检索与查重**双双隐身**: 红线1
+    承诺的"agent 自审 accepted 无需等人工"闭环断裂, 且下一个任务感知不到它的存在,
+    会把同一条知识重复沉淀。与 export_entry 搬移后重建双方索引(第十四轮)同一先例。
+    repo_name 口径与 cli index 一致(resolve().name.lower())。"""
+    from kb.index import build_indexes  # 局部导入: index 侧不反向依赖 gate
+    build_indexes(Path(repo), repo_name=Path(repo).resolve().name.lower())
+
+
 def update_draft(repo, id: str, *, title: str | None = None, body: str | None = None,
                  tags: list[str] | None = None, severity: str | None = None,
                  today: dt.date | None = None) -> Entry:
@@ -217,7 +229,9 @@ def review(repo, id: str, to: str, today: dt.date | None = None, *,
         # 人工终审带证据: 同样写 verification 留痕, 但不打 auto-reviewed/verified_by
         d = (today or dt.date.today()).isoformat()
         fm["verification"] = {"evidence": evidence.strip(), "reviewed_at": d}
-    return _save(p, fm, e.body, today or dt.date.today())
+    e = _save(p, fm, e.body, today or dt.date.today())
+    _reindex(repo)  # §43: status 是 live 池字段(draft→accepted 入池/降权依据), 不
+    return e        # 重建则 accepted 条目对检索与查重双隐身, 红线1 闭环断裂
 
 
 def _strip_promote_tags(fm: dict) -> list[str]:
@@ -235,7 +249,9 @@ def set_scope(repo, id: str, scope: str, today: dt.date | None = None) -> Entry:
     fm = dict(e.fm)
     fm["scope"] = scope
     fm["tags"] = _strip_promote_tags(fm)
-    return _save(p, fm, e.body, today or dt.date.today())
+    e = _save(p, fm, e.body, today or dt.date.today())
+    _reindex(repo)  # §43: scope 是 live 池过滤字段, 索引滞留旧值则双层检索错层
+    return e
 
 
 def _project_name(path) -> str:

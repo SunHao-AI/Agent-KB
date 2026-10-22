@@ -7,11 +7,12 @@ from conftest import make_entry
 TODAY = dt.date(2026, 10, 14)
 
 
-def _mk(tmp_repo, eid, status="draft", conf="speculative", scope="project", tags=None):
+def _mk(tmp_repo, eid, status="draft", conf="speculative", scope="project", tags=None,
+        title="demo"):
     d = tmp_repo / "kb" / "pitfall" / "frontend"
     d.mkdir(parents=True, exist_ok=True)
     body = make_entry(id=eid, status=status, confidence=conf, scope=scope,
-                      tags=list(tags) if tags else [])
+                      title=title, tags=list(tags) if tags else [])
     p = d / f"{eid}.md"
     p.write_text(body, encoding="utf-8")
     return p
@@ -127,6 +128,46 @@ def test_review_agent_accept_still_blocks_speculative(tmp_repo):
     _mk(tmp_repo, "kb-20261014-a3a3", status="draft", conf="speculative")
     with pytest.raises(GateViolation, match="speculative"):
         review(tmp_repo, "kb-20261014-a3a3", "accepted", by="agent")
+
+
+# --- §43 第二十五轮: 写路径改 live 池字段后必须重建索引 ---
+def test_review_accepted_makes_entry_searchable_immediately(tmp_repo):
+    """红线1 闭环: agent 自审 accepted"无需等人工"——若 review 不重建 index.jsonl,
+    刚 accepted 的条目对 kb_search 隐身(draft 本就不在 live 池), 面板/KPI/其他
+    任务全部感知不到, 还会把同一条知识重复沉淀。"""
+    import json
+    from kb.search import search
+    _mk(tmp_repo, "kb-20261014-b1b1", status="draft", conf="probable")
+    assert search(tmp_repo, query="demo") == []      # draft 不可检索(设计内)
+    review(tmp_repo, "kb-20261014-b1b1", "accepted", today=TODAY)
+    ids = [json.loads(x)["id"] for x in
+           (tmp_repo / "kb" / "index.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
+    assert "kb-20261014-b1b1" in ids                  # 索引即时入池
+    assert search(tmp_repo, query="demo")[0]["id"] == "kb-20261014-b1b1"
+
+
+def test_accepted_entry_visible_to_dedup_without_manual_index(tmp_repo):
+    """探针同构: create→accepted 后不手动 kb index, 再沉淀近似条目必须被去重拦截
+    (修复前 accepted 对 live 池与 draft 池双双隐身 → 重复沉淀成功)。"""
+    from kb.gate import create_draft, DuplicateCandidate
+    _mk(tmp_repo, "kb-20261014-b2b2", status="draft", conf="probable",
+        title="Redis 连接池上限过低雪崩")
+    review(tmp_repo, "kb-20261014-b2b2", "accepted", today=TODAY)
+    with pytest.raises(DuplicateCandidate):
+        create_draft(tmp_repo, type="pitfall", domain="frontend",
+                     title="Redis 连接池上限过低雪崩", today=TODAY)
+
+
+def test_set_scope_refreshes_index_scope_field(tmp_repo):
+    """scope 是 live 池过滤字段: 不重建则索引滞留旧值, 双层检索按 scope 过滤错层。"""
+    import json
+    _mk(tmp_repo, "kb-20261014-b3b3", status="accepted", conf="verified")
+    review_ok = parse_entry(tmp_repo / "kb" / "pitfall" / "frontend" / "kb-20261014-b3b3.md")
+    assert review_ok.fm["scope"] == "project"
+    set_scope(tmp_repo, "kb-20261014-b3b3", "stack", today=TODAY)
+    rec = [json.loads(x) for x in
+           (tmp_repo / "kb" / "index.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
+    assert rec and rec[0]["scope"] == "stack"
 
 
 def test_set_scope_strips_needs_scope_review(tmp_repo):

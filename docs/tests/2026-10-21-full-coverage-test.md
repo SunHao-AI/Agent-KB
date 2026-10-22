@@ -1258,6 +1258,40 @@ pytest **306 全绿**; 真实仓两处 `index --check` 无漂移、lint 通过�
 两处枚举由不同人不同期写就, 默认当作已漂移, 先做集合差分。同族: d550(生产链归零)、
 1256(关联与判定错配)——本条变体是"数据集合的边界"本身漂移。
 
+## §43 第二十五轮走查: agent 沉淀闭环——写路径不同步派生索引(状态流转变体)(2026-10-22)
+
+**主题**: 检索排序/截断面读码通过(scoring 权重、tie-break 稳定 index 序、跨层
+取满即截断、truncated 账本恒等式, 均与 spec 一致)。顺藤深挖 MCP 沉淀闭环, 命中
+D-27(检索核心读 index.jsonl 是引子)。
+
+**D-27 review/set_scope 不重建索引, accepted 条目对检索+去重双隐身(实锤+修复, 高)**:
+- MCP 端到端探针: `kb_create → kb_review(accepted)` 成功、源文件 status 已 accepted,
+  `kb_search` 返回 `hits:[]`(scanned 0); 手动 `kb index` 后立即可见。draft 本就
+  不在 live 池, accepted 流转是条目**首次入池**的开关, 而 gate 层没有踩这个开关。
+- 最锋利后果(探针第 6 步): 刚 accepted 的条目**对去重也隐身**(live 池读 index.jsonl,
+  §16 的 draft 池现算只认 status=draft)——再沉淀同主题条目查重不命中, **同一条知识
+  被重复沉淀**, proj2 条目数 2。红线1"无需等人工"的闭环在最后一步断裂。
+- 修复: `gate._reindex(repo)` 挂到 review 与 set_scope 落地处(repo_name 口径与
+  cli `resolve().name.lower()` 一致), 对齐 export_entry 第十四轮先例。set_scope
+  同修: scope 是 live 池过滤字段, 索引滞留旧值则双层检索错层。
+- 元教训(记入沉淀"新发现"段): 第十四轮修 export 时先例只写在 export 注释里, 未
+  升华成"所有改 live 池字段的写路径都要重建"的全局约束, review 照样漏。**修 A 处
+  同类缺陷时把判据写进条目做全仓普查, 别只修触发处**; 判据补强: 改变派生索引所
+  索引的字段值(status/scope/confidence)与改变文件存在性是同一类失真。
+
+**通过面**: search.py 打分/排序/稳定 tie-break、layers 截断账本、CLI review 输出
+不依赖索引——均无缺陷。探针插曲: 首版直接 `srv.call_tool` 不可行(需 memory session
+官方 pattern); `iter_entry_paths` 返回 list 误用 next(); `await x()[:n]` 优先级笔误,
+均已自纠。
+
+**回归**: test_gate_write.py +3(即时可检索 / 去重免手动索引 / set_scope 刷新索引
+scope 字段), `_mk` helper 补 title 参数, pytest **309 全绿**; 探针复跑步骤 4 即时
+命中、步骤 6 isError=True 条目数 1。
+
+**沉淀**: 命中既有条目 `kb-20261022-6fd6`(跨仓搬移不同步派生索引, 同根因家族)——
+按红线追加"新发现"段(仓内状态流转变体 + 判据补强 + 元教训), 不新建。本轮 accepted
+自审 0 条(更新既有条目不占额)。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

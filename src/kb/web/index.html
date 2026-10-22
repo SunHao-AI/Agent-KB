@@ -280,7 +280,10 @@ async function loadMatrix(){
     const srcs=[...SRC,...Object.keys(bs).filter(k=>k.startsWith('ext:')).map(k=>[k,k.slice(4),
       '#F34A87'])].filter(([k])=>bs[k]);
     // 段内 title 保留精确口径; min-width 保证窄列下小占比段仍可悬停; 外层汇总 title 兜底
-    const barTitle=srcs.map(([k])=>`${k}: ${bs[k]} 次(${(100*bs[k]/total).toFixed(0)}%)`).join(' / ');
+    // §36: 百分比分母=命中条目数(即 total, 零命中不入堆叠)——与同行"命中率"列
+    // (分母=检索数)并排易误读成同基数, title 显式标注口径消歧
+    const barTitle=`按命中条目构成(${total} 条): `
+      +srcs.map(([k])=>`${k}: ${bs[k]} 次(${(100*bs[k]/total).toFixed(0)}%)`).join(' / ');
     const bar=srcs.map(([k,,c],i)=>`<div title="${barTitle}" style="flex:${bs[k]};min-width:3px;background:${c}${i?';border-left:1px solid rgba(255,255,255,.25)':''}"></div>`).join('');
     const health=(x.ext||[]).map(e=>`<span title="${esc(e.error||'ok')}" style="color:${e.ok?'var(--ok,#42D6A4)':'var(--bad)'}">●${esc(e.source)}</span>`).join(' ')||'—';
     return `<tr class="${x.stale?'stale':''} matrix-link" data-caller="${esc(x.caller)}" title="点击下钻到 ${esc(x.caller)} 单项目视图"><td>${esc(x.caller)}</td><td>${x.searches}</td>

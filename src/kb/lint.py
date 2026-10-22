@@ -59,6 +59,11 @@ def lint_repo(repo_root: Path, scope: str = "project",
     id_counts = Counter(e.fm.get("id") for e in entries if e.fm.get("id"))
     for e in entries:
         rid = e.fm.get("id", e.path.name)
+        if e.yaml_error:
+            # 必须报在 schema"缺必填"之前并跳过 schema 校验: 否则用户被一堆
+            # "id is required" 误导去补字段, 而真正病因是 front-matter 语法坏
+            errors.append(f"{e.path.name}: front-matter YAML 语法错误: {e.yaml_error}")
+            continue
         if id_counts.get(e.fm.get("id"), 0) > 1:
             errors.append(f"{rid}: duplicate id {e.fm['id']}")
         for err in sorted(validator.iter_errors(e.fm), key=lambda x: x.json_path):

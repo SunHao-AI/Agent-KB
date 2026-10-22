@@ -23,6 +23,7 @@ class Entry:
     fm: dict
     body: str
     path: pathlib.Path
+    yaml_error: str | None = None   # front-matter YAML 语法错误原文(第十三轮走查)
 
     def h1(self) -> str | None:
         for line in self.body.splitlines():
@@ -42,11 +43,21 @@ class Entry:
 
 
 def parse_entry(path: pathlib.Path) -> Entry:
-    text = pathlib.Path(path).read_text(encoding="utf-8")
+    # utf-8-sig: 容忍 BOM(Windows 记事本/PowerShell Set-Content 存盘自带)。
+    # BOM 留在文首会让 front-matter 正则不匹配 → 条目被 index 静默跳过、
+    # search 不可见(第十三轮走查实测); 对无 BOM 文件行为不变。
+    text = pathlib.Path(path).read_text(encoding="utf-8-sig")
     m = _FM_RE.match(text)
     if not m:
         return Entry(fm={}, body=text, path=pathlib.Path(path))
-    data = yaml.safe_load(m.group(1))
+    try:
+        data = yaml.safe_load(m.group(1))
+    except yaml.YAMLError as exc:
+        # 人手编辑的 front-matter 语法坏(缩进/tab/未闭合流)曾让 lint/index/stat 全库
+        # Traceback、search 静默空库(坏文件挡住 index 重建后)。降级 fm={} 保调用方
+        # 存活: 坏文件按"缺必填"被 lint 报出(精确消息见 lint_repo), 其余条目照常。
+        return Entry(fm={}, body=text, path=pathlib.Path(path),
+                     yaml_error=str(exc).replace("\n", " ")[:200])
     # YAML 根类型非 mapping(list/str/...)视为无 front-matter: fm={}, body=全文,
     # 由 lint 自然报必填缺失, 避免 _normalize_dates 对 list 抛 AttributeError
     if not isinstance(data, dict):

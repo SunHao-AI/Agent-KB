@@ -36,3 +36,24 @@ def test_non_mapping_frontmatter_treated_as_no_fm(tmp_repo):
     e = parse_entry(p)
     assert e.fm == {}
     assert "- just" in e.body and "# 标题" in e.body
+
+
+def test_bom_tolerated(tmp_repo):
+    """§31 实测: 带 BOM 的条目(Windows 记事本/PowerShell 存盘自带)曾让
+    front-matter 正则不匹配 → index 静默跳过该条、search 永久不可见, 零告警。"""
+    from conftest import SAMPLE_FRONTMATTER
+    p = tmp_repo / "kb" / "pitfall" / "frontend" / "bom.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(SAMPLE_FRONTMATTER.encode("utf-8-sig"))
+    e = parse_entry(p)
+    assert e.fm.get("id") == "kb-20261012-7f3a"
+    assert e.yaml_error is None
+
+
+def test_broken_yaml_degrades_not_crashes(tmp_repo):
+    """§31 实测: front-matter YAML 语法坏(人手缩进/tab)曾让 lint/index/stat 全库
+    Traceback、search 静默空库。降级 fm={}+yaml_error, 调用方存活、坏文件可定位。"""
+    text = "---\nid: x\ntitle: 坏: [a, b\n   broken: : :\n---\n\n# T\n"
+    e = parse_entry(_write(tmp_repo, text))
+    assert e.fm == {}
+    assert e.yaml_error and "mapping values" in e.yaml_error

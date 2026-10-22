@@ -753,6 +753,42 @@ D-6 按红线并入既有条目 `kb-20261021-1b60`"新发现"段(同根因链不
 
 **回归**: pytest **282 全绿**(+2 新测试); 走查全程 0 未捕获 JS 异常。
 
+## §31 第十三轮走查: 条目解析器对人手编辑文件的韧性(2026-10-22)
+
+**主题**: 前几轮攻运行时(serve/浏览器/桥), 本轮回到**数据面**: `parse_entry` 按可信输入
+对待人手编辑的条目文件, 实测单坏文件的全库爆炸半径。
+
+**D-11 坏 YAML front-matter 全库瘫痪(实锤+修复)**:
+- 探针(正常条目+缩进手滑条目, 跑 5 个子命令): 修复前 `lint/index/stat` 全 Traceback、
+  `search` **静默空库**(exit 0 返回 `[]`)、`show` 连正常条目都 not found。崩溃点
+  (yaml.safe_load)与症状点(search 说没有)分离——坏文件挡住 index.jsonl 重建, 下游
+  检索把"库坏了"报成"库里没有"。
+- 修复: `parse_entry` 捕获 YAMLError 降级 `fm={}`+`yaml_error` 字段; lint 对 yaml_error
+  跳过 schema 校验直接报"文件名: front-matter YAML 语法错误: <原文>"(若只报"缺必填"
+  会把用户引去补字段, 修错方向)。
+- 修复后: lint exit 1 首错即病因, index/stat/show/search 全存活, 无辜条目可检索。
+
+**D-12 带 BOM 条目静默隐身(排查干扰时坐实, 一行修复)**:
+- PowerShell `Set-Content` 改写条目文件后 search 突然空——排查发现文件带 UTF-8 BOM:
+  `read_text("utf-8")` 留下 `\ufeff` → front-matter 正则不匹配 → "无 fm"降级 →
+  index 对无 id 条目**静默跳过**, 零告警。Windows 记事本/PowerShell 存盘自带 BOM,
+  本机生态高频触发。
+- 修复: `read_text("utf-8-sig")`(有 BOM 剥掉, 无 BOM 行为不变)。端到端实测:
+  带 BOM 文件 index→search 全链路命中。
+
+**检查无问题**: 全部写路径(save/new/gate/export)显式 `encoding="utf-8"`, GBK locale
+下写坏中文的风险不成立; 非法 UTF-8 字节读侧会抛 UnicodeDecodeError——但 lint 同样
+崩溃, 已评估: 该场景需要磁盘/同步工具损坏字节, 概率远低于 YAML 手滑, 暂不处理。
+
+**回归**: +2 测试(`test_bom_tolerated`/`test_broken_yaml_degrades_not_crashes`),
+pytest **288 全绿**。
+
+**沉淀**: 新建 `kb-20261022-acc8`(D-11/D-12 同根因链合一条, accepted/verified/agent 留痕)。
+
+**走查法教训**: ①数据面走查法 = "往库里放一个坏文件, 跑遍所有子命令看爆炸半径";
+②探针自身也要排雷——本轮 BOM 缺陷正是**探针脚本用 PowerShell 写文件**时暴露的,
+"排查环境干扰"的过程本身就是走查。
+
 ## §30 第十二轮走查: 实时流连接生命周期与 tail 韧性(2026-10-22)
 
 **主题**: 前几轮均为单事件/单请求视角, 本轮攻**并发与连接生命周期**(SSE 订阅泄漏、

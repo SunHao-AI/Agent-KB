@@ -1134,6 +1134,42 @@ pytest **300 全绿**。中途自纠两处: 测试编辑时误伤既有行(引�
 **沉淀**: 双层去重命中 `kb-20261022-d550`(消费方读生产方从未写入的字段)——同模式,
 按红线追加"新发现"段(含存量缺口新维度)而非新建, evidence 同步补留痕。
 
+## §39 第二十一轮走查: promote/needs-scope-review 生命周期链(契约漂移)(2026-10-22)
+
+**主题**: scope 上提建议链——promote(建议)→ needs-scope 待办清单 → set-scope/export
+(终审落地)。承接 §38 生命周期面, 这次查"建议怎么变成落地"的交接处。
+
+**D-24 promote 契约漂移: 建议型命令变成终审执行手(实锤+修复, 中高)**:
+- 四处文档口径完全一致(AGENTS.md 红线2"只做建议, 由人 set-scope/export 落地"、
+  README §4、spec §9 终审工作流、测试设定 C12"不改 scope"), 实现却立即改 scope +
+  清 needs-scope-review。探针坐实两后果: ①刚发出的建议从 `--needs-scope` 人工待办
+  清单消失(建议即终审, 人工确认环节被架空) ②scope 与物理位置错位(标 stack 躺项目仓,
+  双层检索按 scope 过滤即错层)。
+- git 考古定位引入点 `480cd0e`("promote reuses gate.set_scope write path"): 复用公共
+  写路径时**继承了 set_scope 的终审副作用**, 且同一提交新增 `assert fm["scope"] ==
+  "stack"` 把错误行为**当场固化进测试**——此后 CI 绿灯全在为漂移背书。
+- 修复(三态分离): promote 只打标签(`promoted` + `promote-to:<scope>` +
+  `needs-scope-review`, 不碰 scope; 重复 promote 改判目标不堆积); set_scope/export
+  落地时经 `_strip_promote_tags` 清**全部**建议期标签(旧实现只清 needs-scope-review,
+  promote-to 会永久残留)。建议目标用 tags 承载, 不动派生 schema(有 committed==derived
+  测试锁)。
+
+**其余面走查通过**: MCP server 无 promote/set_scope 暴露(agent 不能碰 scope, 红线2
+工具面强制成立); export_entry 的 needs-scope-review 清理语义正确(export 本就是终审
+落地动作); lint schema 对未知字段宽容(tags 自由数组可承载建议标签)。
+
+**回归**: test_promote.py 按文档契约**重写**(旧断言正是漂移的固化物): 7 测试覆盖
+建议不改 scope/留在待办清单/改判不堆积/落地清全部建议标签/枚举与 project 拒绝/
+不改 status。pytest **302 全绿**。
+
+**沉淀**: 新建 `kb-20261022-5b9a`(accepted/verified/auto-reviewed)——双层去重无命中,
+新缺陷模式: "重构复用写路径时语义漂移"(与 648d/d8fb"消费面看不见"相反方向:
+"执行面做多了")。判据: 复用公共函数逐项问"源函数每个副作用, 目标命令契约允许吗";
+文档与测试断言冲突时先 git 考古哪个是原契约。
+
+**插曲自纠**: 沉淀条目初稿手改 front-matter 为 accepted——违反门控一致性(应走
+`kb review` 流转), 复原 draft 后经 review 命令正式流转成功。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

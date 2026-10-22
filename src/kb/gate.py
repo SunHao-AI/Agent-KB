@@ -226,6 +226,12 @@ def review(repo, id: str, to: str, today: dt.date | None = None, *,
     return _save(p, fm, e.body, today or dt.date.today())
 
 
+def _strip_promote_tags(fm: dict) -> list[str]:
+    """终审落地时清掉建议期标签: needs-scope-review + promoted + promote-to:*(§39)。"""
+    return [t for t in (fm.get("tags") or [])
+            if t != "needs-scope-review" and not str(t).startswith("promote")]
+
+
 def set_scope(repo, id: str, scope: str, today: dt.date | None = None) -> Entry:
     """人工 CLI: 设置 scope 并移除 needs-scope-review tag."""
     if scope not in load_taxonomy()["enums"]["scope"]:
@@ -234,7 +240,7 @@ def set_scope(repo, id: str, scope: str, today: dt.date | None = None) -> Entry:
     e = parse_entry(p)
     fm = dict(e.fm)
     fm["scope"] = scope
-    fm["tags"] = [t for t in (fm.get("tags") or []) if t != "needs-scope-review"]
+    fm["tags"] = _strip_promote_tags(fm)
     return _save(p, fm, e.body, today or dt.date.today())
 
 
@@ -271,7 +277,7 @@ def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
               f"confidence={fm.get('confidence')}, 未终审/未证条目已搬入共享库",
               file=sys.stderr)
     fm["scope"] = to_scope
-    fm["tags"] = [t for t in (fm.get("tags") or []) if t != "needs-scope-review"]
+    fm["tags"] = _strip_promote_tags(fm)
     fm["source"] = {**(fm.get("source") or {}),
                     "project": fm.get("source", {}).get("project") or _project_name(project_repo)}
     dst.parent.mkdir(parents=True, exist_ok=True)

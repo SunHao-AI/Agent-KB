@@ -2,7 +2,8 @@
 
 跨项目研发知识库系统: **git + Markdown 为唯一事实源**, 面向人 + AI Agent 双消费。
 沉淀开发全流程知识(设计规格、技术方案、踩坑记录、故障根因、操作指南、经验复盘),
-配套 `kb` CLI 做录入、校验、索引与检索。设计全文见
+配套 `kb` CLI 做录入、校验、索引与检索。日常操作逐条命令见
+[`USAGE.md`](USAGE.md); 设计全文见
 [`docs/specs/2026-10-12-agent-kb-design.md`](docs/specs/2026-10-12-agent-kb-design.md)。
 
 ## 系统定位

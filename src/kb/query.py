@@ -58,10 +58,25 @@ def stat(repo_root: Path) -> dict:
 
 
 def due_review(repo_root: Path, today: dt.date) -> list[dict]:
+    """时效到期待复核清单。
+
+    第二十轮走查(§38): 修复前只认显式 `review_by`, 而该字段在生产链上从未被写入
+    (消费链完好、生产链归零)——即便 accepted 落 review_by 后, **存量** accepted 条目
+    仍无此字段, 会永久免检。故 accepted 无 review_by 时以 `updated + 复核周期`兜底,
+    让历史条目自然纳入复核周期。draft/proposed 不兜底(尚未终审, 谈不上"复核到期")。
+    """
+    from kb.gate import REVIEW_CYCLE_DAYS
     out = []
     for p in sorted((Path(repo_root) / "kb").rglob("*.md")):
         e = parse_entry(p)
         rb = e.fm.get("review_by")
+        if not rb and e.fm.get("status") == "accepted":
+            upd = str(e.fm.get("updated", ""))[:10]
+            try:
+                rb = (dt.date.fromisoformat(upd)
+                      + dt.timedelta(days=REVIEW_CYCLE_DAYS)).isoformat()
+            except ValueError:
+                continue  # updated 不可解析: 不猜到期日
         if rb and str(rb) <= today.isoformat():
             out.append({"id": e.fm.get("id"), "title": e.fm.get("title"),
                         "review_by": str(rb)})

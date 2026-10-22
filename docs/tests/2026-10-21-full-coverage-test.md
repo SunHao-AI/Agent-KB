@@ -1097,6 +1097,43 @@ f55e 同根因链(同一 ts 串的两种基准混用), 按红线**追加"新发�
 不能依赖"刚好撞上"。本轮此前两轮(§36 口径标签)都属"数字正确但读错", 本轮是首次
 "数字本身随观察时刻变错"——时间语义缺陷要按时间维度设计探针。
 
+## §38 第二十轮走查: 条目生命周期面(待复核机制 + 状态机矩阵)(2026-10-22)
+
+**主题**: 知识条目生命周期管理——`due_review` 待复核机制、状态机流转矩阵、
+deprecated 治理。此前各轮都在"写入/检索/统计"面, 生命周期面(accepted 之后的事)未查过。
+
+**撤回项(先记录)**: 初始假设"deprecated/superseded 是死胡同, 误判无法复活"——读
+`docs/specs/2026-10-13-agent-kb-p1-design.md` §5.3 发现**终态是设计内决策**
+("终态, 不可回迁(复活=新建条目并 related)"), 且检索面 deprecated 已被过滤+降权双防。
+假设自我证伪, 不立缺陷。(顺带记录 spec 内部矛盾: §5.3 注"未核实的需…降 draft"
+与矩阵 `accepted→draft` ✗ 冲突, 属文档笔误级别, 未改代码行为。)
+
+**D-23 待复核机制自上线起空转(实锤+修复, 中高)**: `review_by` 消费链四件套齐全
+(taxonomy schema→`due_review`→`stat`→CLI `--due-review`+AGENTS.md 工作流, spec §时效性
+"到期进入待复核清单"), 但**全仓无任何代码写入该字段**——探针实测走完
+draft→accepted(verified) 全流程 fm 无 review_by, `due_review` 放到 2030 年仍空,
+`kb stat` 待复核数恒 0("知识库永远健康"的假阴性)。与 D-19(suggest 死分支)同模式:
+消费方按设计文档形状写码, 生产方从未产出该形状。变体差异: 那边错数字, 这边**恒空
+静默失效**——恒空的指标比错指标更难发现。
+- 修复(生产链): `gate.review` 在 `to=accepted` 时落 `review_by = accepted日 +
+  REVIEW_CYCLE_DAYS(365, 对齐 spec front-matter 示例 created→review_by 一年)`,
+  人工显式设的未来值不覆盖、已过期值刷新(复核通过=再延一周期)。CLI/MCP 共用
+  gate.review, 一处修复全端覆盖。
+- 修复(存量缺口, 本条新维度): 补生产链只修增量——存量 accepted 无此字段, 且状态机
+  禁 accepted→proposed/accepted, 它们**没有任何合法路径**再获得 review_by。消费侧兜底:
+  `due_review` 对 accepted 无 review_by 时按 `updated + 周期`推导到期日。实测 2028
+  视角 kb/ 200 条、docs/ 19 条 accepted 全部正确入账; 今天视角为空(未到期, 正确)。
+- 通用判据: **给"新数据才有"的字段补生产链时, 同步问存量怎么办**——幂等回填或消费侧
+  兜底二选一, 否则"修复只对明天生效"。
+
+**回归**: +2 测试(`test_accepted_sets_review_by_cycle` 含 due_review 到期日出账断言 /
+`test_accepted_keeps_manual_future_review_by` 不覆盖未来值+刷新过期值双分支),
+pytest **300 全绿**。中途自纠两处: 测试编辑时误伤既有行(引号截断)即查即改;
+第二测试首版用 accepted→accepted 刷新(状态机必拒)改双 proposed→accepted 分支。
+
+**沉淀**: 双层去重命中 `kb-20261022-d550`(消费方读生产方从未写入的字段)——同模式,
+按红线追加"新发现"段(含存量缺口新维度)而非新建, evidence 同步补留痕。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

@@ -137,6 +137,13 @@ _TRANSITIONS: dict[str, set[str]] = {
     "superseded": set(),
 }
 
+# accepted 起 N 天进入待复核(时效到期日 review_by, spec §属性表: "到期进入待复核
+# 清单"; 周期取 1 年, 对齐 spec front-matter 示例 created 2026-10-12 → review_by
+# 2027-10-12。知识会过期——§35 实测过"先命中后失效", accepted 不等于永久正确)。
+# 第二十轮走查(§38): due_review/stat --due-review/AGENTS.md 工作流消费链完好,
+# 但生产方为零——review_by 永不被写入, 待复核机制自上线起空转。
+REVIEW_CYCLE_DAYS = 365
+
 
 def _find(repo, id: str) -> Path:
     kb = Path(repo) / "kb"
@@ -197,6 +204,13 @@ def review(repo, id: str, to: str, today: dt.date | None = None, *,
     if to == "accepted" and fm.get("confidence") == "speculative":
         raise GateViolation(f"{id}: confidence=speculative must be verified before accepted")
     fm["status"] = to
+    if to == "accepted":
+        # 时效到期日: accepted 不是终点, 到期进 due_review 清单(spec §时效性)。
+        # 人工已显式设定 review_by 的不覆盖; 复核通过再次 accepted 时刷新周期。
+        cur = fm.get("review_by")
+        d = (today or dt.date.today())
+        if not cur or str(cur) <= d.isoformat():
+            fm["review_by"] = (d + dt.timedelta(days=REVIEW_CYCLE_DAYS)).isoformat()
     if to == "accepted" and by == "agent":
         fm["verified_by"] = "agent"
         tags = list(fm.get("tags") or [])

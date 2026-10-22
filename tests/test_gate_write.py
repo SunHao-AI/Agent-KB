@@ -63,6 +63,37 @@ def test_review_accept_requires_non_speculative(tmp_repo):
         review(tmp_repo, "kb-20261014-dddd", "accepted")
 
 
+def test_accepted_sets_review_by_cycle(tmp_repo):
+    """§38 实测: due_review/stat --due-review/AGENTS.md 工作流的消费链完好, 但生产方
+    为零——review_by 从不被写入, accepted 条目永不到期, 待复核机制自上线起空转。
+    修复: review(to=accepted) 落 review_by=accepted 日 + 周期(spec 示例为 1 年)。"""
+    _mk(tmp_repo, "kb-20261014-rv01", status="proposed", conf="verified")
+    e = review(tmp_repo, "kb-20261014-rv01", "accepted", today=TODAY)
+    assert e.fm["review_by"] == "2027-10-14"
+    # 未到期前不进待复核清单; 到期后出现
+    from kb.query import due_review
+    assert due_review(tmp_repo, dt.date(2027, 10, 13)) == []
+    assert [r["id"] for r in due_review(tmp_repo, dt.date(2027, 10, 14))] == ["kb-20261014-rv01"]
+
+
+def test_accepted_keeps_manual_future_review_by(tmp_repo):
+    """人工显式设了更远的 review_by: accepted 不得覆盖(人工意图优先);
+    设的是已过期值则刷新为新周期。两分支都从 proposed→accepted(合法流转)。"""
+    p = _mk(tmp_repo, "kb-20261014-rv02", status="proposed", conf="verified")
+    base = p.read_text(encoding="utf-8")
+    p.write_text(base.replace("confidence: verified",
+                              "confidence: verified\nreview_by: '2030-01-01'"),
+                 encoding="utf-8")
+    assert review(tmp_repo, "kb-20261014-rv02", "accepted",
+                  today=TODAY).fm["review_by"] == "2030-01-01"
+    # 重置回 proposed + 过期 review_by: accepted 时刷新为 今天+周期
+    p.write_text(base.replace("confidence: verified",
+                              "confidence: verified\nreview_by: '2026-01-01'"),
+                 encoding="utf-8")
+    assert review(tmp_repo, "kb-20261014-rv02", "accepted",
+                  today=TODAY).fm["review_by"] == "2027-10-14"
+
+
 def test_review_agent_accept_adds_audit_trail(tmp_repo):
     _mk(tmp_repo, "kb-20261014-a1a1", status="draft", conf="verified")
     e = review(tmp_repo, "kb-20261014-a1a1", "accepted", by="agent", today=TODAY)

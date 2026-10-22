@@ -125,6 +125,33 @@ def test_boards_honour_time_window():
     assert len(stats.zero_hit_board(S, limit=10)) == 1             # 不带窗口仍数全量
 
 
+def test_watcher_waits_for_complete_line(tmp_path):
+    """§30 第十二轮实测: 观察者读到半行时, 偏移曾推进越过未写完字节, 行补全后
+    watcher 视为已消费 → 该事件在 SSE 实时流里永久漏推(文件完整, 刷新才可见)。
+    tail 语义修复: 只消费到最后一个换行, 偏移停在行边界等下次轮询。"""
+    (tmp_path / "traces").mkdir()
+    f = tmp_path / "traces" / "2026-10-22.jsonl"
+    f.write_text(json.dumps({"kind": "meta", "schema": 2}) + "\n", encoding="utf-8")
+    w = serve.TraceWatcher(tmp_path, quiet=True)
+    w._birth = 0.0                     # 视作启动后新文件: 从头播
+    q = w.subscribe()
+    line = json.dumps({"kind": "search", "trace_id": "half-1", "ts": "2026-10-22T13:00:00",
+                       "caller_repo": "p", "query": "半行", "returned": [],
+                       "duration_ms": 1, "limit": 20, "layers": []}, ensure_ascii=False)
+    w._tick()
+    with f.open("a", encoding="utf-8") as fh:
+        fh.write(line[: len(line) // 2])      # 半行
+    w._tick()
+    assert q.empty()                          # 半行不得消费
+    with f.open("a", encoding="utf-8") as fh:
+        fh.write(line[len(line) // 2:] + "\n")  # 补全
+    w._tick()
+    assert q.get_nowait()["trace_id"] == "half-1"
+    w._tick()
+    assert q.empty()                          # 不重复广播
+    w.unsubscribe(q)
+
+
 # ---- serve 端点冒烟(临时目录当仓根, 端口 0 自动分配) ----------------------
 
 def _serve(tmp_path, token=None, default_caller=None):

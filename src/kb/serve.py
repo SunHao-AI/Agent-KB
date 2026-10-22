@@ -211,11 +211,21 @@ class TraceWatcher(threading.Thread):
                 if size < pos:  # 文件被截断/重写: 重置
                     self._offsets[f] = 0
                 continue
-            with f.open("r", encoding="utf-8") as fh:
+            # tail 语义: 只消费到最后一个换行符, 半行留在偏移之外等下次轮询。
+            # 早期实现把偏移推进到 chunk 末尾, 半行 JSONDecodeError 被 continue 吞掉
+            # 后偏移已越过该字节 → 行补全后 watcher 视为已消费, 该事件在 SSE 实时流
+            # 里**永久漏推**(文件本身完整, 刷新页面才看得到; 第十二轮走查实测)。
+            # 二进制读: st_size/偏移/截断检测全用同一字节口径(文本模式 tell 是
+            # opaque cookie, 手工推进不可靠); \n 不会出现在 UTF-8 多字节序列内部,
+            # 按换行截断后整行解码必合法。
+            with f.open("rb") as fh:
                 fh.seek(pos)
                 chunk = fh.read()
-                self._offsets[f] = fh.tell()
-            for ln in chunk.splitlines():
+            cut = chunk.rfind(b"\n")
+            if cut < 0:
+                continue  # 至今没有完整行(写入中), 偏移原地不动
+            self._offsets[f] = pos + cut + 1
+            for ln in chunk[:cut].decode("utf-8", "replace").splitlines():
                 try:
                     ev = json.loads(ln)
                 except json.JSONDecodeError:

@@ -2,6 +2,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+import sys
 from pathlib import Path
 from kb.dedup import fingerprint_source, fingerprint_text
 from kb.entry import Entry, parse_entry, dump_entry
@@ -218,13 +219,23 @@ def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
     """人工 CLI: 将项目库条目搬到 Agent-KB 库(stack/universal), 回填 source.project."""
     if to_scope not in ("stack", "universal"):
         raise ValueError(f"export target scope must be stack/universal, got {to_scope}")
+    target_kb = Path(agent_kb_repo) / "kb"
+    if not target_kb.is_dir():
+        # 目标仓必须已存在 kb/: 路径打错时旧实现 mkdir(parents=True) 静默建"假仓"
+        # 并完成搬移+删源 → 条目从两仓索引双双消失(第十四轮走查)
+        raise GateViolation(f"target repo has no kb/ dir, check --to-repo: {target_kb}")
     src = _find(project_repo, id)
     rel = src.relative_to(Path(project_repo) / "kb")
-    dst = Path(agent_kb_repo) / "kb" / rel
+    dst = target_kb / rel
     if dst.exists():
         raise GateViolation(f"target already exists: {dst}")
     e = parse_entry(src)
     fm = dict(e.fm)
+    if fm.get("status") != "accepted" or fm.get("confidence") == "speculative":
+        # 未终审/未证结论搬入共享库是流程违规信号, 醒目提示但不拦(人工动作, 人有权带草稿)
+        print(f"kb warning: {id} status={fm.get('status')} "
+              f"confidence={fm.get('confidence')}, 未终审/未证条目已搬入共享库",
+              file=sys.stderr)
     fm["scope"] = to_scope
     fm["tags"] = [t for t in (fm.get("tags") or []) if t != "needs-scope-review"]
     fm["source"] = {**(fm.get("source") or {}),
@@ -232,4 +243,11 @@ def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(dump_entry(Entry(fm=fm, body=e.body, path=dst)), encoding="utf-8")
     src.unlink()
+    # 搬移后重建双方索引: 旧实现两仓 index 均滞留——源仓检索命中已删条目(断链),
+    # 目标仓检索看不到新条目直到有人手动 kb index(第十四轮走查)
+    from kb.index import build_indexes  # 局部导入: index 侧不反向依赖 gate
+    build_indexes(Path(project_repo),
+                  repo_name=Path(project_repo).resolve().name.lower())
+    build_indexes(Path(agent_kb_repo),
+                  repo_name=Path(agent_kb_repo).resolve().name.lower())
     return dst

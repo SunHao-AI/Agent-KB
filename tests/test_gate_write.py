@@ -163,3 +163,36 @@ def test_export_rejects_project_scope_target(tmp_repo, tmp_path):
     _mk(tmp_repo, "kb-20261014-0c0c")
     with pytest.raises(ValueError):
         export_entry(tmp_repo, kb2, "kb-20261014-0c0c", to_scope="project")
+
+
+def test_export_rejects_target_repo_without_kb_dir(tmp_repo, tmp_path):
+    """§32 实测: --to-repo 路径打错时旧实现 mkdir(parents=True) 静默建假仓并
+    搬移+删源, 条目从两仓索引双双消失。必须前置校验拒绝且不删源。"""
+    fake = tmp_path / "agent-kb-typo"   # 故意不建 kb/
+    _mk(tmp_repo, "kb-20261014-1a1a")
+    src = tmp_repo / "kb" / "pitfall" / "frontend" / "kb-20261014-1a1a.md"
+    with pytest.raises(GateViolation, match="kb/"):
+        export_entry(tmp_repo, fake, "kb-20261014-1a1a", to_scope="stack")
+    assert src.exists()                 # 失败不得删源
+    assert not fake.exists()            # 不得建假仓
+
+
+def test_export_rebuilds_both_indexes(tmp_repo, tmp_path):
+    """§32 实测: 旧实现搬移后两仓 index 均滞留——源仓检索命中已删条目,
+    目标仓检索不到新条目。搬移必须重建双方索引。"""
+    kb2 = tmp_path / "agentkb"
+    (kb2 / "kb").mkdir(parents=True)
+    _mk(tmp_repo, "kb-20261014-2b2b", status="accepted", conf="verified")
+    export_entry(tmp_repo, kb2, "kb-20261014-2b2b", to_scope="stack", today=TODAY)
+    src_jl = (tmp_repo / "kb" / "index.jsonl").read_text(encoding="utf-8")
+    dst_jl = (kb2 / "kb" / "index.jsonl").read_text(encoding="utf-8")
+    assert "kb-20261014-2b2b" not in src_jl   # 源仓索引已除名
+    assert "kb-20261014-2b2b" in dst_jl       # 目标仓索引已入账
+
+
+def test_export_warns_on_unreviewed_entry(tmp_repo, tmp_path, capsys):
+    kb2 = tmp_path / "agentkb"
+    (kb2 / "kb").mkdir(parents=True)
+    _mk(tmp_repo, "kb-20261014-3c3c")          # make_entry 默认 draft/speculative
+    export_entry(tmp_repo, kb2, "kb-20261014-3c3c", to_scope="stack", today=TODAY)
+    assert "未终审" in capsys.readouterr().err  # 搬移成功但必须警示

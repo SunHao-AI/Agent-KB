@@ -173,6 +173,18 @@ def _dispatch(argv: list[str] | None = None) -> int:
     # trace 子命令 --repo 缺省 None(= kb_root()); 其余命令经 common 恒有默认 "."
     repo = Path(args.repo) if args.repo is not None else None
 
+    # 用户显式指定的仓路径必须存在: 打错路径时搜索面曾静默返回空(exit 0),
+    # 对 Agent 消费方等于把"路径不存在"报成"库里没这条知识"(第十五轮走查)。
+    # init 例外: 首次接入时 kb 载体目录尚不存在, 由 init_repo 负责建骨架。
+    if args.cmd != "init" and getattr(args, "repo", None) is not None \
+            and not repo.exists():
+        print(f"kb error: --repo 路径不存在: {repo}", file=sys.stderr)
+        return 1
+    for p in getattr(args, "agent_kb", None) or []:
+        if not Path(p).exists():
+            print(f"kb error: --agent-kb 路径不存在: {p}", file=sys.stderr)
+            return 1
+
     if args.cmd == "new":
         if args.generated or args.body_file:
             # 门控路径强制 scope=project, 显式提示避免静默吞掉用户参数

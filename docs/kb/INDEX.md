@@ -17,3 +17,4 @@
 - [条目解析器不容错致单坏文件全库命令崩溃或静默隐身](pitfall/process/2026-10-22-acc8.md) · pitfall · process · accepted · 知识库条目是**人手编辑**的 markdown+front-matter, 解析器 `parse_entry` 却按可信输入 对待。第十三轮走查实测两类爆炸半径: 1. **一个 YAML 语法坏的条目**(缩进/tab 手滑): `kb
 - [红线校验对整坨JSON扫子串误杀同名单值叠加尽力中继静默吞成无声丢数据](pitfall/security/2026-10-22-json.md) · pitfall · security · accepted · 观测面板 ingest 上报口(`/api/ingest`)有一条红线: 拒收含正文的 trace(PRD 原话"正文**键名** 拒收")。早期实现把整个事件 `json.dumps(...).lower()` 后用 `any(f'"{k
 - [browseruse press_key 空格的 keydown.key 为空串致键盘逻辑误判失效](pitfall/testing/2026-10-21-browseruse-press-key-keydown-key.md) · pitfall · testing · accepted · 用 browseruse `browser_press_key({key:' '})` 验证"检索流条目聚焦后按空格开回放"的键盘逻辑, 连续两次页面无反应, 一度误判为产品缺陷(Enter 正常、空格失效)。
+- [命令行工具把不存在的仓路径报成空结果误导Agent以为库无知识](pitfall/tooling/2026-10-22-agent.md) · pitfall · tooling · accepted · `kb` CLI 的 `--repo`/`--agent-kb` 指向不存在的路径时, `search` 返回 `[]` 且 exit 0, stderr 一片安静。第十五轮走查探针实测: `kb search --repo <拼错的路径>

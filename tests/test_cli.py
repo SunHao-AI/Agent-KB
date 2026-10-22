@@ -24,6 +24,16 @@ def test_cli_lint_nonzero_on_error(tmp_repo):
     assert main(["lint", "--repo", str(tmp_repo)]) != 0
 
 
+def test_cli_missing_repo_path_errors(tmp_path, capsys):
+    """§33 实测: --repo 指向不存在路径时搜索面曾静默返回 [] + exit 0, 对 Agent
+    消费方等于把"路径打错"报成"库里没这条知识"。必须非零退出且 stderr 可辨。"""
+    missing = tmp_path / "no-such-repo"
+    assert main(["search", "--query", "vite", "--repo", str(missing)]) == 1
+    assert "路径不存在" in capsys.readouterr().err
+    # 存在但无匹配的目录不得被误伤(校验只拦"不存在", 不拦"空库")
+    assert main(["search", "--query", "vite", "--repo", str(tmp_path)]) == 0
+
+
 def test_cli_new_writes_file(tmp_repo):
     code = main(["new", "pitfall", "--repo", str(tmp_repo), "--domain", "frontend",
                  "--scope", "project", "--title", "Demo", "--generated"])

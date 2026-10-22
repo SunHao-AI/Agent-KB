@@ -98,6 +98,52 @@ def test_zero_hit_board_digestion_is_time_directional():
     assert by_q2["vite"]["digested"] is True  # 命中 query 分词含失败词也算消化
 
 
+def test_timestamp_order_is_offset_aware():
+    """§37 实测: ts 是带本机偏移的 ISO 串(trace._now = now().astimezone().isoformat),
+    旧实现用**字符串**比较时刻——字符串序只在全体同偏移时才等于时刻序。团队态联邦成员
+    跨时区上报即失真: 上海 09:00+08(=01:00Z) 与纽约 08:00-05(=13:00Z), 字符串判上海晚,
+    真实纽约晚 12h。三处同时错: 实时流排序、最近活跃(掉线检测)、消化方向。"""
+    SH = "2026-10-22T09:00:00+08:00"  # 01:00Z
+    NY = "2026-10-22T08:00:00-05:00"  # 13:00Z, 真实更晚
+    assert SH > NY  # 字符串序失真(记录旧口径为何错)
+    S = [_search("t1", "a", "q1", ["i1"], ts=SH),
+        _search("t2", "a", "q2", ["i2"], ts=NY)]
+    # 1) 实时流: 真实更晚的排第一(旧实现取 t1)
+    assert stats.feed_events(S, [])[0]["trace_id"] == "t2"
+    # 2) 最近活跃: 取真实更晚的原串(显示保留写入机钟点与偏移)
+    assert stats.callers(S)[0]["last_ts"] == NY
+    # 3) 消化方向: 命中晚于失败 12h → 已消化(旧实现判未消化)
+    S2 = [_search("t3", "a", "vite", [], ts=SH),
+          _search("t4", "a", "vite 配置", ["k1"], ts=NY)]
+    assert stats.zero_hit_board(S2)[0]["digested"] is True
+    # 反向(命中早于失败)仍判未消化; 同偏移场景口径不变
+    S3 = [_search("t5", "a", "vite", [], ts=NY),
+          _search("t6", "a", "vite 配置", ["k1"], ts=SH)]
+    assert stats.zero_hit_board(S3)[0]["digested"] is False
+    S4 = [_search("t7", "a", "vite", [], ts="2026-10-01T10:00:00+08:00"),
+          _search("t8", "a", "vite 配置", ["k1"], ts="2026-10-02T10:00:00+08:00")]
+    assert stats.zero_hit_board(S4)[0]["digested"] is True
+
+
+def test_stale_flag_is_offset_invariant():
+    """掉线判定改用**时刻差**(stats._age_days), 不再用"查看机本地日 − 写入机本地日"
+    的日粒度相减(两基准 + 取整, 14d 门槛附近抖一天)。此处断言可移植的不变性:
+    同一真实时刻, 无论带哪个偏移都不得翻转 stale。"""
+    import datetime as dt
+    tz = dt.timezone
+    now = dt.datetime.now(tz.utc)
+    for off in (tz(dt.timedelta(hours=14)), tz(dt.timedelta(hours=-12))):
+        old = (now - dt.timedelta(days=30)).astimezone(off).isoformat()
+        fresh = now.astimezone(off).isoformat()
+        byc = {r["caller"]: r for r in stats.callers(
+            [_search("t1", "old", "q", [], ts=old),
+             _search("t2", "fresh", "q", [], ts=fresh)])}
+        assert byc["old"]["stale"] is True
+        assert byc["fresh"]["stale"] is False
+    # 不可解析的 ts: 不判新鲜度(不误报掉线)
+    assert stats.callers([_search("t3", "x", "q", [], ts="not-a-date")])[0]["stale"] is False
+
+
 def test_zero_hit_board_suggest_on_failure_event_is_live_path():
     """§35 实测: build_search_event 旧版从不写 suggest 进事件, stats 却从命中事件读
     s.get("suggest") ——恒 None 的死分支, "按 suggest 改写后命中"路径从未生效。

@@ -220,8 +220,10 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=n=>n==null?'—':(n>=1e4?(n/1e4).toFixed(1)+'万':n);
 
+// §37: 窗口起日必须用**本地日**——事件 ts/stale 判定/CLI --since 全取本地日粒度,
+// 而 toISOString() 是 UTC 日: +08 区每天 00:00-07:59 起日会多退一天(窗口多圈一天)。
 function sinceDate(days){if(!days)return '';const d=new Date(Date.now()-days*864e5);
-  return d.toISOString().slice(0,10);}
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
 // 时间统一展示: trace ts 为写入机(Asia/Shanghai)本地时间串(无时区后缀), 直通格式化
 // 为 yyyy/MM/dd HH:mm:ss(补齐到秒); 查看者在其他时区也显示上海钟点, 不做本地化换算。
 const fmtTs=s=>{const m=String(s||'').match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}:\d{2})(:\d{2})?/);

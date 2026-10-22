@@ -178,8 +178,27 @@ def _iter_raw(root: Path) -> tuple[list[dict], list[dict], list[str]]:
     return searches, gets, warns
 
 
+def ts_key(ts) -> tuple:
+    """时刻比较键: 带 tz 偏移的 ISO 串归一到 UTC 秒, 显示仍用原串(面板以写入机钟点为准)。
+
+    字符串比较**只在全体同偏移时**才等于时刻序。团队态联邦成员跨时区上报
+    (ts 各带本机偏移, 见 `_now`), 上海 `09:00+08:00` 与纽约 `08:00-05:00` 字符串序判
+    上海晚, 实际纽约晚 12h——排序/最近活跃/消化方向都会失真。
+    解析失败退回 `(0, 原文, 0)`(同格式自洽, 老数据不炸); 返回元组而非裸 float 是为
+    保证任意两个键可比。
+    """
+    s = str(ts or "")
+    try:
+        d = dt.datetime.fromisoformat(s)
+    except ValueError:
+        return (0, s, 0.0)
+    if d.tzinfo is None:  # 无偏移按写入机时区理解(与 _now 的 astimezone 一致)
+        d = d.replace(tzinfo=dt.datetime.now().astimezone().tzinfo)
+    return (1, "", d.astimezone(dt.timezone.utc).timestamp())
+
+
 def _newest_first(events: list[dict]) -> list[dict]:
-    return sorted(events, key=lambda e: str(e.get("ts", "")), reverse=True)
+    return sorted(events, key=lambda e: ts_key(e.get("ts")), reverse=True)
 
 
 def read_traces(root: Path | None = None, *, caller: str | None = None,

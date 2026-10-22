@@ -14,6 +14,7 @@
 - [nowrap容器内渲染不可控长文本须展示级截断防横向溢出](pitfall/frontend/2026-10-21-nowrap.md) · pitfall · frontend · accepted · 观测面板检索流条目把用户检索词原样渲染进 `white-space:nowrap` 的元信息行。一条 1200 字 查询进来后, `#feed` 容器 `scrollWidth=13681px`(`clientWidth=1000`), 整
 - [前端多处手拼鉴权 token 参数漂移导致部分 API 静默 401](pitfall/frontend/2026-10-21-token-api-401.md) · pitfall · frontend · accepted · 观测面板(`kb serve` 自带 index.html)在 `--token` 团队态下, 用户按引导带 `?token=…` 打开页面, 页面能加载但 KPI/双榜/检索流全空, 且只显示"需要访问令牌"横幅 — 明明 URL 已带 
 - [筛选控件只接线一半端点同屏两口径数字打架](pitfall/frontend/2026-10-22-0d91.md) · pitfall · frontend · accepted · 观测面板有全局时间窗口按钮(7天/30天/全部), 用户理所当然认为它控制**整屏**所有数字。 第十一轮走查实测: 切到 7 天后, KPI 显示"共 1 次检索", 同屏联邦矩阵里同一 caller 的 检索数列却显示 2(含一条 20
+- [窗口起日取 UTC 日与全库本地日粒度基准混用(凌晨窗口多圈一天)](pitfall/frontend/2026-10-22-utc.md) · pitfall · frontend · accepted · 观测面板"7天/30天"窗口按钮把起日算成 `sinceDate(days)`: `new Date(Date.now()-days*864e5)` 再 `.toISOString().slice(0,10)`。后端 `_within` 用
 - [查重池只比已发布索引看不见草稿致重复沉淀双双通过](pitfall/process/2026-10-22-648d.md) · pitfall · process · accepted · 沉淀门控红线 3 要求"沉淀前必须查重, 命中既有条目则更新不新建", 落地在 `create_draft` (MCP `kb_create` 的实际逻辑): 查重命中抛 `DuplicateCandidate` 拒建。第十六轮走查端到端 
 - [跨仓搬移只动文件不同步派生索引且目标路径未校验致双向失联](pitfall/process/2026-10-22-6fd6.md) · pitfall · process · accepted · `kb export` 把项目库条目搬进共享知识库(人工终审动作)。第十四轮走查实测三个洞: 1. **双向失联**: 搬移成功后两仓 `index.jsonl` 都不重建——源仓检索**命中已删除的条目** (点开即断链), 目标仓检索*
 - [条目解析器不容错致单坏文件全库命令崩溃或静默隐身](pitfall/process/2026-10-22-acc8.md) · pitfall · process · accepted · 知识库条目是**人手编辑**的 markdown+front-matter, 解析器 `parse_entry` 却按可信输入 对待。第十三轮走查实测两类爆炸半径: 1. **一个 YAML 语法坏的条目**(缩进/tab 手滑): `kb

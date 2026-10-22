@@ -17,10 +17,48 @@ from __future__ import annotations
 
 import datetime as dt
 
+from .trace import ts_key as _ts_key
+
 
 def _within(ev: dict, since: str | None, until: str | None) -> bool:
     day = str(ev.get("ts", ""))[:10]
     return not ((since and day < since) or (until and day > until))
+
+
+def _ts_key(ts) -> tuple:
+    """时刻比较键: 带 tz 偏移的 ISO 串归一到 UTC 秒, 显示仍用原串(面板以写入机钟点为准)。
+
+    第十九轮走查(§37): 字符串比较**只在全体同偏移时**才等于时刻序。团队态联邦成员跨
+    时区上报(ts 各带本机偏移), 上海 `09:00+08:00` 与纽约 `08:00-05:00` 字符串序判上海晚,
+    实际纽约晚 12h——实时流排序、最近活跃(掉线检测)、零命中消化方向三处同时失真。
+    解析失败退回原文(同格式自洽, 老数据不炸)。
+    """
+    s = str(ts or "")
+    try:
+        d = dt.datetime.fromisoformat(s)
+    except ValueError:
+        return (0, s, 0.0)
+    if d.tzinfo is None:  # 无偏移按写入机时区理解(与 trace._now 的 astimezone 一致)
+        d = d.replace(tzinfo=dt.datetime.now().astimezone().tzinfo)
+    return (1, "", d.astimezone(dt.timezone.utc).timestamp())
+
+
+def _later(a: str, b: str) -> str:
+    """取两时刻串中真实更晚者(返回原串, 不丢偏移信息)。"""
+    return a if _ts_key(a) >= _ts_key(b) else b
+
+
+def _age_days(ts) -> float | None:
+    """时刻距今天数(UTC 时刻差, 不做日粒度取整); 无法解析返回 None = 不判新鲜度。
+
+    旧实现用 `date.today() - ts[:10]`: 被减数是查看机本地日, 减数是写入机本地日,
+    跨时区成员混基准; 且日粒度相减把"13.9 天前"当成 14 天整, 与 14d 门槛比对时
+    边界抖一天。
+    """
+    k = _ts_key(ts)
+    if not k[0]:
+        return None
+    return (dt.datetime.now(dt.timezone.utc).timestamp() - k[2]) / 86400
 
 
 def in_window(events: list[dict], since: str | None = None,
@@ -90,7 +128,7 @@ def aggregate(searches: list[dict], gets: list[dict], *,
                                  {"searches": 0, "hits": 0, "last_ts": ""})
         c["searches"] += 1
         c["hits"] += 1 if s.get("returned") else 0
-        c["last_ts"] = max(c["last_ts"], str(s.get("ts", "")))
+        c["last_ts"] = _later(c["last_ts"], str(s.get("ts", "")))
         d = by_day.setdefault(str(s.get("ts", ""))[:10], {"searches": 0, "hits": 0})
         d["searches"] += 1
         d["hits"] += 1 if s.get("returned") else 0
@@ -168,7 +206,7 @@ def zero_hit_board(searches: list[dict], *, limit: int = 10) -> list[dict]:
         q = s["query"].strip().lower()
         ts = str(s.get("ts", ""))
         sug = {str(w).strip().lower() for w in (s.get("suggest") or [])}
-        digested = any(hts >= ts and (q in toks or (sug and sug & toks))
+        digested = any(_ts_key(hts) >= _ts_key(ts) and (q in toks or (sug and sug & toks))
                        for hts, toks in hits_by_caller.get(
                            s.get("caller_repo") or "?", []))
         if q not in board:
@@ -177,7 +215,7 @@ def zero_hit_board(searches: list[dict], *, limit: int = 10) -> list[dict]:
         else:
             row = board[q]
             row["count"] += 1
-            row["last_ts"] = max(row["last_ts"], ts)
+            row["last_ts"] = _later(row["last_ts"], ts)
             # AND 语义: 任一次失败之后没有命中(某 caller 现状仍未解决), 该词就该留在榜上
             row["digested"] = row["digested"] and digested
     return sorted(board.values(), key=lambda r: -r["count"])[:limit]
@@ -193,7 +231,7 @@ def feed_events(searches: list[dict], gets: list[dict], *, caller: str | None = 
     S = [s for s in searches if not caller or s.get("caller_repo") == caller]
     got_by_tid = _gets_by_trace(gets)
     out = []
-    for s in sorted(S, key=lambda e: str(e.get("ts", "")), reverse=True)[:limit]:
+    for s in sorted(S, key=lambda e: _ts_key(e.get("ts")), reverse=True)[:limit]:
         tid = s.get("trace_id")
         returned = s.get("returned", [])
         ret_set = set(returned)
@@ -227,7 +265,6 @@ def callers(searches: list[dict], *, since: str | None = None,
     "掉线检测"看的是该 caller 最后一次真实活动, 若被窗口过滤, 切 7 天窗口
     会把 8 天前活跃的项目误报成"从未活跃", 语义错误。
     """
-    today = dt.date.today()
     win = in_window(searches, since, until)
     src = by_source(win)
     ext_health = _ext_health_latest(searches)  # 全量: 健康度与活跃性同理不随窗口
@@ -237,17 +274,12 @@ def callers(searches: list[dict], *, since: str | None = None,
     all_callers: dict[str, str] = {}
     for s in searches:
         c = s.get("caller_repo") or "?"
-        all_callers[c] = max(all_callers.get(c, ""), str(s.get("ts", "")))
+        all_callers[c] = _later(all_callers.get(c, ""), str(s.get("ts", "")))
     rows = []
     for c, all_ts in all_callers.items():
         v = byc_win.get(c, {"searches": 0, "hits": 0})
-        last = all_ts[:10]
-        stale = False
-        if len(last) == 10:
-            try:
-                stale = (today - dt.date.fromisoformat(last)).days > 14
-            except ValueError:
-                pass
+        age = _age_days(all_ts)
+        stale = age is not None and age > 14
         rows.append({"caller": c, "searches": v["searches"],
                      "hit_rate": (round(v["hits"] / v["searches"], 4)
                                   if v["searches"] else None),
@@ -298,7 +330,7 @@ def by_source(searches: list[dict]) -> dict:
 def _ext_health_latest(searches: list[dict]) -> dict:
     """caller → 最近一次 ext 健康记录(源名/ok/error), 矩阵"外接·源"列用。"""
     out: dict[str, dict[str, dict]] = {}
-    for s in sorted(searches, key=lambda e: str(e.get("ts", ""))):
+    for s in sorted(searches, key=lambda e: _ts_key(e.get("ts"))):
         caller = s.get("caller_repo") or "?"
         for e in s.get("ext", []) or []:
             src = e.get("source") or "?"

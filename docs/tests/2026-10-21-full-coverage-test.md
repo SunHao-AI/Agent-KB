@@ -15,8 +15,20 @@
 
 ## 1. 环境准备
 
+> **前置红线(强制, 每次测试起手第一步): 先杀干净上一轮残留的 serve, 再启动新代码。**
+> 教训来源: 本仓多次踩坑——serve **启动时一次性读入 index.html**, 残留旧进程会一直"服务旧
+> HTML"; 且同一端口可能叠**双进程**(同秒两份), 改前端后测不到新代码、SSE 不广播。
+> 因此测前必须: ① 全量枚举并杀掉旧 serve → ② 确认目标端口 0 监听 → ③ 再全新启动。
+
 ```powershell
 cd d:\Workplace\Agent-KB
+# ① 杀干净旧 serve(两种 CommandLine 形态都要覆盖: exe 带引号 与 python -m 模块形态)。
+#    正则必须是 kb(\.exe"?)?\s+serve|kb\.cli\s+serve, 否则漏杀模块形态。
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -match 'kb(\.exe"?)?\s+serve|kb\.cli\s+serve' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+# ② 确认目标端口已无监听(以 4321 为例), 有输出说明还有残留, 回到 ①
+Get-NetTCPConnection -LocalPort 4321 -State Listen -ErrorAction SilentlyContinue
 # 依赖: Python 3.10+(实测 3.12)、Node 20+(仅全屏蜘蛛回放桥需要)
 .\.venv\Scripts\pip install -e ".[dev]"     # 已 editable 安装可跳过
 .\.venv\Scripts\python.exe -m pytest -q      # 全量单测基线

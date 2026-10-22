@@ -7,7 +7,7 @@
 <style>
   :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--bd:#2d3646;--tx:#d7dee8;
         --mu:#8b98a9;--ok:#42D6A4;--warn:#F0CA57;--bad:#F28A76;--ext:#F34A87;--link:#6cb8ff;
-        --rpw:min(1080px,56vw)}
+        --rpw:min(1440px,80vw,calc(100vw - 336px))}
   *{box-sizing:border-box;margin:0;padding:0}
   body{background:var(--bg);color:var(--tx);font:14px/1.65 "PingFang SC","Microsoft YaHei",system-ui,sans-serif;padding:24px 20px 80px}
   main{max-width:1080px;margin:0 auto}
@@ -109,22 +109,40 @@
   #rp{position:fixed;inset:0;background:rgba(4,6,9,.78);display:none;z-index:8;align-items:center;justify-content:flex-end;pointer-events:none;animation:rpfade .22s ease-out}
   @keyframes rpfade{from{opacity:0}to{opacity:1}}
   #rp.open{display:flex}
+  #rp.closing{animation:rpfade .18s ease-in reverse forwards;pointer-events:none}
+  #rp.closing #rpBox{animation:rpOut .18s ease-in forwards}
+  @keyframes rpOut{to{opacity:0;transform:translateX(26px) scale(.985)}}
   #rpBox{width:var(--rpw);height:92vh;background:#080909;border:1px solid var(--ac);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.6);pointer-events:auto;animation:rpIn .26s cubic-bezier(.22,.8,.3,1)}
   @keyframes rpIn{from{opacity:0;transform:translateX(26px) scale(.985)}to{opacity:1;transform:none}}
   /* 宽窄两档由 JS 实测加类(body.rp-wide/rp-center, 见 rpLayout): 宽屏并排, 窄屏居中回退 */
-  body.rp-wide main{max-width:min(1080px,calc(100vw - var(--rpw) - 36px));margin-left:0}
+  body.rp-wide main{max-width:min(1080px,calc(100vw - var(--rpw) - 28px));margin-left:0;padding-right:0}
+  body.rp-wide{padding-right:14px}
   body.rp-center #rp{justify-content:center}
   body.rp-center #rpBox{width:94vw;height:88vh}
   #rpBar{display:flex;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px solid var(--bd);font-size:12.5px;color:var(--tx)}
   #rpBar #rpMeta{color:var(--mu);font-size:11.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #rpBar button{background:none;border:1px solid var(--bd);color:var(--mu);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px}
   #rpBar button:hover{color:var(--tx);border-color:var(--tx)}
-  #rpStage{flex:1;min-height:0}
+  #rpStage{flex:1;min-height:0;position:relative}
   #rpStage iframe{width:100%;height:100%;border:0;background:#080909}
+  /* 换条目/首开: iframe 先淡出再淡入, 避免旧会话画面残留造成"闪一下上个 trace" */
+  #rpStage iframe{opacity:1;transition:opacity .18s ease}
+  #rpStage.swapping iframe{opacity:0}
+  #rpStage.swapin iframe{animation:rpSwap .34s ease-out}
+  @keyframes rpSwap{from{opacity:.15;transform:translateY(6px) scale(.996)}to{opacity:1;transform:none}}
+  /* 蜘蛛会话握手期(fetch + iframe 首帧)骨架: 与回放底色同色系, 不引入第三种灰 */
+  #rpStage::after{content:'连接蜘蛛会话…';position:absolute;inset:0;z-index:2;display:none;place-items:center;
+        font:12px Consolas,monospace;letter-spacing:1px;color:var(--mu);background:#080909}
+  #rpStage.loading::after{display:grid;animation:rpfade .2s ease-out}
+  #rpStage.loading::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;z-index:1;
+        background:linear-gradient(90deg,transparent,var(--ext),transparent);background-size:38% 100%;
+        background-repeat:no-repeat;animation:rpScan 1.05s ease-in-out infinite}
+  @keyframes rpScan{0%{background-position:-38% 0}100%{background-position:138% 0}}
   @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
   /* 动效安全: 系统降级偏好下全部装饰动画停用(SVG 回放另有 JS 侧 reduced 分支) */
   @media(prefers-reduced-motion:reduce){
-    .fill,.feed-item,.feed-item.new,.feed-skel,#rp,#rpBox,.banner,.conn.bad,.kpi,.seg button{animation:none!important;transition:none!important}
+    .fill,.feed-item,.feed-item.new,.feed-skel,#rp,#rpBox,#rp.closing,#rp.closing #rpBox,#rpStage iframe,#rpStage.swapin iframe,#rpStage.loading::before,.banner,.conn.bad,.kpi,.seg button{animation:none!important;transition:none!important}
+    #rpStage.loading::before{display:none}
     .feed-item:hover{transform:none}}
   @media(max-width:700px){.bar{grid-template-columns:110px 1fr 60px}.boards2{grid-template-columns:1fr}
     /* 窄屏: .mono 元信息 nowrap+不可收缩会撑破行(实测 387>329→body 横滚 20px), 改可换行右对齐 */
@@ -577,21 +595,30 @@ $('feed').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.prev
 // 回放: 桥就绪(spider_ready)→ 大浮层 iframe 加载克隆仓整页 session 视图(原生 topbar/
 // transport/词墙切换全保留; serve 导入后已配自动重播+循环)。浮层开着点别的流条目=就地换
 // src(会话 serve 端缓存)。⤢ 可另开整页标签。桥不就绪/失败→回落 SVG 弹层(降级不变)。
-let spiderReady=false,rpUrl='',rpLastFocus=null;   // §23 a11y: 开层时记录触发元素, 关闭后归还焦点
-// 停靠分档: 面板(56vw, 上限 1080)之外还能给 main 留 ≥400px 才并排(rp-wide),
-// 否则退回居中大面板(rp-center, feed 被盖属预期)。纯 CSS 媒体查询无法与
-// min()/vw 表达式精确联动, 用实测视口宽判定, resize 时重算。
+let spiderReady=false,rpUrl='',rpLastFocus=null,rpSwapOnload=null;   // §23 a11y: 开层时记录触发元素, 关闭后归还焦点
+// 停靠分档: 面板宽 = min(1440, 80vw, 100vw-336)(见 --rpw, 第三项保证左列始终留 336px
+// 可点检索流)。视口不足以兑现该保证时(极窄)退回居中大面板(rp-center, feed 被盖属预期)。
+// 纯 CSS 媒体查询无法与 min()/vw 表达式精确联动, 用实测视口宽判定, resize 时重算。
 function rpLayout(){const b=document.body.classList;
   if(!$('rp').classList.contains('open')){b.remove('rp-wide','rp-center');return;}
-  const panelW=Math.min(1080,innerWidth*.56);
-  b.toggle('rp-wide',innerWidth-panelW-36>=400);
-  b.toggle('rp-center',innerWidth-panelW-36<400);}
+  const panelW=Math.min(1440,innerWidth*.8,innerWidth-336);
+  b.toggle('rp-wide',innerWidth-panelW-28>=300);
+  b.toggle('rp-center',innerWidth-panelW-28<300);}
 addEventListener('resize',rpLayout);
 async function openReplay(raw){
   const tid=raw.trace_id||'';if(!tid){playSpider(raw);return;}
-  if(!$('rp').classList.contains('open'))rpLastFocus=document.activeElement;   // 首次开层才记(换 trace 不覆盖)
-  $('rp').classList.add('open');rpLayout();   // rp-wide/rp-center: main 让出左列或居中回退
+  const stage=$('rpStage'),wasOpen=$('rp').classList.contains('open');
+  if(!wasOpen)rpLastFocus=document.activeElement;   // 首次开层才记(换 trace 不覆盖)
+  $('rp').classList.remove('closing');               // 取消可能进行中的关闭动画
+  $('rp').classList.add('open');rpLayout();
   $('rpMeta').textContent=(raw.query||'-')+' · 连接蜘蛛会话…';
+  // 换条目: 旧画面先淡出 + 骨架扫描线, 新会话首帧后 swapin 淡入——避免闪现上一个 trace 的残留。
+  // load 万一不触发(网络挂起)有 4s 兜底, 不让画布永久停在透明态。
+  stage.classList.add('swapping','loading');
+  rpDetachSwap();
+  rpSwapOnload=()=>rpSwapIn();
+  $('rpFrame').addEventListener('load',rpSwapOnload,{once:true});
+  setTimeout(()=>{if(rpSwapOnload)rpSwapIn();},4000);
   try{
     const r=await fetch(apiUrl(`/api/spider/${encodeURIComponent(tid)}`));
     const d=await r.json();
@@ -599,13 +626,27 @@ async function openReplay(raw){
     rpUrl=d.previewUrl;$('rpFrame').src=rpUrl;
     $('rpTitle').textContent='▶ '+(raw.query||'-');
     $('rpMeta').textContent=`trace ${tid} · 自动重播·循环`;
-  }catch(err){rpClose();playSpider(Object.assign({},raw,{_replayErr:err.message}));}
+  }catch(err){rpDetachSwap();rpClose();playSpider(Object.assign({},raw,{_replayErr:err.message}));}
 }
-function rpClose(){$('rp').classList.remove('open');rpLayout();
+function rpSwapIn(){rpDetachSwap();const stage=$('rpStage');
+  stage.classList.remove('swapping','loading');
+  stage.classList.remove('swapin');void stage.offsetWidth;stage.classList.add('swapin');}
+function rpDetachSwap(){const f=$('rpFrame');if(rpSwapOnload){f.removeEventListener('load',rpSwapOnload);rpSwapOnload=null;}}
+function rpClose(){const layer=$('rp'),stage=$('rpStage');
+  if(!layer.classList.contains('open')||layer.classList.contains('closing'))return;
+  rpDetachSwap();
+  stage.classList.remove('swapping','loading','swapin');
+  const finish=()=>{layer.classList.remove('open','closing');rpLayout();
+    // §23 a11y: 焦点归还触发条目(✕ 按钮自身即将随层不可见, 不归还则焦点落 body 断键盘循环)
+    const el=rpLastFocus;rpLastFocus=null;
+    if(el&&document.contains(el))el.focus();};
   $('rpFrame').src='about:blank';rpUrl='';
-  // §23 a11y: 焦点归还触发条目(✕ 按钮自身即将随层不可见, 不归还则焦点落 body 断键盘循环)
-  const el=rpLastFocus;rpLastFocus=null;
-  if(el&&document.contains(el))el.focus();}
+  // 退场动画: .closing 逆向放 rpIn(此时仍保留 .open 才有 display 可动画), 结束后再收起。
+  // reduced motion 下动画被全局停用, animationend 永不触发 → 直接收起, 不能只靠事件。
+  layer.classList.add('closing');
+  let done=false;const once=()=>{if(!done){done=true;finish();}};
+  layer.addEventListener('animationend',once,{once:true});
+  setTimeout(once,220);}
 $('rpClose').onclick=rpClose;
 $('rpPop').onclick=()=>{if(rpUrl)window.open(rpUrl,'kb-spider-replay');};
 // 回放页在 iframe 内, 其 keydown 不会冒泡到父页: 由回放页 postMessage 桥接 Esc 关闭浮层。

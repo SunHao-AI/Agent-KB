@@ -571,3 +571,47 @@ def test_userconf_env_overrides_file(tmp_path, monkeypatch):
     monkeypatch.setenv("KB_INGEST_URL", "http://env:2")
     url, _ = userconf.ingest_target(p)
     assert url == "http://env:2"
+
+
+def test_userconf_hash_in_values_survives_roundtrip(tmp_path):
+    """§47 实锤: 旧读侧无条件 split('#'), 引号值里的 # 也当注释截 → 含 # 的
+    URL 片段/令牌写进 config 再读出即损坏(静默截掉凭据尾巴, 401 无从排查)。"""
+    from kb import userconf
+    p = tmp_path / "config.toml"
+    userconf.write_serve_config("http://kb.internal:4320/#board", "a#b#c", path=p)
+    url, tok = userconf.serve_target(p)
+    assert (url, tok) == ("http://kb.internal:4320/#board", "a#b#c")
+    iurl, itok = userconf.ingest_target(p)
+    assert (iurl, itok) == ("http://kb.internal:4320/#board", "a#b#c")
+
+
+def test_userconf_handwritten_quoted_values_with_inline_comment(tmp_path):
+    """手写配置的引号值: 引号内 # 属值, 闭引号后的 # 才是注释(写读对称契约)。"""
+    from kb import userconf
+    p = tmp_path / "config.toml"
+    p.write_text('[serve]\nurl = "http://h/x#y"   # 行内注释应被剥\n'
+                 'token = "p#q"\nplain = raw-val  # 无引号值 # 起为注释\n',
+                 encoding="utf-8")
+    cfg = userconf.read_config(p)
+    assert cfg["serve"]["url"] == "http://h/x#y"
+    assert cfg["serve"]["token"] == "p#q"
+    assert cfg["serve"]["plain"] == "raw-val"
+
+
+def test_userconf_quote_in_value_roundtrip(tmp_path):
+    """§47 对称面: 旧写侧对值原样嵌入, token 含引号产出 `token = "a"b"` 损坏
+    文件; 修复后写侧转义、读侧闭引号跳过转义对, 往返保真。"""
+    from kb import userconf
+    p = tmp_path / "config.toml"
+    userconf.write_serve_config('http://h', 'a"b', path=p)
+    url, tok = userconf.serve_target(p)
+    assert (url, tok) == ("http://h", 'a"b')
+
+
+def test_userconf_legacy_corrupted_file_degrades_empty(tmp_path):
+    """旧版写坏的存量文件(引号未闭合)不得半解析出截断凭据——整体降级为空,
+    消费方回退单人态/环境变量, 好文件不受影响。"""
+    from kb import userconf
+    p = tmp_path / "config.toml"
+    p.write_text('[serve]\ntoken = "a"b"\nurl = "http://h"\n', encoding="utf-8")
+    assert userconf.serve_target(p) == (None, None)

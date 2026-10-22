@@ -25,3 +25,4 @@
 - [红线校验对整坨JSON扫子串误杀同名单值叠加尽力中继静默吞成无声丢数据](pitfall/security/2026-10-22-json.md) · pitfall · security · accepted · 观测面板 ingest 上报口(`/api/ingest`)有一条红线: 拒收含正文的 trace(PRD 原话"正文**键名** 拒收")。早期实现把整个事件 `json.dumps(...).lower()` 后用 `any(f'"{k
 - [browseruse press_key 空格的 keydown.key 为空串致键盘逻辑误判失效](pitfall/testing/2026-10-21-browseruse-press-key-keydown-key.md) · pitfall · testing · accepted · 用 browseruse `browser_press_key({key:' '})` 验证"检索流条目聚焦后按空格开回放"的键盘逻辑, 连续两次页面无反应, 一度误判为产品缺陷(Enter 正常、空格失效)。
 - [命令行工具把不存在的仓路径报成空结果误导Agent以为库无知识](pitfall/tooling/2026-10-22-agent.md) · pitfall · tooling · accepted · `kb` CLI 的 `--repo`/`--agent-kb` 指向不存在的路径时, `search` 返回 `[]` 且 exit 0, stderr 一片安静。第十五轮走查探针实测: `kb search --repo <拼错的路径>
+- [手写写读两侧各自为政: 原样嵌入配无脑截断, 凭据静默损坏](pitfall/tooling/2026-10-23-c769.md) · pitfall · tooling · accepted · `kb` 的用户级配置 `~/.kb/config.toml` 用手写"最小子集"读写(不引 tomllib 以免 锁死 3.11+, 见 userconf.py 模块头)。第二十九轮走查探针实测两条独立损坏路径:

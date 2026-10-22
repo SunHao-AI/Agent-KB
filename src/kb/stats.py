@@ -17,30 +17,15 @@ from __future__ import annotations
 
 import datetime as dt
 
+# _ts_key 单一事源在 trace.ts_key(第十九轮 §37 上移); 曾在此留有一份逐行相同
+# 的本地 def 遮蔽了导入(ruff F811 抓获, 第二十九轮清理)——两份"同源"实现
+# 迟早漂移, 删除副本让导入真正生效。
 from .trace import ts_key as _ts_key
 
 
 def _within(ev: dict, since: str | None, until: str | None) -> bool:
     day = str(ev.get("ts", ""))[:10]
     return not ((since and day < since) or (until and day > until))
-
-
-def _ts_key(ts) -> tuple:
-    """时刻比较键: 带 tz 偏移的 ISO 串归一到 UTC 秒, 显示仍用原串(面板以写入机钟点为准)。
-
-    第十九轮走查(§37): 字符串比较**只在全体同偏移时**才等于时刻序。团队态联邦成员跨
-    时区上报(ts 各带本机偏移), 上海 `09:00+08:00` 与纽约 `08:00-05:00` 字符串序判上海晚,
-    实际纽约晚 12h——实时流排序、最近活跃(掉线检测)、零命中消化方向三处同时失真。
-    解析失败退回原文(同格式自洽, 老数据不炸)。
-    """
-    s = str(ts or "")
-    try:
-        d = dt.datetime.fromisoformat(s)
-    except ValueError:
-        return (0, s, 0.0)
-    if d.tzinfo is None:  # 无偏移按写入机时区理解(与 trace._now 的 astimezone 一致)
-        d = d.replace(tzinfo=dt.datetime.now().astimezone().tzinfo)
-    return (1, "", d.astimezone(dt.timezone.utc).timestamp())
 
 
 def _later(a: str, b: str) -> str:

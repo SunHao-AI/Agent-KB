@@ -123,6 +123,8 @@
   #rpBar #rpMeta{color:var(--mu);font-size:11.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #rpBar button{background:none;border:1px solid var(--bd);color:var(--mu);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px}
   #rpBar button:hover{color:var(--tx);border-color:var(--tx)}
+  #rpBar button:disabled{opacity:.35;cursor:default;pointer-events:none}
+  #rpBar #rpPrev,#rpBar #rpNext{padding:3px 8px}
   #rpStage{flex:1;min-height:0;position:relative}
   #rpStage iframe{width:100%;height:100%;border:0;background:#080909}
   /* 换条目/首开: iframe 先淡出再淡入, 避免旧会话画面残留造成"闪一下上个 trace" */
@@ -191,6 +193,8 @@
   <div id="spiderHint" style="color:var(--mu);font-size:12px;margin-top:8px">点击任意处关闭</div></div>
 <div id="rp"><div id="rpBox">
   <div id="rpBar"><span id="rpTitle">▶ 回放</span><span id="rpMeta"></span>
+    <button id="rpPrev" title="上一条目(←)" disabled>◀</button>
+    <button id="rpNext" title="下一条目(→)" disabled>▶</button>
     <button id="rpPop" title="在新标签页整页打开">⤢ 新标签</button>
     <button id="rpClose" title="关闭回放(Esc)">✕ 关闭</button></div>
   <div id="rpStage"><iframe id="rpFrame" title="蜘蛛回放" src="about:blank"></iframe></div></div></div>
@@ -199,7 +203,9 @@ const qs=new URLSearchParams(location.search);
 let caller=qs.get('caller')||'';           // '' = 单项目(由 serve default_caller 决定)
 let view='single', win=7, es=null;
 if(caller==='*'){view='fed';caller='';}    // URL 状态恢复(§12): caller=* → 联邦视图
-if([7,30,0].includes(+qs.get('w')))win=+qs.get('w');
+// 注意 +null===0: 参数缺失时必须先判 null, 否则 ?w 缺省被误读成"全部"(win=0)
+const wq=qs.get('w');
+if(wq!==null&&[7,30,0].includes(+wq))win=+wq;
 // 状态→URL(state-in-URL): 刷新/分享链接复现视图; push=下钻入栈(浏览器返回键=回退视图)
 function syncUrl(push){
   const p=new URLSearchParams(location.search);
@@ -613,21 +619,44 @@ async function openReplay(raw){
   $('rp').classList.remove('closing');               // 取消可能进行中的关闭动画
   $('rp').classList.add('open');rpLayout();
   $('rpMeta').textContent=(raw.query||'-')+' · 连接蜘蛛会话…';
-  // 换条目: 旧画面先淡出 + 骨架扫描线, 新会话首帧后 swapin 淡入——避免闪现上一个 trace 的残留。
-  // load 万一不触发(网络挂起)有 4s 兜底, 不让画布永久停在透明态。
+  // 换条目: 先卸旧 iframe(断上一会话的 SSE/回放循环, 否则透明期仍白跑), 再淡出+骨架,
+  // 新会话首帧后 swapin 淡入。load 兜底 4s: 网络挂起时也不永久停在透明态。
+  // load 监听只在实际 src 赋值前挂——about:blank 的延迟 load 事件不能误触发 swapIn。
   stage.classList.add('swapping','loading');
   rpDetachSwap();
-  rpSwapOnload=()=>rpSwapIn();
-  $('rpFrame').addEventListener('load',rpSwapOnload,{once:true});
-  setTimeout(()=>{if(rpSwapOnload)rpSwapIn();},4000);
+  if(wasOpen&&rpUrl)$('rpFrame').src='about:blank';
+  rpUrl='';
   try{
-    const r=await fetch(apiUrl(`/api/spider/${encodeURIComponent(tid)}`));
+    // 10s 超时: 网络劣化时不让骨架无限等(兜底 swapin 后画布会空黑, 明确报错更好)
+    const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),10000);
+    let r;try{r=await fetch(apiUrl(`/api/spider/${encodeURIComponent(tid)}`),{signal:ctl.signal});}
+    finally{clearTimeout(timer);}
     const d=await r.json();
     if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);
-    rpUrl=d.previewUrl;$('rpFrame').src=rpUrl;
+    rpUrl=d.previewUrl;
+    rpSwapOnload=()=>rpSwapIn();
+    $('rpFrame').addEventListener('load',rpSwapOnload,{once:true});
+    setTimeout(()=>{if(rpSwapOnload)rpSwapIn();},4000);
+    $('rpFrame').src=rpUrl;
     $('rpTitle').textContent='▶ '+(raw.query||'-');
     $('rpMeta').textContent=`trace ${tid} · 自动重播·循环`;
-  }catch(err){rpDetachSwap();rpClose();playSpider(Object.assign({},raw,{_replayErr:err.message}));}
+    rpStepButtons();
+  }catch(err){rpDetachSwap();rpClose();playSpider(Object.assign({},raw,{_replayErr:err.name==='AbortError'?'连接蜘蛛会话超时(10s)':err.message}));}
+}
+// ◀▶ 换条目: 按当前检索流可见条目的 DOM 顺序步进(SSE 重排后也总是跟当前列表一致)。
+function rpStep(dir){
+  const items=[...document.querySelectorAll('.feed-item[data-tid]')];
+  let i=items.findIndex(el=>el.dataset.tid===rpLastTid);
+  if(i<0)i=dir>0?-1:items.length;
+  const next=items[i+dir];if(!next)return;
+  const raw=next.raw||feedBuf[next.dataset.tid];
+  if(raw&&raw.kind!=='get')openReplay(raw);
+}
+function rpStepButtons(){
+  const items=[...document.querySelectorAll('.feed-item[data-tid]')];
+  const i=items.findIndex(el=>el.dataset.tid===rpLastTid);
+  $('rpPrev').disabled=i<=0;
+  $('rpNext').disabled=i<0||i>=items.length-1;
 }
 function rpSwapIn(){rpDetachSwap();const stage=$('rpStage');
   stage.classList.remove('swapping','loading');
@@ -653,6 +682,8 @@ function rpClose(){const layer=$('rp'),stage=$('rpStage');
   layer.addEventListener('animationend',once,{once:true});
   setTimeout(once,220);}
 $('rpClose').onclick=rpClose;
+$('rpPrev').onclick=()=>rpStep(-1);
+$('rpNext').onclick=()=>rpStep(1);
 $('rpPop').onclick=()=>{if(rpUrl)window.open(rpUrl,'kb-spider-replay');};
 // 回放页在 iframe 内, 其 keydown 不会冒泡到父页: 由回放页 postMessage 桥接 Esc 关闭浮层。
 addEventListener('message',e=>{if(e.source!==$('rpFrame').contentWindow)return;
@@ -663,6 +694,13 @@ $('modal').onclick=e=>{if(e.target===$('modal')||e.target===$('modalHead'))close
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;
   if($('modal').classList.contains('open'))closeSpider(),$('modal').classList.remove('open');
   else if($('rp').classList.contains('open'))rpClose();});   // Esc: 先关 SVG 弹层, 再关回放浮层
+// 回放浮层开着且焦点不在输入框/iframe 内: ←/→ 步进上一条/下一条(焦点在 iframe 里时
+// 按键属于回放页, 父页收不到——与 Esc 同理, 按钮始终是兜底入口)。
+document.addEventListener('keydown',e=>{
+  if((e.key==='ArrowLeft'||e.key==='ArrowRight')&&$('rp').classList.contains('open')){
+    const t=e.target,tag=t&&t.tagName;
+    if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||(t&&t.isContentEditable))return;
+    e.preventDefault();rpStep(e.key==='ArrowRight'?1:-1);}});
 // C3: "/" 聚焦检索流过滤框; 输入框/可编辑区内打字不劫持
 document.addEventListener('keydown',e=>{
   if(e.key!=='/'||e.ctrlKey||e.metaKey||e.altKey)return;

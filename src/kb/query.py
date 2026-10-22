@@ -3,7 +3,7 @@ import json
 import datetime as dt
 from collections import Counter
 from pathlib import Path
-from kb.entry import parse_entry
+from kb.entry import iter_entry_paths, parse_entry
 
 
 def _records(repo_root: Path):
@@ -67,7 +67,7 @@ def due_review(repo_root: Path, today: dt.date) -> list[dict]:
     """
     from kb.gate import REVIEW_CYCLE_DAYS
     out = []
-    for p in sorted((Path(repo_root) / "kb").rglob("*.md")):
+    for p in iter_entry_paths(repo_root):   # 发现规则唯一事实源(§42)
         e = parse_entry(p)
         rb = e.fm.get("review_by")
         if not rb and e.fm.get("status") == "accepted":
@@ -85,8 +85,7 @@ def due_review(repo_root: Path, today: dt.date) -> list[dict]:
 
 def needs_scope(repo_root: Path) -> list[dict]:
     out = []
-    kb = Path(repo_root) / "kb"
-    for p in sorted(kb.rglob("*.md")) if kb.exists() else []:
+    for p in iter_entry_paths(repo_root):   # 发现规则唯一事实源(§42)
         e = parse_entry(p)
         if "needs-scope-review" in (e.fm.get("tags") or []):
             out.append({"id": e.fm.get("id"), "title": e.fm.get("title"),

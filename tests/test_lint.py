@@ -234,3 +234,48 @@ def test_lint_absent_section_not_flagged(tmp_repo):
     _pitfall(tmp_repo, "kb-20261013-b8b8", "真实机制说明文字内容且长度足够避免短源门槛")
     msgs = lint_repo(tmp_repo)
     assert not any("placeholder" in m for m in msgs)
+
+
+# --- §42 第二十四轮: 条目发现规则唯一化, "进检索但免检"角落封死 ---
+def test_stray_entry_at_kb_root_is_flagged_and_excluded(tmp_repo):
+    """kb 根直下的带 id 散文件: lint 必须点名(失踪可发现), 且不再进 index
+    (修复前 rglob 全量扫入: 坏 type/坏 status 照样进检索, 逃过 lint 全部校验)。"""
+    from kb.index import _records
+    _put(tmp_repo, "kb/loose.md",
+         "---\nid: kb-20261013-c9c9\ntitle: 散文件\ntype: not-a-type\n"
+         "domain: [backend]\nscope: project\nstatus: approved\nconfidence: verified\n"
+         "created: 2026-10-13\nupdated: 2026-10-13\n---\n\n# 散文件\n\n正文。\n")
+    errs = lint_repo(tmp_repo, scope="project")
+    assert any("loose.md" in e and "散落的条目文件" in e for e in errs)
+    live, draft = _records(tmp_repo, "r")
+    assert [r["id"] for r in live + draft] == []   # 免检角落封死: 不进任何索引
+
+
+def test_all_readers_share_single_discovery_rule(tmp_repo):
+    """lint/index/gate/query 对"哪些文件是条目"必须给出同一集合(§42 结构性保证:
+    全部走 kb.entry.iter_entry_paths)。构造 契约内条目 + kb 根散文件 + 点目录
+    外仓文件 三者, 各读源可见集合必须一致。"""
+    from kb.entry import iter_entry_paths
+    from kb.gate import _find
+    from kb.index import _records
+    from kb.query import due_review
+    import datetime as dt
+    _put(tmp_repo, "kb/pitfall/frontend/a.md",
+         make_entry(id="kb-20261013-d1d1", scope="project", status="accepted",
+                    confidence="verified", severity="medium"))
+    _put(tmp_repo, "kb/loose.md",
+         make_entry(id="kb-20261013-e2e2", scope="project"))
+    _put(tmp_repo, "kb/.agent-kb/kb/pitfall/frontend/x.md",
+         make_entry(id="kb-20261013-f3f3", scope="stack"))
+    canon = {p.name for p in iter_entry_paths(tmp_repo)}
+    assert canon == {"a.md"}
+    assert {r["id"] for rs in _records(tmp_repo, "r") for r in rs} == {"kb-20261013-d1d1"}
+    assert _find(tmp_repo, "kb-20261013-d1d1").name == "a.md"
+    for bad_id in ("kb-20261013-e2e2", "kb-20261013-f3f3"):
+        try:
+            _find(tmp_repo, bad_id)
+            raise AssertionError(f"{bad_id} 不应可发现")
+        except FileNotFoundError:
+            pass
+    due = {d["id"] for d in due_review(tmp_repo, dt.date(2030, 1, 1))}
+    assert due == {"kb-20261013-d1d1"}   # 散文件/外仓条目同样不入待复核

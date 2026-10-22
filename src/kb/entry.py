@@ -71,3 +71,43 @@ def dump_entry(entry: Entry) -> str:
     fm_text = yaml.safe_dump(entry.fm, allow_unicode=True, sort_keys=False).strip()
     body = entry.body if entry.body.startswith("\n") else "\n" + entry.body
     return f"---\n{fm_text}\n---\n{body}"
+
+
+# kb 根生成物固定名, 不作为条目(唯一事实源; lint/index/gate/query 共用)
+GENERATED_NAMES = {"INDEX.md", "index.jsonl", "index.draft.jsonl"}
+
+
+def iter_entry_paths(repo_root) -> list[pathlib.Path]:
+    """条目文件发现的**唯一**规则(第二十四轮走查 §42)。
+
+    布局契约: 条目只住在 kb/<第一层目录=type>/<...>/<slug>.md; 点开头目录是
+    挂载的外仓(有自己的 kb 根和 lint), 不进父仓视野。
+
+    修复前 index/gate/query 用 `kb.rglob("*.md")` 全量扫, lint 却只走第一层目录
+    ——两套定义漂移出"kb 根直下散文件进 index(可被检索消费)却逃过 lint 全部
+    校验"的免检角落(坏 type/坏 status 照样进检索)。所有读写方一律走本函数,
+    契约漂移在结构上不可能; 契约外的带 id 散文件由 lint 显式报错(见 stray)。
+    """
+    kb = pathlib.Path(repo_root) / "kb"
+    if not kb.exists():
+        return []
+    out: list[pathlib.Path] = []
+    for d in sorted(p for p in kb.iterdir() if p.is_dir() and not p.name.startswith(".")):
+        for p in sorted(d.rglob("*.md")):
+            if p.name in GENERATED_NAMES:
+                continue
+            out.append(p)
+    return out
+
+
+def stray_entry_paths(repo_root) -> list[pathlib.Path]:
+    """布局契约外的"散落条目": kb 根直下的 *.md(非生成物)且带可解析 front-matter
+    id。它们被 iter_entry_paths 排除在检索外, 但带 id 说明是手滑放错位置的条目
+    (静默不可见比报错更糟), 由 lint 显式报出。只查 kb 根一层, 不下探点目录
+    (外仓自管)。
+    """
+    kb = pathlib.Path(repo_root) / "kb"
+    if not kb.exists():
+        return []
+    return [p for p in sorted(kb.glob("*.md"))
+            if p.name not in GENERATED_NAMES and parse_entry(p).fm.get("id")]

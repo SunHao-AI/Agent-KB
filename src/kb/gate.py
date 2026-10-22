@@ -5,7 +5,7 @@ import re
 import sys
 from pathlib import Path
 from kb.dedup import fingerprint, fingerprint_source, fingerprint_text
-from kb.entry import Entry, parse_entry, dump_entry
+from kb.entry import Entry, parse_entry, dump_entry, iter_entry_paths
 from kb.new_entry import create_entry
 from kb.taxonomy import load_taxonomy
 
@@ -50,11 +50,8 @@ def _draft_records(repo: Path) -> list[dict]:
     """现算 draft 查重候选: draft 只进 index.draft.jsonl(不进检索/live 池), 且刚
     `kb new` 出的 draft 连 draft 索引都未重建 → 查重必须直接扫源文件现算指纹。
     draft 池小(低频、单会话≤3条), 现算成本可忽略, 换来无"索引未重建"时序窗口。"""
-    kb = repo / "kb"
     out = []
-    for p in sorted(kb.rglob("*.md")) if kb.exists() else []:
-        if p.name in ("INDEX.md",):
-            continue
+    for p in iter_entry_paths(repo):   # 发现规则唯一事实源(§42)
         e = parse_entry(p)
         if e.fm.get("status") != "draft" or not e.fm.get("id"):
             continue
@@ -146,10 +143,7 @@ REVIEW_CYCLE_DAYS = 365
 
 
 def _find(repo, id: str) -> Path:
-    kb = Path(repo) / "kb"
-    for p in sorted(kb.rglob("*.md")) if kb.exists() else []:
-        if p.name in ("INDEX.md",):
-            continue
+    for p in iter_entry_paths(repo):   # 发现规则唯一事实源(§42)
         if parse_entry(p).fm.get("id") == id:
             return p
     raise FileNotFoundError(f"entry not found: {id}")

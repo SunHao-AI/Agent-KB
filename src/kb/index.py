@@ -3,7 +3,7 @@ import json
 import re
 from pathlib import Path
 from kb.dedup import fingerprint
-from kb.entry import parse_entry
+from kb.entry import iter_entry_paths, parse_entry
 
 # FR-3.4 keywords 派生(竞品 Mem0 "entity 信号"的零依赖本地化): agent 最自然的
 # 查询词往往是报错串/函数名/配置键, 它们只出现在正文。取三类高信息标识符,
@@ -53,11 +53,8 @@ def derive_keywords(body: str) -> list[str]:
 
 
 def _records(repo_root: Path, repo_name: str):
-    kb = Path(repo_root) / "kb"
     live, draft = [], []
-    if not kb.exists():
-        return live, draft
-    for p in sorted(kb.rglob("*.md")):
+    for p in iter_entry_paths(repo_root):   # 发现规则唯一事实源(§42): 与 lint 同集合
         e = parse_entry(p)
         fm = e.fm
         if not fm.get("id"):

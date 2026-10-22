@@ -5,12 +5,8 @@ import re
 import jsonschema
 from kb.dedup import (MIN_FP_LEN, fingerprint, fingerprint_source, h2_sections,
                       normalize)
-from kb.entry import parse_entry
+from kb.entry import iter_entry_paths, parse_entry, stray_entry_paths
 from kb.taxonomy import load_taxonomy, derive_schema
-
-
-# `kb index` 的生成物固定名, 不作为知识条目参与 lint
-_GENERATED_NAMES = {"INDEX.md", "index.jsonl", "index.draft.jsonl"}
 
 # 占位段检测用: 剥离 HTML 注释后判断段内容是否为空
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -36,16 +32,10 @@ def _placeholder_warnings(entry, sections: list[str]) -> list[str]:
 
 
 def _iter_entries(root: Path):
-    kb = Path(root) / "kb"
-    if not kb.exists():
-        return
-    # 只遍历 kb 根第一层条目目录(kb/<type>/)再向下 rglob, 不进入 kb 根下
-    # 挂载的子仓/子树(如 .agent-kb/), 避免扫入子仓生成物造成误报
-    for d in sorted(p for p in kb.iterdir() if p.is_dir() and not p.name.startswith(".")):
-        for p in sorted(d.rglob("*.md")):
-            if p.name in _GENERATED_NAMES:
-                continue
-            yield parse_entry(p)
+    # 条目发现唯一事实源(kb.entry.iter_entry_paths), 与 index/gate/query 同集合
+    # (§42): 修复前两套定义漂移, kb 根散文件"进 index 可检索却逃过 lint"。
+    for p in iter_entry_paths(root):
+        yield parse_entry(p)
 
 
 def lint_repo(repo_root: Path, scope: str = "project",
@@ -55,6 +45,12 @@ def lint_repo(repo_root: Path, scope: str = "project",
     validator = jsonschema.Draft202012Validator(schema)
     errors: list[str] = []
     entries = list(_iter_entries(repo_root))
+    # 布局契约: 带 id 的散文件住在 kb 根直下(条目契约只认 kb/<type>/...)——修复后
+    # 它们不再进 index/检索, 若不显式报错就变成"静默失踪"(比免检更糟), 必须点名
+    # (§42: 发现规则统一后散落条目从"进检索免检"翻转为"不可见", 两端都要堵)。
+    for p in stray_entry_paths(repo_root):
+        errors.append(f"{p.name}: 散落的条目文件(kb 根直下): 带 id 但不符合"
+                      f" kb/<type>/<domain>/<slug>.md 布局, 不进检索索引, 请移入条目目录")
     ids = {e.fm.get("id") for e in entries}
     id_counts = Counter(e.fm.get("id") for e in entries if e.fm.get("id"))
     for e in entries:

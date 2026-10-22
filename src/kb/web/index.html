@@ -623,7 +623,9 @@ async function openReplay(raw){
   rpLastTid=tid;                                     // 焦点归还锚定"最后播放的条目"(鼠标点击不一定移动焦点)
   $('rp').classList.remove('closing');               // 取消可能进行中的关闭动画
   $('rp').classList.add('open');rpLayout();
-  $('rpMeta').textContent=(raw.query||'-')+' · 连接蜘蛛会话…';
+  // 标题立即落 query(raw 本地就有), 不等握手——否则占位「▶ 回放」挂 ~2s 才换。
+  $('rpTitle').textContent='▶ '+(raw.query||'-');
+  $('rpMeta').textContent='连接蜘蛛会话…';
   // 换条目: 先卸旧 iframe(断上一会话的 SSE/回放循环, 否则透明期仍白跑), 再淡出+骨架,
   // 新会话首帧后 swapin 淡入。load 兜底 4s: 网络挂起时也不永久停在透明态。
   // load 监听只在实际 src 赋值前挂——about:blank 的延迟 load 事件不能误触发 swapIn。
@@ -643,7 +645,6 @@ async function openReplay(raw){
     $('rpFrame').addEventListener('load',rpSwapOnload,{once:true});
     setTimeout(()=>{if(rpSwapOnload)rpSwapIn();},4000);
     $('rpFrame').src=rpUrl;
-    $('rpTitle').textContent='▶ '+(raw.query||'-');
     $('rpMeta').textContent=`trace ${tid} · 自动重播·循环`;
     rpStepButtons();
   }catch(err){rpDetachSwap();rpClose();playSpider(Object.assign({},raw,{_replayErr:err.name==='AbortError'?'连接蜘蛛会话超时(10s)':err.message}));}

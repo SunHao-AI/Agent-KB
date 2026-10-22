@@ -123,7 +123,9 @@ def create_draft(repo, *, type: str, domain: str, title: str, body: str | None =
             cur.fm["severity"] = severity
         e.path.write_text(dump_entry(cur), encoding="utf-8")
         e = parse_entry(e.path)
-    return e
+    _reindex(repo)  # §44: 新建 draft 要进 index.draft.jsonl——get_entry/kb_get/related
+    return e        # 的底座 query._records 只读两个索引文件, 不重建则"create 返回
+                    # id → 立即 kb_get 读全文"报 not found, stat 也漏计 backlog
 
 
 _TRANSITIONS: dict[str, set[str]] = {
@@ -187,7 +189,9 @@ def update_draft(repo, id: str, *, title: str | None = None, body: str | None = 
         fm["tags"] = list(tags)
     if severity:
         fm["severity"] = severity
-    return _save(p, fm, cur_body, today or dt.date.today())
+    e = _save(p, fm, cur_body, today or dt.date.today())
+    _reindex(repo)  # §44: title/body/tags 都是 draft 索引列(summary/dedup_key 派生
+    return e        # 自它们), 滞留则 kb_get 返回旧文、去重指纹与面板展示全部失真
 
 
 def review(repo, id: str, to: str, today: dt.date | None = None, *,

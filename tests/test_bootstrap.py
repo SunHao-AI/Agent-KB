@@ -2,6 +2,7 @@ import json
 import pathlib
 
 import pytest
+from conftest import make_entry
 
 from kb.bootstrap import (
     _install_cmd,
@@ -104,6 +105,24 @@ def test_doctor_green_paths_on_prepared_layout(fake_layout, monkeypatch):
     assert by_name["kb lint"][0] == "PASS"
     # 未装门禁钩子/索引未建 → 只 WARN 不 FAIL
     assert doctor_exit_code(checks) == 0
+
+
+def test_doctor_index_fresh_uses_carrier_name(fake_layout, monkeypatch):
+    """§45 第二十七轮: index fresh 的 repo_name 必须与 `kb index` CLI 默认口径
+    一致(kb 载体目录名小写)。旧实现用业务仓根名(biz-repo), docs/kb 结构下与
+    index.jsonl 现值(docs)恒不等 → 刚 kb index 过的仓 doctor 仍恒报 stale,
+    且按建议重建也永远消不掉。主仓 kb 恰好载体=仓根同名, 自测掩盖了漂移。"""
+    from kb.index import build_indexes
+    biz, ak = fake_layout
+    (biz / "docs" / "kb" / "pitfall" / "backend" / "a.md").write_text(
+        make_entry(id="kb-20261022-a1a1", status="accepted", confidence="verified"),
+        encoding="utf-8")
+    build_indexes(biz / "docs", repo_name="docs")   # 与 CLI 默认口径一致的构建
+    from kb import bootstrap
+    monkeypatch.setattr(bootstrap, "_mod_ok", lambda *a, **k: True)
+    checks = doctor(biz / "docs", agent_kb=ak)
+    by_name = {n: (lvl, msg) for lvl, n, msg in checks}
+    assert by_name["index fresh"][0] == "PASS", by_name["index fresh"]
 
 
 def test_doctor_abs_path_mcp_command_warns(fake_layout):

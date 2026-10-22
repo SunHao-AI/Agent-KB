@@ -1292,6 +1292,65 @@ scope 字段), `_mk` helper 补 title 参数, pytest **309 全绿**; 探针复�
 按红线追加"新发现"段(仓内状态流转变体 + 判据补强 + 元教训), 不新建。本轮 accepted
 自审 0 条(更新既有条目不占额)。
 
+## §44 第二十六轮走查: D-27 判据全仓普查——写路径与派生索引的完整对账(2026-10-22)
+
+**主题**: 落实上轮元教训——不再等同类缺陷自己撞上来, 用 D-27 判据("改变派生索引
+所索引的字段值的写路径必须重建")主动普查。方法: 先列消费方读哪些文件
+(`query._records` 读双索引 / `search._load` 读 live / `gate._index_records` 读 live),
+再反向列改这些事实源的写路径, 两表相减找漏网。
+
+**D-28 普查命中 4 处同类洞(实锤+修复, 中高)**:
+- `create_draft`: **最尖锐**——`get_entry`(kb_get/kb_show 底座)只读两个索引文件,
+  探针实测"kb_create 返回 id → 立即 get_entry"返回 not found, `stat` 的
+  total/draft_backlog 双双 0(漏计)。MCP 工具面 create→get 基本动作对自己刚建的
+  条目失效。
+- `update_draft`: title/body 改后 draft 索引滞留旧值(summary/dedup_key 派生自它们,
+  去重指纹与展示失真)。
+- `promote`: 打 `needs-scope-review`/`promote-to:*` 标签后 live 索引 tags 滞留,
+  kb_search tag 过滤/面板列仍见旧标签。
+- CLI `kb new` 非门控路径: 建 proposed(进 live 池)不重建, `kb new` 后立即 `kb show`
+  同样 not found。
+全部挂 `_reindex` 收口; 普查后写路径↔索引消费方**完整对账无遗漏**。
+
+**回归**: test_gate_write.py +3(create 即时可读+stat 入账 / update 刷新 draft 索引 /
+promote 刷新 live tags), pytest **312 全绿**; 探针复跑三连全正。
+
+**沉淀**: 继续追加 `kb-20261022-6fd6`"新发现"段(普查落地记录 + 普查方法本身:
+消费方读的文件 × 改这些事实源的写路径, 两表相减即漏网)。元教训闭环示范: §43
+写下"别只修触发处"→ §44 照做并全中, 判据可执行性得到验证。
+
+**探针插曲**: promote 误从 gate 导入(实际在 promote.py)、`to_scope` 关键字笔误、
+walrus 误用于 mkdir 链——均为探针脚本自身问题, 自纠后一次跑通。
+
+## §45 第二十七轮走查: 接入面 bootstrap——doctor index fresh 与生产端口径漂移(2026-10-22)
+
+**主题**: 26 轮未碰的第一触点面(`kb init`/`kb doctor`)。init 侧读码通过:
+去绝对路径的相对解释器、kb_dir 骨架、submodule 降级、仓外 --agent-kb 拒写、
+token 只进用户级 conf——均与 FR 一致; `.mcp.json --repo-name` 取业务仓名是设计内
+(trace 的 caller 归组语义), 与 index.jsonl 的层来源名(载体目录)是两个不同概念。
+
+**D-29 doctor index fresh 恒误报 stale(实锤+修复, 中)**:
+- 探针构造业务仓标准结构 `myproject/docs/kb/`(git init): `kb index --repo docs`
+  按 CLI 默认口径写 repo="docs", 但 doctor 的 fresh 检查用 `biz.resolve().name`
+  (=myproject)重算期望 → **恒 WARN stale**; 且按 WARN 建议的命令重建(仍是载体名
+  口径)永远消不掉——"照建议做完还是红"的死循环。接入第一天就打击信任。
+- 隐蔽性: 主仓 kb 恰好载体=仓根(两口径同名), 开发自测全绿; 既有 doctor 测试
+  恰好都不断言 index fresh 项——面覆盖盲区与主仓同构盲区叠加。
+- 修复: doctor 取名表达式改与 CLI 默认口径一致(`kb_base.resolve().name.lower()`),
+  注释锚住"必须与 kb index CLI 默认口径一致"。
+
+**通过面**: doctor 其余各项(venv/门禁依赖/submodule 悬空/lint/hook 新鲜度/.mcp.json
+解析+绝对路径告警)逻辑与级别恰当; `_biz_root` git toplevel 回退链合理; 面板矩阵
+by_source 按层序归类不涉 repo 名比对, 不受影响。
+
+**回归**: test_bootstrap.py +1(CLI 口径构建后 doctor 必须 PASS, fixture 复用既有
+fake_layout——它恰好就是业务仓 docs/kb 结构, 此前没人用它测过 index fresh),
+pytest **313 全绿**; 探针复跑 doctor PASS, 主仓两态(自身/docs)均 up to date。
+
+**沉淀**: 命中 `kb-20261022-8b8f`(同概念两套规则, 同族)——追加"新发现"段: 漂移
+不只发生在"集合的枚举", 还发生在**比对所用的参数**上; `check(A, name=X)` 与
+`build(A, name=Y)` 只要 X/Y 来自不同表达式即缺陷, 哪怕 X==Y 碰巧成立。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

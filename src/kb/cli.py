@@ -201,6 +201,10 @@ def _dispatch(argv: list[str] | None = None) -> int:
                 cur = parse_entry(e.path)
                 cur.fm["severity"] = args.severity
                 e.path.write_text(dump_entry(cur), encoding="utf-8")
+            # §44: 非门控路径建的是 proposed(进 live 池), 与 create_draft 同理须重建,
+            # 否则 `kb new` 返回路径后立刻 `kb show <id>` 报 not found
+            from kb.gate import _reindex
+            _reindex(repo)
         print(e.path)
         return 0
     if args.cmd == "review":

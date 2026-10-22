@@ -170,6 +170,44 @@ def test_set_scope_refreshes_index_scope_field(tmp_repo):
     assert rec and rec[0]["scope"] == "stack"
 
 
+# --- §44 第二十六轮: D-27 判据全仓普查补齐剩余写路径 ---
+def test_create_draft_immediately_readable_by_get_entry(tmp_repo):
+    """kb_create 返回 id 后立刻 kb_get: get_entry 的底座 query._records 只读两个
+    索引文件, create_draft 不重建则刚建的 draft 读全文报 not found、stat 漏计。"""
+    from kb.gate import create_draft
+    from kb.query import get_entry, stat
+    e = create_draft(tmp_repo, type="pitfall", domain="frontend",
+                     title="刚沉淀的草稿", body="## 根因\n\n机制。\n", today=TODAY)
+    text = get_entry(tmp_repo, e.fm["id"])
+    assert text and "刚沉淀的草稿" in text
+    assert stat(tmp_repo)["draft_backlog"] == 1
+
+
+def test_update_draft_refreshes_draft_index(tmp_repo):
+    """title/body 是 draft 索引列(summary 派生自 body): 不重建则 kb_get 面板/去重
+    指纹全部滞留旧值。"""
+    import json
+    _mk(tmp_repo, "kb-20261014-c1c1", title="旧标题")
+    update_draft(tmp_repo, "kb-20261014-c1c1", title="新标题", today=TODAY)
+    rec = [json.loads(x) for x in
+           (tmp_repo / "kb" / "index.draft.jsonl").read_text(encoding="utf-8").splitlines()
+           if x.strip()]
+    assert rec and rec[0]["title"] == "新标题"
+
+
+def test_promote_refreshes_live_index_tags(tmp_repo):
+    """tags 是 index.jsonl 列(kb_search tag 过滤/面板展示): promote 打建议标签后
+    不重建则消费面仍见旧标签。"""
+    import json
+    from kb.promote import promote
+    _mk(tmp_repo, "kb-20261014-c2c2", status="accepted", conf="verified")
+    promote(tmp_repo, "kb-20261014-c2c2", "stack", today=TODAY)
+    rec = [json.loads(x) for x in
+           (tmp_repo / "kb" / "index.jsonl").read_text(encoding="utf-8").splitlines()
+           if x.strip()]
+    assert rec and "needs-scope-review" in rec[0]["tags"]
+
+
 def test_set_scope_strips_needs_scope_review(tmp_repo):
     _mk(tmp_repo, "kb-20261014-eeee", tags=["needs-scope-review", "vite"])
     e = set_scope(tmp_repo, "kb-20261014-eeee", "project", today=TODAY)

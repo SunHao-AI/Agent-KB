@@ -1,7 +1,7 @@
 from __future__ import annotations
 import datetime as dt
 from kb.entry import parse_entry
-from kb.gate import _find, _save
+from kb.gate import _find, _save, _reindex
 
 # 建议标签: `promoted` 标记"已被建议上提", `promote-to:<scope>` 记录建议目标。
 # 用 tags 承载(而非新 front-matter 字段): tags 是 schema 自由数组, 不动派生 schema。
@@ -34,4 +34,5 @@ def promote(repo_root, id: str, to: str, today: dt.date | None = None) -> dict:
         tags.append(PROMOTE_TAG)
     fm["tags"] = tags
     _save(p, fm, e.body, today)
-    return parse_entry(p).fm
+    _reindex(repo_root)  # §44: tags 是 index.jsonl 列(MCP kb_search 过滤/面板列展示),
+    return parse_entry(p).fm  # 滞留则刚建议的条目在消费面仍显示旧标签

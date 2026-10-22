@@ -240,7 +240,11 @@ def doctor(repo: Path, agent_kb: Path | None = None,
             add(("WARN", "submodule .agent-kb", "悬空指针: git submodule update --init"))
 
     # index 漂移(生成物与正文一致性); kb_base = kb 载体目录(--repo 入参本身)
-    repo_name = biz.resolve().name.lower()
+    # repo_name 必须与 `kb index` CLI 默认口径一致(载体目录名小写): 第二十七轮
+    # 走查实测旧实现用业务仓根名, docs/kb 结构下与 index.jsonl 现值恒不等 →
+    # index fresh 恒 WARN, 且按 WARN 建议的 kb index 重建(载体名口径)永远消不掉
+    # 误报。主仓 kb 恰好载体=仓根同名, 自测全绿掩盖了漂移。
+    repo_name = kb_base.resolve().name.lower()
     try:
         ok = check_indexes(kb_base, repo_name=repo_name)
         add(("PASS" if ok else "WARN", "index fresh",

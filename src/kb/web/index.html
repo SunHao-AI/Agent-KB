@@ -193,8 +193,8 @@
   <div id="spiderHint" style="color:var(--mu);font-size:12px;margin-top:8px">点击任意处关闭</div></div>
 <div id="rp"><div id="rpBox">
   <div id="rpBar"><span id="rpTitle">▶ 回放</span><span id="rpMeta"></span>
-    <button id="rpPrev" title="上一条目(←)" disabled>◀</button>
-    <button id="rpNext" title="下一条目(→)" disabled>▶</button>
+    <button id="rpPrev" title="本页上一条(← / 回放内 Shift+←)" disabled>◀</button>
+    <button id="rpNext" title="本页下一条(→ / 回放内 Shift+→)" disabled>▶</button>
     <button id="rpPop" title="在新标签页整页打开">⤢ 新标签</button>
     <button id="rpClose" title="关闭回放(Esc)">✕ 关闭</button></div>
   <div id="rpStage"><iframe id="rpFrame" title="蜘蛛回放" src="about:blank"></iframe></div></div></div>
@@ -312,7 +312,7 @@ function itemDom(ev,isNew){
   const d=document.createElement('div');d.className='feed-item'+(isNew?' new':'');
   const hits=ev.returned||[],reads=ev.read||[],tid=ev.trace_id||'';
   d.dataset.tid=tid;d.raw=ev;d.tabIndex=0;d.setAttribute('role','button');
-  d.setAttribute('aria-label','打开回放: '+(ev.query||tid));
+  d.setAttribute('aria-label',(hits.length?'打开回放: ':'重放这次检索(零命中): ')+(ev.query||tid));
   d.dataset.st=hits.length?'hit':'zero';
   if(reads.length)d.dataset.rd='1';
   const lab=id=>`<span title="${esc((hitTitle(ev,id)||'')+' · '+id)}">${esc(feedLabel(ev,id))}</span>`;
@@ -606,10 +606,15 @@ let spiderReady=false,rpUrl='',rpLastFocus=null,rpLastTid=null,rpSwapOnload=null
 // 可点检索流)。视口不足以兑现该保证时(极窄)退回居中大面板(rp-center, feed 被盖属预期)。
 // 纯 CSS 媒体查询无法与 min()/vw 表达式精确联动, 用实测视口宽判定, resize 时重算。
 function rpLayout(){const b=document.body.classList;
-  if(!$('rp').classList.contains('open')){b.remove('rp-wide','rp-center');return;}
+  if(!$('rp').classList.contains('open')){b.remove('rp-wide','rp-center');mainInert(false);return;}
   const panelW=Math.min(1440,innerWidth*.8,innerWidth-336);
   b.toggle('rp-wide',innerWidth-panelW-28>=300);
-  b.toggle('rp-center',innerWidth-panelW-28<300);}
+  const center=innerWidth-panelW-28<300;
+  b.toggle('rp-center',center);
+  // rp-center: 检索流被遮罩盖住 → inert 让它既不可聚焦也不可点(修遮罩下键盘聚焦
+  // 与 pointer-events:none 的点击穿透)。rp-wide: 左列是有意保留的交互区, 不拦。
+  mainInert(center);}
+function mainInert(on){const m=document.querySelector('main');if(m)m.inert=on;}
 addEventListener('resize',rpLayout);
 async function openReplay(raw){
   const tid=raw.trace_id||'';if(!tid){playSpider(raw);return;}
@@ -685,9 +690,12 @@ $('rpClose').onclick=rpClose;
 $('rpPrev').onclick=()=>rpStep(-1);
 $('rpNext').onclick=()=>rpStep(1);
 $('rpPop').onclick=()=>{if(rpUrl)window.open(rpUrl,'kb-spider-replay');};
-// 回放页在 iframe 内, 其 keydown 不会冒泡到父页: 由回放页 postMessage 桥接 Esc 关闭浮层。
+// 回放页在 iframe 内, 其 keydown 不会冒泡到父页: 由回放页 postMessage 桥接 Esc 关闭浮层;
+// Shift+←/→ 桥接上一条/下一条(裸 ←/→ 在回放页内是快进/快退, 语义保留给回放页自己)。
 addEventListener('message',e=>{if(e.source!==$('rpFrame').contentWindow)return;
-  if(e.data&&e.data.type==='spider-replay-escape'&&$('rp').classList.contains('open'))rpClose();});
+  if(!e.data||!$('rp').classList.contains('open'))return;
+  if(e.data.type==='spider-replay-escape')rpClose();
+  else if(e.data.type==='spider-replay-step'&&e.data.dir)rpStep(e.data.dir>0?1:-1);});
 // (B1) 遮罩改 pointer-events:none 后不再接收点击, 原"点遮罩空白关闭"取消;
 // 关闭走面板头 ✕ 或 Esc, 遮罩区域的点击透到下层页面(检索流保持可点)。
 $('modal').onclick=e=>{if(e.target===$('modal')||e.target===$('modalHead'))closeSpider(),$('modal').classList.remove('open');};

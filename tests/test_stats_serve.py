@@ -615,3 +615,55 @@ def test_userconf_legacy_corrupted_file_degrades_empty(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text('[serve]\ntoken = "a"b"\nurl = "http://h"\n', encoding="utf-8")
     assert userconf.serve_target(p) == (None, None)
+
+
+# ---- launcher(kb web 启动器): 拼 URL 必须百分号编码(§49) ------------------
+
+def _qs_of(url: str) -> dict:
+    """浏览器 URLSearchParams 同语义读参: # 起是 fragment 不进 query, + 解空格。"""
+    from urllib.parse import parse_qs
+    q = url.split("?", 1)[1].split("#", 1)[0] if "?" in url else ""
+    return {k: v[-1] for k, v in parse_qs(q, keep_blank_values=True).items()}
+
+
+def test_open_panel_team_token_special_chars_survive(monkeypatch):
+    """§49 实锤: 旧 open_panel 用 f-string 拼 query, token 含 `+`(base64 常见)
+    被前端解成空格、含 `&` 被劈成两参数、含 `#` 整段降为 fragment——打开即
+    401 且静默。修复后值一律 percent-encode, 往返保真。"""
+    from kb import launcher, userconf
+    tok = "s3cr+tK=&x#y"
+    monkeypatch.setattr(userconf, "serve_target",
+                        lambda path=None: ("http://kb.internal:4320", tok))
+    monkeypatch.setattr(launcher, "probe_http",
+                        lambda base, token=None, timeout=1.5: True)
+    url, mode = launcher.open_panel(4320, caller=None, no_browser=True)
+    assert mode.startswith("team")
+    assert _qs_of(url).get("token") == tok
+
+
+def test_open_panel_degraded_serve_url_with_fragment_survives(monkeypatch):
+    """降级横幅的 serve_url 值本身是 URL(第二十九轮后 `#` 已可合法配置):
+    不编码则 `#` 起整段变 fragment, 横幅显示的地址被截残。"""
+    from kb import launcher, userconf
+    team = "http://kb.internal:4320/#board"
+    monkeypatch.setattr(userconf, "serve_target",
+                        lambda path=None: (team, "t1"))
+    monkeypatch.setattr(launcher, "probe_http",
+                        lambda base, token=None, timeout=1.5: False)
+    monkeypatch.setattr(launcher, "probe_port",
+                        lambda port, host="127.0.0.1", timeout=0.4: True)
+    url, mode = launcher.open_panel(4320, caller="my project", no_browser=True)
+    assert mode == "local-degraded"
+    q = _qs_of(url)
+    assert q.get("serve_url") == team
+    assert q.get("caller") == "my project"   # 含空格的项目名同样保真
+
+
+def test_join_qs_keeps_base_query_and_drops_fragment():
+    """base 可配成带 query/fragment 的 URL: 原 query 原样保留在前, 新参数编码
+    追加其后, fragment 丢弃(面板状态全走 query, 留着会挡住参数)。"""
+    from kb.launcher import _join_qs
+    out = _join_qs("http://h/base?a=1", [("token", "x y#z")])
+    assert out == "http://h/base?a=1&token=x%20y%23z"
+    out2 = _join_qs("http://h/base#frag", [("caller", "*")])
+    assert out2 == "http://h/base?caller=%2A"      # 前端 URLSearchParams 解回 '*'

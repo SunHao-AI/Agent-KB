@@ -17,6 +17,26 @@ import sys
 import time
 import webbrowser
 from pathlib import Path
+from urllib.parse import quote, urlsplit, urlunsplit
+
+
+def _join_qs(base: str, params: list[tuple[str, str]]) -> str:
+    """把 params 以 query 形式并入 base(**值一律百分号编码**, 第三十一轮走查
+    §49)。前端用 URLSearchParams 读参, 未编码的值遇 `+` 解成空格、遇 `&` 被
+    劈成两个参数、遇 `#` 整段降为 fragment——token 里三种字符都合法(第二十九
+    轮刚让 `#` 能合法进 config.toml), 拼出的 URL 打开即 401/参数丢失且**静默**。
+
+    走 urlsplit/urlunsplit 而非字符串拼接: base(团队地址, 用户可配)自身可带
+    query/fragment(`…/#board` 现已合法), 旧拼法 `base + "?x=…"` 会把新参数
+    落进 fragment 全部丢失。base 原有 query 不解码不重排(原样保真), 新参数
+    追加其后; fragment 丢弃——面板状态全走 query, 保留 fragment 会挡住参数。
+    safe 收空: `*`(联邦视图)编码后 URLSearchParams 仍解回 `*`, 不影响判断。"""
+    if not params:
+        return base
+    sp = urlsplit(base)
+    tail = "&".join(f"{quote(k, safe='')}={quote(str(v), safe='')}" for k, v in params)
+    query = f"{sp.query}&{tail}" if sp.query else tail
+    return urlunsplit((sp.scheme, sp.netloc, sp.path, query, ""))
 
 from kb import trace as kbtrace
 
@@ -90,13 +110,15 @@ def open_panel(port: int = 4320, *, repo: Path | None = None, caller: str | None
     resolved = infer_caller() if caller == "" else caller
     if all_projects:
         resolved = None
-    suffix = "?caller=*" if all_projects else (f"?caller={resolved}" if resolved else "")
+    params: list[tuple[str, str]] = ([("caller", "*")] if all_projects
+                                     else ([("caller", resolved)] if resolved else []))
     team_url, team_token = serve_target()
     if team_url and probe_http(team_url, team_token):
         tok = team_token or token
-        url = team_url.rstrip("/") + "/" + suffix
+        team_params = list(params)
         if tok:
-            url += ("&" if "?" in url else "?") + f"token={tok}"
+            team_params.append(("token", tok))
+        url = _join_qs(team_url.rstrip("/") + "/", team_params)
         if not no_browser:
             webbrowser.open(url)
         return url, f"team: {team_url}"
@@ -110,9 +132,10 @@ def open_panel(port: int = 4320, *, repo: Path | None = None, caller: str | None
                     f"kb serve 拉起失败: 127.0.0.1:{port} 等待 {wait_sec}s 无响应; "
                     f"可手动运行 kb serve --repo {root} 查看报错")
             time.sleep(0.25)
-    url = f"http://127.0.0.1:{port}/{suffix}"
+    local_params = list(params)
     if degraded:  # 前端据 degraded=1 挂横幅: "已配置团队实例但不可达"(FR-2.5 禁演"没数据")
-        url += ("&" if "?" in url else "?") + "degraded=1&serve_url=" + team_url
+        local_params += [("degraded", "1"), ("serve_url", team_url)]
+    url = _join_qs(f"http://127.0.0.1:{port}/", local_params)
     if not no_browser:
         webbrowser.open(url)
     return url, "local-degraded" if degraded else "local"

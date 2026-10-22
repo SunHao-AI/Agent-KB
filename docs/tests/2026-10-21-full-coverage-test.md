@@ -1456,6 +1456,40 @@ id 是 `secrets.token_hex(2)` 抽完直接落盘、零校验。
 问"写入点谁在强制它"; 靠"概率不撞"或"事后 lint"的键都是缺陷; 加宽键降概率
 不能替代写入点校验。
 
+---
+
+## §49 第三十一轮: launcher(kb web)拼 URL 面(编解码对判据第二形态)
+
+**选题**: launcher.py 是观测面最后一块未走查的拼图(FR-2.5 发现链: 团队探活/
+降级横幅/代拉起)。读码即疑: open_panel 的 URL 全靠 f-string 拼接、零百分号
+编码, 而消费端是浏览器 URLSearchParams——与第二十九轮 userconf 完全同构的
+"写读各自为政"。
+
+**D-36 query 值不编码, 特殊字符静默损坏(实锤+修复, 中)**:
+- 探针四例全中: token 含 `+` → 前端解成空格(`s3cr+tK=`→`s3cr tK=`, 面板全
+  401); 含 `&` → 劈成两参数(token=`a` + 野生 `b=c`); 含 `#` → 整段降为
+  fragment(token=`a`); 降级横幅 serve_url=`…/#board` → 横幅地址截残。且
+  第二十九轮刚让 `#` 能合法进 config.toml——**同一份值流经的每一对编解码
+  边界都要各自成立**, 文件侧修好不等于 URL 侧通。
+- 附带洞: team_url 自身可带 query/fragment, 旧拼法把新参数落进 fragment
+  全丢。修复: `_join_qs` 走 urlsplit/urlunsplit, 原 query 原样保留、新参数
+  `quote(v, safe='')` 追加、fragment 丢弃(面板状态全走 query)。
+- 甄别为设计内: 降级链本机 serve 由自己拉起不带 token(`kb web` 无 token
+  参数), 非缺陷不修。
+
+**通过面**: 同文件 grep 无其他 query 拼接点; 前端 apiUrl(callerParam/stream)
+拼的都是已解码再 encodeURIComponent 的值, 链路语义正确(232/233/376 行)。
+
+**回归**: test_stats_serve.py +3(团队链 token 含 `+&=#` 往返/降级链
+serve_url 含 # + caller 含空格往返/_join_qs 边界), pytest **326 全绿**;
+ruff F,E9 通过。探针自纠一处: 首版端到端断言把"降级链无 token"误判为缺陷,
+读 CLI 面后确认设计内。
+
+**沉淀**: 命中 `kb-20261023-c769`(编解码对契约, 同判据)——追加"新发现"段:
+URL query 是同判据的第二形态, 读侧规则更严(浏览器语义); 自检 = 含全部保留
+字符的值跑 `parse_qs == 原值`, 且解析器必须与真实消费端同语义(# 截
+fragment、+ 解空格), 否则验证脚本自己就把真损坏判成 OK。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

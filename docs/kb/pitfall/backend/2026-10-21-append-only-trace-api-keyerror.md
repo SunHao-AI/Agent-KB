@@ -10,7 +10,7 @@ scope: project
 status: accepted
 confidence: verified
 created: '2026-10-21'
-updated: '2026-10-21'
+updated: '2026-10-22'
 severity: medium
 verified_by: agent
 verification:
@@ -36,3 +36,13 @@ verification:
 ## 教训
 
 对 append-only 事件账本, 读侧必须按"最稀疏的历史形态"防御, 写方当前字段齐全不构成读方假设; 且 API 线程未捕获异常的表现是断连而非 500, 排障时浏览器看不到真因, 必须回看服务端 stderr/日志。
+
+## 新发现(2026-10-22 第九轮走查)
+
+同根因链再次踩中, 且这次命中**仿真脚本常规产出形态**: 零命中层的 layer 只记
+`repo/scanned/rejected` 三键、**整键缺 `matched`**(不是 matched 内部缺子键),
+`to_record` 裸取 `layer["matched"]` → 桥内 `internal: KeyError: 'matched'` →
+面板降级 SVG。此前只防了 `m["title"]` 与 `rejected` 子键, 漏了 `matched` 整键——
+说明"稀疏形态清单"必须以**写侧真实产出矩阵**(零命中/全淘汰层正是最常见记录)为准盘点,
+不能只按已知踩坑点逐个补。修复 `layer.get("matched") or []` +
+回归 `test_zero_hit_layer_without_matched_key`。

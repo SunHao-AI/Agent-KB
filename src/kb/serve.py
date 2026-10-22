@@ -109,15 +109,30 @@ class SpiderBridge:
                 self._ready = False
         return self._ready
 
+    def _alive(self) -> bool:
+        """桥子进程存活(未 spawn 或已退出都算不存活; 测试注入的假桥无 .p 视为存活)。"""
+        p = getattr(self._mcp, "p", None)
+        return self._mcp is not None and (p is None or p.poll() is None)
+
     def replay_url(self, record: dict, tid: str) -> str:
         with self._lock:
+            if self._urls and not self._alive():
+                self._urls.clear()   # 桥进程死过: 其会话 URL 全指向死进程, 一并作废
             if tid in self._urls:
                 self._urls.move_to_end(tid)
                 return self._urls[tid][1]
-            if self._dead:
+            # _dead 只对"起桥前的依赖缺失"永久短路(_mcp 仍 None); 运行期桥进程死亡
+            # (被杀/崩溃→管道写入 [Errno 22])不是配置问题, 清引用下次自动重生。
+            if self._dead and self._mcp is None:
                 raise RuntimeError(self._dead)
             try:
-                if self._mcp is None:
+                if not self._alive():
+                    if self._mcp is not None:
+                        try:
+                            self._mcp.close()
+                        except OSError:
+                            pass
+                        self._mcp = None
                     from kb.spider_live import SpiderMcp, find_spider_home
                     self._mcp = SpiderMcp(find_spider_home())
                 res = self._mcp.tool("spider_import_session", {"record": record})
@@ -271,8 +286,20 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(ev, dict) or ev.get("kind") not in ("search", "get"):
             self._json({"error": "kind must be search|get"}, 400)
             return
-        flat = json.dumps(ev, ensure_ascii=False).lower()
-        if any(f'"{k}"' in flat for k in ("body", "content", "text")):
+        # 红线延伸: ingest 口拒收"正文键名"(PRD: 正文键名拒收, 与 CI 同口径)。
+        # 只递归查 dict 键名, 不查值——早期实现对整坨 JSON 扫 "content"/"text"/"body"
+        # 子串, 把值也扫了: query="content" 这类合法检索词序列化成 "query": "content"
+        # 含 "content" → 误判 400, 叠加客户端 _post_ingest 静默吞异常, 团队账本
+        # 永久缺该事件且无告警(第十轮走查实测)。
+        def _has_body_key(o) -> bool:
+            if isinstance(o, dict):
+                return any((isinstance(k, str) and k.lower() in ("body", "content", "text"))
+                           or _has_body_key(v) for k, v in o.items())
+            if isinstance(o, list):
+                return any(_has_body_key(x) for x in o)
+            return False
+
+        if _has_body_key(ev):
             self._json({"error": "body/content keys not allowed"}, 400)
             return
         key = (ev.get("kind"), ev.get("trace_id"), ev.get("id"), ev.get("ts"))

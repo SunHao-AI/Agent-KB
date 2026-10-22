@@ -718,6 +718,71 @@ KPI 0 次, 无 JS 报错。注: 合法窗口零数据与非法 caller 零数据�
 **自动化方法论补充**: `browser_press_key` 对空格产生的 `keydown.key` 为空串——键盘逻辑涉及
 非字符键/空格时, 用页内合成 `new KeyboardEvent('keydown',{key:' '})` 验证产品逻辑, 勿信自动化键值。
 
+## §27 第九轮走查: 握手修复回归 + 桥进程死亡韧性(2026-10-22)
+
+**主题**: 回归当日三笔回放握手修复(`d8cbf37` 标题即时落位 / `9961be3` 冷桥 20s+分段提示 /
+`f430132` 代次守卫), 外加桥进程生命周期韧性。沙箱 4321, 探针 `rpSeq/rpAbort/20000/rpEverReady`
+全在 served HTML。
+
+**握手修复回归(全通过)**:
+- W-R1 冷桥首导: 杀 node 桥+刷新页(rpEverReady 复位)→ 点击后 T0 同步读
+  `meta=连接蜘蛛会话(首次拉起约十余秒)…`、`title=▶ <query>` 即时落位 ✅(注意: 导出快时
+  完成文案会覆盖提示, 断言必须 click 同 evaluate 内同步读)。
+- W-R2 连点竞态: 冷桥下 400ms 间隔三连点 A→B→C, T0 显 C 骨架+冷桥提示, 终态
+  `title/meta/src` 全为 C、不降级、无误关 ✅——abort+seq 守卫真正丢弃在途响应
+  (修复前迟到响应会把 src 覆盖回旧会话/迟到的失败会关掉用户正看着的浮层)。
+- W-R3 步进 ◀▶: 按钮 disabled 边界正确(首条 prev 禁/末条 next 禁), Next/Prev 就地换
+  trace+标题同步 ✅。按钮态在握手成功后才刷新(rpStepButtons 在成功尾部), 属设计内。
+- W-R4 握手中关闭: open→立即 ✕, rpClose 的 `rpSeq++/abort` 作废在途握手, 8s 后
+  rp 关、modal 不开、frame=about:blank(迟到响应不复活 UI)✅。
+
+**发现并修复 2 个真实缺陷**:
+
+| # | 症状 | 根因 | 修复 | 验证 |
+|---|------|------|------|------|
+| D-5 | 桥进程运行中途死亡(杀/崩)后, serve **余生**所有回放立即降级 SVG, 报 `[Errno 22] Invalid argument`, 重启 serve 才恢复 | `SpiderBridge._dead` 把"配置缺失永久短路"与"运行期进程死亡"混为一谈: 死管道写入抛 OSError→永久拉黑; 且 `_urls` 缓存的 previewUrl 指向死进程端口仍会命中返回 | `_dead` 仅在 `_mcp is None`(从未起桥成功)时短路; `p.poll()` 探活, 死桥 close+置 None 重 spawn, `_urls` 一并作废 | 浏览器实测杀桥→自动重连新桥(新 session/新端口, 无降级)×2 tid; 回归 `test_api_spider_revives_after_bridge_process_death` |
+| D-6 | 零命中层若整键缺 `matched`(仿真脚本常规产出: 只记 repo/scanned/rejected), 点回放降级 SVG 报 `internal: KeyError: 'matched'` | `to_record` 裸取 `layer["matched"]`——D-4 同族漏网点, 这次漏的是**整键**而非子键 | `layer.get("matched") or []` | t-pg-41 实测修复后词墙浮层正常(0 命中短轴); 回归 `test_zero_hit_layer_without_matched_key` |
+
+**沉淀**: `kb-20261022-66cc`(D-5 根因独立成条, accepted/verified/agent 留痕);
+D-6 按红线并入既有条目 `kb-20261021-1b60`"新发现"段(同根因链不新建), index 重建无漂移。
+
+**过程插曲(非缺陷)**: ① 冷桥首导 12s+ 令 browser_click 工具 60s 超时连带页面关闭——
+改用 evaluate 内 `it.click()` 同步触发可绕; ② 步进钮一度疑似反转, 实为握手未完成时
+`rpStepButtons` 尚未刷新+我误点两条目竞态, 读源码后按 tid 唯一性(0 重复)与终态复验澄清;
+③ 控制台 7 条 ERR_CONNECTION_RESET/REFUSED 全为我杀桥/重启 serve 的预期噪音。
+
+**回归**: pytest **282 全绿**(+2 新测试); 走查全程 0 未捕获 JS 异常。
+
+## §28 第十轮走查: ingest 通道(2026-10-22)
+
+**主题**: 团队态 ingest 上报口(带 token serve 4322 + 真实客户端代码路径中继)。W22 曾以
+"合法/带 content 键/幂等"三点通过, 本轮把请求形态扩展后攻破红线实现。
+
+**探针矩阵(API 级 + 落盘差分 + E2E)**:
+- 幂等基线: 同事件重发 deduped ✅; **同 trace 换天 get 各入账一笔 = 正确语义**(每次读
+  各记一笔, ts 是事件身份)——我初设期望"仍幂等"是错的, **D-8 撤回**;
+- 键名红线: list 型 content 键拒 ✅、`Content` 大写键拒 ✅;
+- **值误杀(D-7, 实锤)**: `query="content"/"text"/"body"`(合法检索词恰为红线词)全被
+  400 拒, 而 `query="正文 content 规范"` 放行——实现对整坨序列化 JSON 扫 `"content"` 等
+  子串, 值也扫, 命中纯看引号相邻与语义无关(PRD 原话是"正文**键名**拒收");
+- **数据黑洞机制(两端闭合实测)**: 被误拒的事件经客户端 `append_event` 中继时,
+  `_post_ingest` `except Exception: return` 静默吞 400(客户端零异常、账本 0 行、无任何
+  告警)——"服务端误拒 + 客户端静默吞"组合 = 团队账本永久缺该事件且无人知晓;
+- 64KB 上限: 实测最大事件行 ~2.8KB, 上限余量充足, 未见现实触发路径。
+
+**修复(D-7)**: 红线改递归只查 dict 键名(`_has_body_key`, 含大小写变体), 值放行。
+对照实验: 修复后 `query="content"` 经客户端 E2E 中继成功入账(1 行, 重发幂等仍 1 行);
+嵌套 `layers[].matched[].content` 仍正确 400 且仍静默(静默语义按 PRD 保留)。
+回归 `test_ingest_body_key_redline_checks_keys_not_values`, pytest **283 全绿**。
+
+**沉淀**: 新建 `kb-20261022-7e9a`(红线校验作用域须与意图一致 + 误拒叠加静默吞的危险组合,
+accepted/verified/agent 留痕)。
+
+**走查法教训**: "合法/非法各一个代表样本"的 API 走查会漏掉**校验作用域错位**类缺陷——
+红线样本(带 content 键)与放行样本(q=vite)都恰好不触碰错位面。要专门构造"**值恰为非法词**"
+的合法样本, 以及嵌套/大小写/编码变体。静默旁路(尽力中继)的缺陷只能靠**落盘差分**
+(声称接受 vs 账本实际)发现, 看 HTTP 响应和 console 都不够。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

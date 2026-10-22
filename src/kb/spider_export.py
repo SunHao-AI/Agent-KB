@@ -59,9 +59,10 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
     ts = str(search_ev.get("ts", ""))[:10]
     returned = set(search_ev.get("returned", []))
     events: list[dict] = []
-    for idx, layer in enumerate(search_ev.get("layers", [])):
+    for idx, layer in enumerate(search_ev.get("layers", []) or []):
         route = _LAYER_ROUTE.get(idx, "model")
-        for m in layer["matched"]:
+        # .get: 零命中层可整键缺 matched(仿真脚本/手工 trace 常见形态), 缺=该层无命中
+        for m in layer.get("matched") or []:
             if m["id"] not in returned:
                 continue
             final = "you" if m["id"] in read_ids else route

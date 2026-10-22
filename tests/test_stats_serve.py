@@ -296,6 +296,50 @@ def test_api_spider_dependency_missing_is_503_hint(tmp_path, monkeypatch):
         srv.server_close()
 
 
+def test_api_spider_revives_after_bridge_process_death(tmp_path, monkeypatch):
+    """桥进程运行中途死亡(被杀/崩溃→管道写入 [Errno 22])后, 后续请求必须自动重生桥,
+    而不是被 _dead 永久短路。实测踩坑(第九轮走查): 一次桥死亡让 serve 余生回放全降级。"""
+    from kb import spider_live
+
+    class DeadMcp:                       # 已 spawn 但进程已死(p.poll() 非 None)
+        class p:
+            @staticmethod
+            def poll():
+                return 1
+        def close(self):
+            pass
+
+    srv, base = _serve(tmp_path)
+    ev = _search("rb-4", "a", "vite", ["k1"])
+    ev["layers"][0]["matched"] = [{"id": "k1", "title": "T1", "hit_fields": ["title"]}]
+    _seed_trace(tmp_path, ev, [])
+    srv.spider._mcp = DeadMcp()          # 模拟: 之前成功起过桥, 现在进程死了
+    respawn = {"n": 0}
+
+    class RevivedMcp:
+        p = None                          # 假桥无真进程(_alive 视为存活)
+
+        def tool(self, name, args):
+            if name == "spider_import_session":
+                respawn["n"] += 1
+                return {"id": "sid-new", "previewUrl": "http://127.0.0.1:9/?session=new"}
+            return {}
+
+    monkeypatch.setattr(spider_live, "SpiderMcp", lambda home: RevivedMcp())
+    monkeypatch.setattr(spider_live, "find_spider_home", lambda explicit=None: tmp_path)
+    try:
+        st, body = _get_url(f"{base}/api/spider/rb-4")
+        assert st == 200 and body["previewUrl"].endswith("session=new")
+        assert respawn["n"] == 1          # 死桥被替换重spawn, 而非 _dead 短路 503
+        # 死亡前缓存的旧 URL 指向已死进程, 必须作废重导而非原样返回
+        srv.spider._mcp = DeadMcp()
+        st2, body2 = _get_url(f"{base}/api/spider/rb-4")
+        assert st2 == 200 and respawn["n"] == 2
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 # ---- /api/ingest(FR-2.5 团队态直播通道) ---------------------------------
 
 def _post_json(url, obj, token=None):
@@ -332,6 +376,33 @@ def test_ingest_append_dedup_and_redlines(tmp_path):
         # 落盘可聚合: ingest 的事件进了 traces 事实源
         st, body = _get_url(f"{base}/api/stats?caller=*", token="tk")
         assert body["kpi"]["searches"] >= 1
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_ingest_body_key_redline_checks_keys_not_values(tmp_path):
+    """红线是"拒收正文**键名**"(PRD 原话)。早期实现把整坨事件序列化后扫
+    "content"/"text"/"body" 子串, 值也扫 → query="content" 这类合法检索词被误判 400,
+    叠加客户端 _post_ingest 静默吞异常, 团队账本永久缺该事件且无告警(第十轮走查实测)。"""
+    srv, base = _serve(tmp_path, token="tk")
+    try:
+        # 值恰为红线词: 合法检索, 必须放行
+        for i, q in enumerate(["content", "text", "body", "正文 content 规范"]):
+            ev = _search(f"val-{i}", "proj-v", q, [])
+            st, body = _post_json(f"{base}/api/ingest", ev, token="tk")
+            assert st == 200 and body["ok"] and not body["deduped"], (q, st, body)
+        # 深嵌套位置的正文键名仍必须拒(值放行不等于放弃红线)
+        nested = _search("nest-1", "proj-v", "q", [])
+        nested["layers"] = [{"repo": "r", "scanned": 1,
+                             "matched": [{"id": "k1", "content": "偷偷塞正文"}]}]
+        st, _ = _post_json(f"{base}/api/ingest", nested, token="tk")
+        assert st == 400
+        # 大小写变体键名也拒(早期实现靠 lower() 顺带挡住的, 递归版须显式保住)
+        weird = _search("nest-2", "proj-v", "q", [])
+        weird["filters"] = {"Text": "x"}
+        st, _ = _post_json(f"{base}/api/ingest", weird, token="tk")
+        assert st == 400
     finally:
         srv.shutdown()
         srv.server_close()

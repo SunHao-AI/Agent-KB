@@ -165,6 +165,19 @@ def test_sparse_legacy_trace_no_crash():
     assert "agent-kb" in rec["config"]["subtitle"]
 
 
+def test_zero_hit_layer_without_matched_key():
+    """零命中层可整键缺 matched(仿真脚本/手工 trace 常见形态: 只记 scanned/rejected)。
+    实测踩坑(第九轮走查): to_record 裸取 layer["matched"] → 桥内 KeyError → 降级。"""
+    tr = {"kind": "search", "trace_id": "trc-zh", "ts": "2026-10-22T10:00:00",
+          "caller_repo": "agent-kb", "source": "cli", "query": "全淘汰",
+          "returned": [], "duration_ms": 5, "limit": 20,
+          "layers": [{"repo": "pg-proj", "scanned": 40, "rejected": {"filter": 25, "query": 15}}]}
+    rec = spider_export.to_record(tr, [])
+    assert rec["events"] == []
+    assert "0 命中" in rec["config"]["subtitle"]
+    assert "pg-proj 扫描40" in rec["config"]["subtitle"]
+
+
 def test_deterministic():
     a = spider_export.to_record(_trace(), _gets())
     b = spider_export.to_record(_trace(), _gets())

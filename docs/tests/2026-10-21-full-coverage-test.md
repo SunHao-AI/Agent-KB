@@ -1490,6 +1490,44 @@ URL query 是同判据的第二形态, 读侧规则更严(浏览器语义); 自�
 字符的值跑 `parse_qs == 原值`, 且解析器必须与真实消费端同语义(# 截
 fragment、+ 解空格), 否则验证脚本自己就把真损坏判成 OK。
 
+---
+
+## §50 第三十二轮: 逐屏走查(真实 serve + 真实浏览器, 掩盖性数据全家桶)
+
+**选题**: 前一轮 UI 走查(§41)用的是干净数据, 本轮反着来——专造掩盖性数据
+(超长 query / XSS 字符进 query·项目名·suggest / null 字段爆炸 / 跨时区对 /
+search→get 配对 / 迟到孤儿 get / 中文长项目名 / 极端 duration), 起真实 serve
+逐屏实走: 联邦 KPI/榜单/矩阵、实时流、下钻、回放 modal。
+
+**D-37 `layers: null` 打崩 /api/stats(实锤+修复, 高)**:
+- 后端第一发就中: `layers: null` 事件使 `top_consumed` 的
+  `s.get("layers", [])` 抛 TypeError → `/api/stats` 500(与 §26 的
+  `returned: null` 完全同构)。`.get(k, [])` 的默认值对"键存在但为 null"
+  不生效; stats 消费方一半写 `.get(k, [])` 一半写 `or []`, 口径不一。
+- 修复走解析期统一净化(而非消费方逐点补防): `_coerce` 把
+  `layers/ext/suggest/read` 与 returned 同批归零(显式 null→删键使下游默认值
+  生效; 非列表→剔除+warn)。§26 当年名单只列了 returned 一个字段——净化器
+  名单要对着 schema 全量列, 不能对着事故增量列。
+
+**逐屏通过面(浏览器实测)**: XSS 零注入(`onerror` 载荷全部转义为文本,
+injectedImg=0)、超长 query 不撑破横向滚动、KPI/矩阵/榜单数字与手算一致、
+跨时区对排序正确(纽约 13:30Z 顶/上海 01:30Z 底, §37 修复在真实浏览器生效)、
+search→get 配对(read 关联+consumed=1+saved_unknown 保守口径设计内)、矩阵
+下钻(beta 行→URL caller=beta、feed 收敛 1 行、矩阵隐藏)、回放面板对
+layers 缺失事件容错(标题/meta 正常)、console 除 SSE 切换正常 abort 外零报错。
+
+**探针插曲**: 首版伪造 get 事件用了臆测字段(`entry_id/found`), consumed=0
+一度像缺陷——对照 `build_get_event` 真实 schema(应为 `id/ok/chars`)后确认
+是测试数据错, 修数据后消费链全对。**伪造事件前先读生产侧构造器**, 与 §48
+"读 spec 再定罪"同谱。
+
+**回归**: test_trace.py +1(全列表字段归一 + 三消费方不再 TypeError),
+pytest **327 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c`(修复半径普查判据)——追加"新发现"段:
+拷贝的第三种形态 = "同一净化名单只列了一个字段"(字段维度); `.get(k, 默认值)`
+对键存在值为 null 不生效, 不可信输入应在进缓存前一次净化。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

@@ -106,6 +106,18 @@ def _coerce(ev: dict, warns: list[str], src: str) -> None:
     elif ret is not None and not isinstance(ret, list):
         warns.append(f"{src}: returned 非列表({type(ret).__name__}), 按零命中处理")
         ev["returned"] = []
+    # §50: 列表字段归一当初只做了 returned, `layers: null` 同样炸——stats 的
+    # 消费方一半写 `.get(k, [])`(默认值对"键存在但为 null"不生效, 与 §47 的
+    # .get 陷阱同源), 一半写 `or []`(安全)。消费方逐点补防不如解析期一次
+    # 归零: 同一事实源进缓存前所有列表字段口径统一, 新增消费方不再踩。
+    for k in ("layers", "ext", "suggest", "read"):
+        v = ev.get(k)
+        if v is None:
+            if k in ev:
+                del ev[k]                        # 显式 null → 视作缺失(下游默认值生效)
+        elif not isinstance(v, list):
+            warns.append(f"{src}: {k} 非列表({type(v).__name__}), 按缺失处理")
+            del ev[k]
     for k in ("chars", "returned_chars"):
         v = ev.get(k)
         if v is not None and not isinstance(v, (int, float)):

@@ -137,6 +137,28 @@ def test_read_coerces_dirty_types_and_warns(kbroot):
     stats.aggregate(searches, [])                      # 归一后聚合不再 TypeError
 
 
+def test_read_coerces_all_list_fields(kbroot):
+    """§50 回归: 当年只归一 returned, `layers: null` 同样炸 stats.top_consumed
+    (`.get(k, [])` 对"键存在但为 null"不生效)。所有列表字段统一解析期归零。"""
+    from kb import stats
+    ev = dict(_ev(9), returned=[])
+    for k in ("layers", "ext", "suggest", "read"):
+        ev[k] = None
+    ev2 = dict(_ev(10), returned=[])
+    ev2["layers"] = "not-a-list"
+    _write(kbroot, f"{dt.date.today():%Y-%m-%d}.jsonl",
+           [{"kind": "meta", "schema": 1}, ev, ev2])
+    searches, _, warns = trace.read_traces(root=kbroot)
+    by = {s["trace_id"]: s for s in searches}
+    for k in ("layers", "ext", "suggest", "read"):
+        assert k not in by["t-9"]                       # 显式 null → 视作缺失
+    assert "layers" not in by["t-10"]                   # 非列表 → 剔除 + 告警
+    assert any("layers 非列表" in w for w in warns)
+    stats.top_consumed(searches, [])                    # 曾经正是这里 TypeError
+    stats.feed_events(searches, [])
+    stats.by_source(searches)
+
+
 def test_read_filters_and_ordering(kbroot):
     for i, caller in enumerate(["web", "algo", "web"]):
         ev = _ev(i, caller=caller, returned=())

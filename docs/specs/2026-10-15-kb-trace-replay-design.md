@@ -106,8 +106,11 @@ src/kb/cli.py          # 新增 `kb trace` 子命令组; search 加 --trace
 - `caller_repo`: 由 `--repo` 路径推断(resolve 后目录名小写, 与 index repo 字段同口径)。
 - `hit_fields` / `hit_spans`: 对 `title + tags + summary` 拼接文本做与现实现一致的
   小写子串匹配, 按字段边界反解命中的字段与偏移。
-- get 事件的 `trace_id`: 同 caller_repo 最近一条 search 的 id(尽力关联, 关联不上为
-  null)。用途是区分"被返回"与"真被消费", 不追求强一致。
+- get 事件的 `trace_id`: 同 caller_repo **返回过该 id 的**最近一条 search 的 id
+  (尽力关联, 关联不上退回"最近一条 search", 再关联不上为 null)。用途是区分
+  "被返回"与"真被消费", 不追求强一致。(2026-10-22 第二十二轮走查升级: 原策略
+  "最近一条 search"在多轮检索后读早轮条目时挂错 trace, 消费判定要求同 trace
+  返回过该 id → consume_rate 系统性偏低; id 就在调用参数里, 精确匹配零成本)
 
 ## 5. CLI (`kb trace`)
 

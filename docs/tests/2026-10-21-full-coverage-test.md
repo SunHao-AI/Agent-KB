@@ -1170,6 +1170,36 @@ pytest **300 全绿**。中途自纠两处: 测试编辑时误伤既有行(引�
 **插曲自纠**: 沉淀条目初稿手改 front-matter 为 accepted——违反门控一致性(应走
 `kb review` 流转), 复原 draft 后经 review 命令正式流转成功。
 
+## §40 第二十二轮走查: get 事件 trace 关联与消费率(猜测式外键)(2026-10-22)
+
+**主题**: 消费漏斗最深处——get 事件如何关联回 search(_consumed_ids / consume_rate /
+saved_chars_est 的共同地基)。承接 §22 trace 链路, 这次查"事件之间的边"。
+
+**选题过程(两个面走查通过后落点第三个面)**: 外接源 source:// 编解码面——原生 id
+含斜杠无歧义(前缀定长 + 分隔符取一次), Hit.make/get 往返一致, 通过; serve 静态与
+回放面——`/api/replay/<tid>` 的 tid 只做字段等值比对不拼路径, 无目录穿越, 通过。
+第三面字段对账时发现 latest_search_id 的关联策略与消费判定错配。
+
+**D-25 get 尽力关联忽视手头强信号, 消费率系统性漏计(实锤+修复, 高)**:
+- get 事件 trace_id = "该 caller 最近一条 search"(spec §4.4 原策略), 而消费判定
+  _consumed_ids 要求"get 所在 trace 的 returned 含该 id"。序列 search A(返回 k1) →
+  search B → get(k1): k1 挂 B 下, B 不含 k1 → 判未消费。探针实测 consume_rate 从
+  0.33 掉到 **0.0**, saved_chars_est 归零——agent 真实工作流"连搜几轮再回头读"恰恰
+  高频触发, 命中率越高的库漏得越多。
+- 本质: kb_get(id) 的 id 就是精确匹配的外键(零成本强信号), 关联侧却用"猜最近"弱
+  启发式; 关联不看 id、判定死盯 id, 两侧策略错配处即漏计。spec"尽力关联不追求
+  强一致"方向没错但被过度兑现——"尽力"应是用尽可得信号后的兜底。
+- 修复: latest_search_id 加 entry_id——优先"returned 含该 id 的最近一条", 匹配不到
+  回退纯最近(外接源 id/手动 get 自然走兜底, 无需特判); MCP kb_get 埋点传 entry_id=id;
+  spec §4.4 同步修订防回退。
+
+**回归**: test_trace.py 单元(精确匹配优先/回退/不传参保旧语义) + test_trace_mcp.py
+端到端(search 命中→零命中→get 首轮条目, 断言挂回首轮), pytest **304 全绿**。
+
+**沉淀**: 新建 `kb-20261022-1256`(accepted/verified/auto-reviewed)——双层去重无
+命中。通用判据: 写"尽力关联/模糊匹配"前确认更强信号是否真的不可得; 关联策略与
+判定策略必须同源(判定盯 id, 关联就必须用 id)。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

@@ -161,3 +161,27 @@ def test_find_and_latest_search_id(kbroot):
     assert trace.find_trace("nope", root=kbroot) is None
     assert trace.latest_search_id("web", root=kbroot) == "t-2"
     assert trace.latest_search_id("other", root=kbroot) is None
+
+
+def test_latest_search_id_prefers_search_that_returned_the_id(kbroot):
+    """§40: 多轮检索后读早轮返回的条目, 应关联到**返回过它**的那次 search,
+    而非盲目取最近一次。旧实现挂错 trace → _consumed_ids 判未消费 → 头条
+    consume_rate 系统性偏低。"""
+    a = _ev(1, caller="web", returned=("k1", "k2"))
+    a["ts"] = "2026-10-15T14:00:01+08:00"
+    b = _ev(2, caller="web", returned=("k3",))          # 最近一次, 但不含 k1
+    b["ts"] = "2026-10-15T14:00:02+08:00"
+    for ev in (a, b):
+        trace.append_event(ev, root=kbroot)
+    # 精确匹配: get("k1") 挂回返回过 k1 的 t-1, 不是最近的 t-2
+    assert trace.latest_search_id("web", root=kbroot, entry_id="k1") == "t-1"
+    assert trace.latest_search_id("web", root=kbroot, entry_id="k3") == "t-2"
+    # 消费判定闭环: 挂对 trace 后 k1 计入消费集
+    from kb import stats
+    S = [a, b]
+    g = {"kind": "get", "trace_id": trace.latest_search_id(
+        "web", root=kbroot, entry_id="k1"), "id": "k1", "ok": True}
+    assert stats._consumed_ids(S, [g]) == {"k1"}
+    # 回退: 关联不到(如外接源 id / 手动 get)时退回纯最近一次, 不返回 None
+    assert trace.latest_search_id("web", root=kbroot, entry_id="nope") == "t-2"
+    assert trace.latest_search_id("web", root=kbroot) == "t-2"  # 不传 entry_id 保持旧语义

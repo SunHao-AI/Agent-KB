@@ -76,6 +76,21 @@ async def test_get_links_to_recent_search(env, monkeypatch):
     assert get_ev["trace_id"] == sid and get_ev["layer"] == "docs" and get_ev["ok"] is True
 
 
+async def test_get_after_unrelated_search_links_to_returning_one(env, monkeypatch):
+    """§40 端到端: search(命中) → search(零命中) → get(首轮条目)。旧实现挂最近
+    一次(零命中那次), 消费判定判未消费; 修复后应挂回返回过它的首轮 trace。"""
+    root, proj = env
+    monkeypatch.setenv("KB_TRACE", "1")
+    srv = build_server(proj, [], repo_name="docs")
+    await _call(srv, "kb_search", {"query": "Vite"})
+    sid1 = _events(root)[0]["trace_id"]
+    await _call(srv, "kb_search", {"query": "完全不存在的词zzz"})   # 最近一次, 零命中
+    await _call(srv, "kb_get", {"id": "kb-20261012-aaaa"})
+    get_ev = _events(root)[2]
+    assert get_ev["kind"] == "get" and get_ev["ok"] is True
+    assert get_ev["trace_id"] == sid1, "get 应关联到返回过该条目的首轮 search"
+
+
 async def test_get_miss_records_ok_false(env, monkeypatch):
     root, proj = env
     monkeypatch.setenv("KB_TRACE", "1")

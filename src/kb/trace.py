@@ -224,9 +224,23 @@ def find_trace(trace_id: str, root: Path | None = None) -> dict | None:
     return next((s for s in searches if s.get("trace_id") == trace_id), None)
 
 
-def latest_search_id(caller_repo: str, root: Path | None = None) -> str | None:
+def latest_search_id(caller_repo: str, root: Path | None = None,
+                     entry_id: str | None = None) -> str | None:
+    """get 事件尽力关联到某次 search 的 trace_id(spec §4.4)。
+
+    传入 entry_id 时优先精确匹配: 返回过该条目的最近一次 search(kb_get(id) 的 id
+    几乎必然来自某次 search 的 returned)。旧实现只取"最近一次 search", 多轮检索
+    后读早轮返回的条目会挂错 trace, 消费判定(_consumed_ids 要求同 trace 返回过该
+    id)判"未消费"——第二十二轮走查实测该漏计使头条 consume_rate 系统性偏低。
+    匹配不到(手动 get / 关联真断裂)回退纯最近一次, 保持 spec"尽力关联, 关联不上
+    为 null"的底线语义。
+    """
     searches, _, _ = _iter_raw(Path(root) if root else kb_root())
     hits = _newest_first([s for s in searches if s.get("caller_repo") == caller_repo])
+    if entry_id:
+        for s in hits:
+            if entry_id in (s.get("returned") or []):
+                return s.get("trace_id")
     return hits[0].get("trace_id") if hits else None
 
 

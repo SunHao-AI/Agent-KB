@@ -4,6 +4,7 @@
 
 - [append-only trace 账本读侧裸取字段致 API 线程 KeyError 掐连接](pitfall/backend/2026-10-21-append-only-trace-api-keyerror.md) · pitfall · backend · accepted · 观测面板点"全屏蜘蛛回放"显示 `全屏不可用: Failed to fetch`, 浏览器控制台只有 net::ERR_EMPTY_RESPONSE; curl 同一 URL 同样"连接被意外关闭"。用仿真脚本生成的 trace 一切正常,
 - [HTTP handler未兜底异常穿透致连接裸断且外部数据文件须解析期归一化](pitfall/backend/2026-10-21-http-handler.md) · pitfall · backend · accepted · 观测面板 serve 的 trace 文件混入脏数据(`returned: null`、`chars: "abc"`)后, `/api/stats`、`/api/feed`、`/api/callers` 三端点**连接被直接掐断**——客户
+- [尽力关联的启发式忽视手头强信号: 猜测式外键挂错导致消费率漏计](pitfall/backend/2026-10-22-1256.md) · pitfall · backend · accepted · 观测面板头条 KPI"条目消费率"(consume_rate = 被返回后又真被 kb_get 读过的条目 ÷ 被返回总数)靠 get 事件的 `trace_id` 关联回它属于哪次 search: `_consumed_ids` 要求 "
 - [懒启动子进程失败缓存永久短路误伤运行期进程死亡](pitfall/backend/2026-10-22-66cc.md) · pitfall · backend · accepted · 观测面板蜘蛛回放桥(`serve.SpiderBridge`)懒启动 node 子进程, 设计意图是"缺 Node/克隆依赖时 记住错误不再重试(失败面收敛一次)"。第九轮走查实测: 桥成功工作后, 只要子进程**运行中途** 死亡(外部杀
 - [指标消费方读生产方从未写入的事件字段且消化判定不分时间方向](pitfall/backend/2026-10-22-d550.md) · pitfall · backend · accepted · 观测面板"零命中周报"是驱动团队补库的反馈回路: 零命中 query 上榜, 若同 caller 后续 同词命中则标"已消化", 消化率 = 已解决/上榜。第十七轮走查实测两处让周报**系统性高估 消化率**的缺陷:
 - [硬编码正斜杠前缀比较在路径校验中全线误判穿越，跨平台包含判定须用相对路径计算](pitfall/devops/2026-10-20-67ae.md) · pitfall · devops · accepted · > 面向: Agent-KB `TdbmConnector`(消费方) 与 TencentDB-Agent-Memory `MemoryKnowledge`(服务方) 的接入联调。

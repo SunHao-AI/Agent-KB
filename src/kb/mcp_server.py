@@ -107,8 +107,11 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
         else:
             got = get_layered(layers, id)
         if kbtrace.trace_enabled():
+            # entry_id=id: 优先关联到返回过该条目的 search(§40 消费漏计修复);
+            # 外接源 id(source://…)不在本地 returned 里, 自然回退纯最近一次
             kbtrace.append_event(kbtrace.build_get_event(
-                trace_id=kbtrace.latest_search_id(name), source="mcp", caller_repo=name,
+                trace_id=kbtrace.latest_search_id(name, entry_id=id),
+                source="mcp", caller_repo=name,
                 id=id, layer=got[1] if got else None, ok=got is not None,
                 chars=len(got[0]) if got else None))
         if got is None:

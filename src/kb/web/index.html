@@ -601,7 +601,7 @@ $('feed').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.prev
 // 回放: 桥就绪(spider_ready)→ 大浮层 iframe 加载克隆仓整页 session 视图(原生 topbar/
 // transport/词墙切换全保留; serve 导入后已配自动重播+循环)。浮层开着点别的流条目=就地换
 // src(会话 serve 端缓存)。⤢ 可另开整页标签。桥不就绪/失败→回落 SVG 弹层(降级不变)。
-let spiderReady=false,rpUrl='',rpLastFocus=null,rpLastTid=null,rpSwapOnload=null;   // §23 a11y: 开层时记录触发元素/trace, 关闭后归还焦点
+let spiderReady=false,rpUrl='',rpLastFocus=null,rpLastTid=null,rpSwapOnload=null,rpEverReady=false;   // §23 a11y: 开层时记录触发元素/trace, 关闭后归还焦点; rpEverReady: 本会话已有一次成功导出(蜘蛛进程已热)
 // 停靠分档: 面板宽 = min(1440, 80vw, 100vw-336)(见 --rpw, 第三项保证左列始终留 336px
 // 可点检索流)。视口不足以兑现该保证时(极窄)退回居中大面板(rp-center, feed 被盖属预期)。
 // 纯 CSS 媒体查询无法与 min()/vw 表达式精确联动, 用实测视口宽判定, resize 时重算。
@@ -625,7 +625,8 @@ async function openReplay(raw){
   $('rp').classList.add('open');rpLayout();
   // 标题立即落 query(raw 本地就有), 不等握手——否则占位「▶ 回放」挂 ~2s 才换。
   $('rpTitle').textContent='▶ '+(raw.query||'-');
-  $('rpMeta').textContent='连接蜘蛛会话…';
+  // 冷桥(本会话还没成功导出过=蜘蛛进程未热)首导实测 6~12s, 给足预期; 热桥只说连接。
+  $('rpMeta').textContent=rpEverReady?'连接蜘蛛会话…':'连接蜘蛛会话(首次拉起约十余秒)…';
   // 换条目: 先卸旧 iframe(断上一会话的 SSE/回放循环, 否则透明期仍白跑), 再淡出+骨架,
   // 新会话首帧后 swapin 淡入。load 兜底 4s: 网络挂起时也不永久停在透明态。
   // load 监听只在实际 src 赋值前挂——about:blank 的延迟 load 事件不能误触发 swapIn。
@@ -634,12 +635,13 @@ async function openReplay(raw){
   if(wasOpen&&rpUrl)$('rpFrame').src='about:blank';
   rpUrl='';
   try{
-    // 10s 超时: 网络劣化时不让骨架无限等(兜底 swapin 后画布会空黑, 明确报错更好)
-    const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),10000);
+    // 20s 超时: 冷桥首导(拉起蜘蛛+导出)实测可近 12s, 10s 有误杀概率; 网络挂起也不让骨架无限等
+    const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),20000);
     let r;try{r=await fetch(apiUrl(`/api/spider/${encodeURIComponent(tid)}`),{signal:ctl.signal});}
     finally{clearTimeout(timer);}
     const d=await r.json();
     if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);
+    rpEverReady=true;
     rpUrl=d.previewUrl;
     rpSwapOnload=()=>rpSwapIn();
     $('rpFrame').addEventListener('load',rpSwapOnload,{once:true});
@@ -647,7 +649,7 @@ async function openReplay(raw){
     $('rpFrame').src=rpUrl;
     $('rpMeta').textContent=`trace ${tid} · 自动重播·循环`;
     rpStepButtons();
-  }catch(err){rpDetachSwap();rpClose();playSpider(Object.assign({},raw,{_replayErr:err.name==='AbortError'?'连接蜘蛛会话超时(10s)':err.message}));}
+  }catch(err){rpDetachSwap();rpClose();playSpider(Object.assign({},raw,{_replayErr:err.name==='AbortError'?'连接蜘蛛会话超时(20s)':err.message}));}
 }
 // ◀▶ 换条目: 按当前检索流可见条目的 DOM 顺序步进(SSE 重排后也总是跟当前列表一致)。
 function rpStep(dir){

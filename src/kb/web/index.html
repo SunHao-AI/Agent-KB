@@ -601,7 +601,7 @@ $('feed').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.prev
 // 回放: 桥就绪(spider_ready)→ 大浮层 iframe 加载克隆仓整页 session 视图(原生 topbar/
 // transport/词墙切换全保留; serve 导入后已配自动重播+循环)。浮层开着点别的流条目=就地换
 // src(会话 serve 端缓存)。⤢ 可另开整页标签。桥不就绪/失败→回落 SVG 弹层(降级不变)。
-let spiderReady=false,rpUrl='',rpLastFocus=null,rpLastTid=null,rpSwapOnload=null,rpEverReady=false;   // §23 a11y: 开层时记录触发元素/trace, 关闭后归还焦点; rpEverReady: 本会话已有一次成功导出(蜘蛛进程已热)
+let spiderReady=false,rpUrl='',rpLastFocus=null,rpLastTid=null,rpSwapOnload=null,rpEverReady=false,rpSeq=0,rpAbort=null;   // §23 a11y: 开层时记录触发元素/trace, 关闭后归还焦点; rpEverReady: 本会话已有一次成功导出(蜘蛛进程已热); rpSeq/rpAbort: 握手代次守卫
 // 停靠分档: 面板宽 = min(1440, 80vw, 100vw-336)(见 --rpw, 第三项保证左列始终留 336px
 // 可点检索流)。视口不足以兑现该保证时(极窄)退回居中大面板(rp-center, feed 被盖属预期)。
 // 纯 CSS 媒体查询无法与 min()/vw 表达式精确联动, 用实测视口宽判定, resize 时重算。
@@ -634,14 +634,19 @@ async function openReplay(raw){
   rpDetachSwap();
   if(wasOpen&&rpUrl)$('rpFrame').src='about:blank';
   rpUrl='';
+  // 代次守卫: 快速连点时上一次握手可能更晚返回, 迟到响应会把 src/标题覆盖成旧会话,
+  // 迟到的失败还会 rpClose() 关掉用户正在看的新浮层。abort 旧请求省带宽, seq 兜住乱序。
+  const seq=++rpSeq;
+  if(rpAbort)rpAbort.abort();
   try{
     // 20s 超时: 冷桥首导(拉起蜘蛛+导出)实测可近 12s, 10s 有误杀概率; 网络挂起也不让骨架无限等
-    const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),20000);
+    const ctl=rpAbort=new AbortController();const timer=setTimeout(()=>ctl.abort(),20000);
     let r;try{r=await fetch(apiUrl(`/api/spider/${encodeURIComponent(tid)}`),{signal:ctl.signal});}
     finally{clearTimeout(timer);}
     const d=await r.json();
     if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);
-    rpEverReady=true;
+    if(seq!==rpSeq)return;                                  // 已有更新的开层/步进, 丢弃
+    rpEverReady=true;rpAbort=null;
     rpUrl=d.previewUrl;
     rpSwapOnload=()=>rpSwapIn();
     $('rpFrame').addEventListener('load',rpSwapOnload,{once:true});
@@ -649,7 +654,9 @@ async function openReplay(raw){
     $('rpFrame').src=rpUrl;
     $('rpMeta').textContent=`trace ${tid} · 自动重播·循环`;
     rpStepButtons();
-  }catch(err){rpDetachSwap();rpClose();playSpider(Object.assign({},raw,{_replayErr:err.name==='AbortError'?'连接蜘蛛会话超时(20s)':err.message}));}
+  }catch(err){if(seq!==rpSeq)return;                        // 被更新的开层取代(含我们自己 abort)
+    rpAbort=null;rpDetachSwap();rpClose();
+    playSpider(Object.assign({},raw,{_replayErr:err.name==='AbortError'?'连接蜘蛛会话超时(20s)':err.message}));}
 }
 // ◀▶ 换条目: 按当前检索流可见条目的 DOM 顺序步进(SSE 重排后也总是跟当前列表一致)。
 function rpStep(dir){
@@ -672,6 +679,7 @@ function rpSwapIn(){rpDetachSwap();const stage=$('rpStage');
 function rpDetachSwap(){const f=$('rpFrame');if(rpSwapOnload){f.removeEventListener('load',rpSwapOnload);rpSwapOnload=null;}}
 function rpClose(){const layer=$('rp'),stage=$('rpStage');
   if(!layer.classList.contains('open')||layer.classList.contains('closing'))return;
+  rpSeq++;if(rpAbort){rpAbort.abort();rpAbort=null;}   // 作废在途握手, 迟到响应不再写隐藏 iframe
   rpDetachSwap();
   stage.classList.remove('swapping','loading','swapin');
   const finish=()=>{layer.classList.remove('open','closing');rpLayout();

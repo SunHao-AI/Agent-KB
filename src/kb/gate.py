@@ -4,7 +4,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from kb.dedup import fingerprint_source, fingerprint_text
+from kb.dedup import fingerprint, fingerprint_source, fingerprint_text
 from kb.entry import Entry, parse_entry, dump_entry
 from kb.new_entry import create_entry
 from kb.taxonomy import load_taxonomy
@@ -39,11 +39,28 @@ def _title_tokens(title: str) -> list[str]:
     return toks[:3]
 
 
-def _index_records(repo: Path) -> list[dict]:
-    jl = repo / "kb" / "index.jsonl"
+def _index_records(repo: Path, name: str = "index.jsonl") -> list[dict]:
+    jl = repo / "kb" / name
     if not jl.exists():
         return []
     return [json.loads(x) for x in jl.read_text(encoding="utf-8").splitlines() if x.strip()]
+
+
+def _draft_records(repo: Path) -> list[dict]:
+    """现算 draft 查重候选: draft 只进 index.draft.jsonl(不进检索/live 池), 且刚
+    `kb new` 出的 draft 连 draft 索引都未重建 → 查重必须直接扫源文件现算指纹。
+    draft 池小(低频、单会话≤3条), 现算成本可忽略, 换来无"索引未重建"时序窗口。"""
+    kb = repo / "kb"
+    out = []
+    for p in sorted(kb.rglob("*.md")) if kb.exists() else []:
+        if p.name in ("INDEX.md",):
+            continue
+        e = parse_entry(p)
+        if e.fm.get("status") != "draft" or not e.fm.get("id"):
+            continue
+        out.append({"id": e.fm["id"], "title": e.fm.get("title", ""),
+                    "dedup_key": fingerprint(e)})
+    return out
 
 
 def _tmp_entry(body: str) -> Entry:
@@ -66,7 +83,10 @@ def _dup_hits(repos: list[Path], fp: str, title: str) -> list[dict]:
     phrases = [t for t in specific if _cjk_phrase(t)]
     weak = [t for t in specific if not _cjk_phrase(t)]
     for rp in repos:
-        for r in _index_records(rp):
+        # live 池(index.jsonl, 人工/定时维护恒有效) + draft 池(源文件现算指纹,
+        # 覆盖"刚 kb new 未重建索引"的时序): 只比 live 会让两个 Agent 沉淀同一条
+        # 知识双双通过, 重复 draft 又因不进检索索引而无法事后发现(第十六轮走查)。
+        for r in _index_records(rp) + _draft_records(rp):
             rid = r.get("id")
             if rid in seen:
                 continue

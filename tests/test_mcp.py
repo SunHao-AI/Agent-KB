@@ -140,17 +140,39 @@ async def test_review_illegal_to(layers):
 async def test_review_session_cap_three(layers):
     proj, _ = layers
     srv = build_server(proj, repo_name="docs")  # 每 server 实例即一次 agent 会话
-    ok_ids = [await _create(srv, f"Redis 池耗尽 独立验证{i}") for i in range(3)]
+    # 四条真正独立的主题: 查重池纳入 draft 后(第十六轮走查), 共用 CJK 词组的标题
+    # 会被正确判重, 故"独立验证"必须各用不同 ≥3 字中文词组, 否则第二起即被拦
+    topics = ["连接池上限过低", "慢日志同步刷盘", "主从切换丢写", "热键集中单片"]
+    ok_ids = [await _create(srv, f"Redis {topics[i]} 验证{i}") for i in range(3)]
     for eid in ok_ids:
         err, _ = await _call(srv, "kb_review", {
             "id": eid, "to": "accepted", "confidence": "verified",
             "evidence": "实测复现并通过"})
         assert err is False
-    fourth = await _create(srv, "Redis 池耗尽 独立验证9")
+    fourth = await _create(srv, f"Redis {topics[3]} 验证9")
     err, out = await _call(srv, "kb_review", {
         "id": fourth, "to": "accepted", "confidence": "verified",
         "evidence": "实测复现并通过"})
     assert err is True and "上限" in out
+
+
+async def test_create_dedup_against_existing_draft(layers):
+    """§34 实测: 查重池曾只读 live 索引(index.jsonl), 而 draft 进 index.draft.jsonl
+    且刚 kb new 连 draft 索引都未重建 → 两个 agent 沉淀同一条知识双双通过, 重复
+    draft 又因不进检索索引而无法事后发现。kb_create 第二次必须命中既有 draft。"""
+    proj, _ = layers
+    srv = build_server(proj, repo_name="docs")
+    body = ("## 根因\n\n连接池默认上限过低, 高并发下请求排队超时导致大量慢查询, "
+            "把 pool 从 10 调到 50 后 p99 恢复正常, 是容量配置问题而非代码 bug。")
+    err1, out1 = await _call(srv, "kb_create", {
+        "type": "pitfall", "domain": "backend", "title": "连接池上限过低致排队超时",
+        "body": body})
+    assert err1 is False
+    # 同 body/近似标题再建 → 必须被查重拦下, 提示改用 kb_update
+    err2, out2 = await _call(srv, "kb_create", {
+        "type": "pitfall", "domain": "backend", "title": "连接池上限过低致排队超时",
+        "body": body})
+    assert err2 is True and "duplicate" in str(out2) and out1["id"] in str(out2)
 
 
 async def test_review_proposed_needs_no_evidence(layers):

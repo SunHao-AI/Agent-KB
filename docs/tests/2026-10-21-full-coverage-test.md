@@ -753,6 +753,42 @@ D-6 按红线并入既有条目 `kb-20261021-1b60`"新发现"段(同根因链不
 
 **回归**: pytest **282 全绿**(+2 新测试); 走查全程 0 未捕获 JS 异常。
 
+## §34 第十六轮走查: MCP 面端到端(沉淀门控地基)(2026-10-22)
+
+**主题**: 前 15 轮从未端到端走过 MCP 面(`mcp_server.py`, Agent 接入知识库主通道)。
+本轮直取治理地基——红线 3"沉淀前查重、命中即更新"是否真拦得住。
+
+**D-17 查重池看不见 draft, 同一知识可重复建草稿(实锤+修复, 高价值)**:
+- 探针(同 body+同标题连调 `create_draft` 三次): 修复前**三条全部建成**(backend 下 3
+  个文件), 中间夹 `kb index` 也拦不住; 两个 Agent 并发沉淀同一踩坑会双双通过。
+- 根因(可见性范围错配): `_dup_hits` 只读 `index.jsonl`(live, 仅过审条目), 而 `kb_create`
+  产的全是 draft 且**不进 live 索引**(进 draft 索引、也不进检索索引) → 查重池永远看不见
+  任何 draft; 再叠加"刚 kb new 连 draft 索引都未重建"的时序窗口。后果被放大成**不可自愈**:
+  重复 draft 不进检索索引, `kb search` 也发现不了, 人工无从去重。
+- 修复: 查重池并入 `_draft_records`(扫源文件现算 `fingerprint`, draft 池小成本可忽略、
+  无索引重建窗口); live 池仍用 index 预算指纹。
+- 验证: 同探针修复后第二次即 `DuplicateCandidate` 拦下(仅剩 1 条), kb index 与否都拦。
+
+**副作用即证据(重要)**: `test_review_session_cap_three` 用"Redis 池耗尽 独立验证0..9"
+造 4 条 draft, 修复后第 2 条起被正确判重(共用 ≥3 字中文词组"池耗尽")——该测试把"主体相同、
+靠序号区分"的取巧标题当独立条目, 正是被本次修复戳穿的**旧错误依赖**(旧世界 draft 互不可见
+才侥幸通过)。改为真正独立主题后通过。教训: 修复暴露的"既有测试失败"要先甄别——这里是
+测试数据本身不独立, 不是修复引入回归。
+
+**MCP 面其余检查无问题**: kb_search 双层+外接源联邦/零命中 hint+suggest、kb_get 含
+source:// 分流、kb_review draft→accepted 需 evidence+confidence 提升+单会话≤3 上限、
+kb_create 强制 draft/speculative/project、kb_update 仅本项目 draft——红线契约齐备。
+
+**回归**: 修 1(`test_review_session_cap_three` 标题独立化)+ 增 1
+(`test_create_dedup_against_existing_draft`), pytest **293 全绿**。
+
+**沉淀**: 新建 `kb-20261022-648d`(查重集合须覆盖尚未晋升的候选; accepted/verified/agent
+留痕), 与 `kb-20261022-d8fb`/`kb-20261022-acc8` 结成"可见性范围错配"同族链。
+
+**走查法教训**: 走查重/去重逻辑, 必须构造"两次写入之间的完整生命周期"探针(建→不 index
+再建→index 再建), 而非只测"两个已发布条目互查"——本缺陷正是"写入落点(draft)与查重读源
+(live)"错配, 只测 live 侧永远漏。
+
 ## §33 第十五轮走查: 双层联邦检索与路径参数契约(2026-10-22)
 
 **主题**: 多仓联邦口径(双层检索 `--repo X --agent-kb Y`、层序优先级、逐层截断)与

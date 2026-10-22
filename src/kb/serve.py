@@ -340,8 +340,10 @@ class _Handler(BaseHTTPRequestHandler):
                 ck = ("stats", q.get("caller", ""), q.get("since", ""), q.get("until", ""))
                 self._json(srv.agg.get(ck, lambda: _stats_payload(srv, q)))
             elif u.path == "/api/callers":
-                self._json(srv.agg.get(("callers",),
-                                       lambda: stats.callers(kbtrace.read_traces(root=srv.root)[0])))
+                # 矩阵统计列随窗口(与同屏 KPI 同口径, §29); 活跃性在 stats 内保持全量
+                ck = ("callers", q.get("since", ""))
+                self._json(srv.agg.get(ck, lambda: stats.callers(
+                    kbtrace.read_traces(root=srv.root)[0], since=q.get("since") or None)))
             elif u.path.startswith("/api/replay/"):
                 tid = u.path[len("/api/replay/"):]
                 rec = _replay_record(srv.root, tid)
@@ -432,13 +434,19 @@ class ServeServer(ThreadingHTTPServer):
 
 
 def _stats_payload(srv: "ServeServer", q: dict) -> dict:
-    """FR-1.2 出数(口径全在 kb.stats), 经 AggCache 按 trace 签名缓存。"""
+    """FR-1.2 出数(口径全在 kb.stats), 经 AggCache 按 trace 签名缓存。
+
+    榜单(top_consumed/top_queries/zero_hits)与 KPI 同窗口: UI 空态文案自己写着
+    "窗口内", 实现却数全量 → 切窗口后 KPI 与榜单两口径(§29 实测)。
+    """
     s, g, warns = kbtrace.read_traces(root=srv.root)
     s, g = srv.filter_caller(s, g, q)
-    return {"kpi": stats.aggregate(s, g, since=q.get("since"), until=q.get("until")),
-            "top_consumed": stats.top_consumed(s, g, limit=10),
-            "top_queries": stats.top_queries(s, limit=10),
-            "zero_hits": stats.zero_hit_board(s, limit=10),
+    since, until = q.get("since"), q.get("until")
+    return {"kpi": stats.aggregate(s, g, since=since, until=until),
+            "top_consumed": stats.top_consumed(stats.in_window(s, since, until),
+                                               stats.in_window(g, since, until), limit=10),
+            "top_queries": stats.top_queries(stats.in_window(s, since, until), limit=10),
+            "zero_hits": stats.zero_hit_board(stats.in_window(s, since, until), limit=10),
             "warns": warns}
 
 

@@ -270,7 +270,8 @@ function drillTo(q){
   $('feed').scrollIntoView({behavior:'smooth',block:'center'});
 }
 async function loadMatrix(){
-  const r=await fetch(apiUrl('/api/callers'));if(r.status==401)return;const rows=await r.json();
+  // 统计列随窗口(同屏 KPI 同口径, §29); 活跃性/掉线检测由服务端保持全量语义
+  const r=await fetch(apiUrl(`/api/callers?since=${sinceDate(win)}`));if(r.status==401)return;const rows=await r.json();
   // FR-5.2 按源堆叠: 项目层绿/通用层橙/外接源粉(PRD 指定 #F34A87), 与蜘蛛四色同源
   const SRC=[['project','项目层','#42D6A4'],['stack','通用层','#F28A76']];
   $('matrix').innerHTML='<tr><th>项目</th><th>检索数</th><th>命中率</th><th>按源堆叠</th><th>外接源</th><th>最近活跃</th><th>状态</th></tr>'+

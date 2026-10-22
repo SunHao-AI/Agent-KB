@@ -23,6 +23,20 @@ def _within(ev: dict, since: str | None, until: str | None) -> bool:
     return not ((since and day < since) or (until and day > until))
 
 
+def in_window(events: list[dict], since: str | None = None,
+              until: str | None = None) -> list[dict]:
+    """榜单类聚合的窗口过滤(与 aggregate 同一 _within 口径)。
+
+    第十一轮走查实测(§29): 窗口按钮只作用于 KPI——零命中榜/UI 空态自己写着
+    "窗口内"、热门消费与联邦矩阵同样在窗口工具旁, 但实现全是全量。
+    切到 7 天窗口后 KPI 说 1 次检索、同屏矩阵/榜单却数着 20 天前的事件,
+    同屏两口径。榜单/矩阵的统计列一律先过本函数再聚合。
+    """
+    if not since and not until:
+        return events
+    return [e for e in events if _within(e, since, until)]
+
+
 def _gets_by_trace(gets: list[dict]) -> dict[str, set[str]]:
     """trace_id → 该 trace 内 ok 的 get id 集合(一次建索引, 免逐 search 全量扫 gets)。"""
     out: dict[str, set[str]] = {}
@@ -186,15 +200,31 @@ def feed_events(searches: list[dict], gets: list[dict], *, caller: str | None = 
     return out
 
 
-def callers(searches: list[dict]) -> list[dict]:
+def callers(searches: list[dict], *, since: str | None = None,
+            until: str | None = None) -> list[dict]:
     """联邦视图项目矩阵行: caller + 存活检测(最近活跃距今 >14d = stale)
-    + 按源堆叠(by_source) + 外接源健康(ext, 来自 trace ext 字段)。"""
+    + 按源堆叠(by_source) + 外接源健康(ext, 来自 trace ext 字段)。
+
+    第十一轮走查(§29): 检索数/命中率/按源堆叠等**统计列**跟随时间窗口
+    (与同屏 KPI 同口径); 但**活跃性**(last_ts/stale/ext 健康)刻意保持全量——
+    "掉线检测"看的是该 caller 最后一次真实活动, 若被窗口过滤, 切 7 天窗口
+    会把 8 天前活跃的项目误报成"从未活跃", 语义错误。
+    """
     today = dt.date.today()
-    src = by_source(searches)
-    ext_health = _ext_health_latest(searches)
+    win = in_window(searches, since, until)
+    src = by_source(win)
+    ext_health = _ext_health_latest(searches)  # 全量: 健康度与活跃性同理不随窗口
+    byc_win = aggregate(win, []).get("by_caller", {})
+    # 行集 = 全量出现过的 caller(窗口外才活跃的项目必须留在矩阵里显 stale,
+    # 否则 7 天窗口会把"掉线项目"整行抹掉, 掉线检测反而失效)
+    all_callers: dict[str, str] = {}
+    for s in searches:
+        c = s.get("caller_repo") or "?"
+        all_callers[c] = max(all_callers.get(c, ""), str(s.get("ts", "")))
     rows = []
-    for c, v in (aggregate(searches, []).get("by_caller", {})).items():
-        last = v["last_ts"][:10]
+    for c, all_ts in all_callers.items():
+        v = byc_win.get(c, {"searches": 0, "hits": 0})
+        last = all_ts[:10]
         stale = False
         if len(last) == 10:
             try:
@@ -202,8 +232,9 @@ def callers(searches: list[dict]) -> list[dict]:
             except ValueError:
                 pass
         rows.append({"caller": c, "searches": v["searches"],
-                     "hit_rate": round(v["hits"] / v["searches"], 4) if v["searches"] else None,
-                     "last_ts": v["last_ts"], "stale": stale,
+                     "hit_rate": (round(v["hits"] / v["searches"], 4)
+                                  if v["searches"] else None),
+                     "last_ts": all_ts, "stale": stale,
                      "by_source": src.get(c, {}),
                      "ext": ext_health.get(c, [])})
     return sorted(rows, key=lambda r: -r["searches"])

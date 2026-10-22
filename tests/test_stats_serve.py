@@ -100,6 +100,31 @@ def test_callers_stale_detection():
     assert rows["fresh"]["stale"] is False and rows["dead"]["stale"] is True
 
 
+def test_callers_window_consistency_with_kpi():
+    """§29 实测: 窗口按钮只作用 KPI, 同屏矩阵数全量 → 两口径。修复后矩阵统计列
+    随窗口; 但活跃性(last_ts/stale)保持全量, 窗口外才活跃的行不得被整行抹掉。"""
+    S = [_search("t1", "a", "v", ["k1"], ts="2026-10-18T10:00:00+08:00"),
+         _search("t2", "a", "v", ["k2"], ts="2026-09-01T10:00:00+08:00"),
+         _search("t3", "ghost", "v", ["k9"], ts="2026-08-01T10:00:00+08:00")]
+    win = {r["caller"]: r for r in stats.callers(S, since="2026-10-01")}
+    kpi = stats.aggregate(S, [], since="2026-10-01")["by_caller"]
+    assert win["a"]["searches"] == kpi["a"]["searches"] == 1      # 统计列与 KPI 同口径
+    assert "ghost" in win and win["ghost"]["searches"] == 0       # 窗口外行保留(显 stale)
+    assert win["ghost"]["stale"] is True
+    assert win["ghost"]["hit_rate"] is None                        # 窗口内 0 次 = —, 非 0%
+    assert win["a"]["last_ts"].startswith("2026-10-18")            # 活跃性看全量
+
+
+def test_boards_honour_time_window():
+    """榜单空态文案写着"窗口内", 实现必须真按窗口数(§29)。"""
+    S = [_search("t1", "a", "热查询", ["k1"], ts="2026-10-18T10:00:00+08:00"),
+         _search("t2", "a", "老零命中", [], ts="2026-08-01T10:00:00+08:00")]
+    s_win = stats.in_window(S, "2026-10-01")
+    assert stats.top_queries(s_win, limit=10) == [{"query": "热查询", "count": 1}]
+    assert stats.zero_hit_board(s_win, limit=10) == []
+    assert len(stats.zero_hit_board(S, limit=10)) == 1             # 不带窗口仍数全量
+
+
 # ---- serve 端点冒烟(临时目录当仓根, 端口 0 自动分配) ----------------------
 
 def _serve(tmp_path, token=None, default_caller=None):

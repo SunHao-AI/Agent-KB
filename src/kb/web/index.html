@@ -595,7 +595,7 @@ $('feed').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.prev
 // 回放: 桥就绪(spider_ready)→ 大浮层 iframe 加载克隆仓整页 session 视图(原生 topbar/
 // transport/词墙切换全保留; serve 导入后已配自动重播+循环)。浮层开着点别的流条目=就地换
 // src(会话 serve 端缓存)。⤢ 可另开整页标签。桥不就绪/失败→回落 SVG 弹层(降级不变)。
-let spiderReady=false,rpUrl='',rpLastFocus=null,rpSwapOnload=null;   // §23 a11y: 开层时记录触发元素, 关闭后归还焦点
+let spiderReady=false,rpUrl='',rpLastFocus=null,rpLastTid=null,rpSwapOnload=null;   // §23 a11y: 开层时记录触发元素/trace, 关闭后归还焦点
 // 停靠分档: 面板宽 = min(1440, 80vw, 100vw-336)(见 --rpw, 第三项保证左列始终留 336px
 // 可点检索流)。视口不足以兑现该保证时(极窄)退回居中大面板(rp-center, feed 被盖属预期)。
 // 纯 CSS 媒体查询无法与 min()/vw 表达式精确联动, 用实测视口宽判定, resize 时重算。
@@ -608,7 +608,8 @@ addEventListener('resize',rpLayout);
 async function openReplay(raw){
   const tid=raw.trace_id||'';if(!tid){playSpider(raw);return;}
   const stage=$('rpStage'),wasOpen=$('rp').classList.contains('open');
-  if(!wasOpen)rpLastFocus=document.activeElement;   // 首次开层才记(换 trace 不覆盖)
+  if(!wasOpen)rpLastFocus=document.activeElement;   // 首次开层才记触发点(换 trace 不覆盖)
+  rpLastTid=tid;                                     // 焦点归还锚定"最后播放的条目"(鼠标点击不一定移动焦点)
   $('rp').classList.remove('closing');               // 取消可能进行中的关闭动画
   $('rp').classList.add('open');rpLayout();
   $('rpMeta').textContent=(raw.query||'-')+' · 连接蜘蛛会话…';
@@ -637,9 +638,13 @@ function rpClose(){const layer=$('rp'),stage=$('rpStage');
   rpDetachSwap();
   stage.classList.remove('swapping','loading','swapin');
   const finish=()=>{layer.classList.remove('open','closing');rpLayout();
-    // §23 a11y: 焦点归还触发条目(✕ 按钮自身即将随层不可见, 不归还则焦点落 body 断键盘循环)
-    const el=rpLastFocus;rpLastFocus=null;
-    if(el&&document.contains(el))el.focus();};
+    // §23 a11y: 焦点归还"最后播放的条目"(优先按 tid 现找——SSE 会重排 DOM, 旧引用可能已脱离;
+    // tid 找不到才退回记录时的元素; 都没有则聚焦过滤框, 不断键盘循环)。
+    // ✕ 按钮自身即将随层不可见, 不归还则焦点落 body 断键盘循环。
+    const byTid=rpLastTid&&document.querySelector(`.feed-item[data-tid="${CSS.escape(rpLastTid)}"]`);
+    const el=byTid||(rpLastFocus&&document.contains(rpLastFocus)?rpLastFocus:null)||$('fq');
+    rpLastFocus=null;rpLastTid=null;
+    if(el&&el.focus)el.focus();};
   $('rpFrame').src='about:blank';rpUrl='';
   // 退场动画: .closing 逆向放 rpIn(此时仍保留 .open 才有 display 可动画), 结束后再收起。
   // reduced motion 下动画被全局停用, animationend 永不触发 → 直接收起, 不能只靠事件。

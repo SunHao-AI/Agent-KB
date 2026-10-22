@@ -83,6 +83,43 @@ def test_zero_hit_board_digested():
     assert by_q["推流 死锁"]["digested"] is False
 
 
+def test_zero_hit_board_digestion_is_time_directional():
+    """§35 实测: 旧实现全量预扫不分先后——"先命中后失败"(条目被降级/删除后检索不到)
+    的词仍标已消化, 待消化榜漏掉恰恰最该补的词。消化必须只看失败**之后**的命中。"""
+    S = [_search("t1", "a", "css slash", ["k1"], ts="2026-10-01T10:00:00+08:00"),
+         # 先命中过, 之后反而查不到了 → 现状未解决, 必须回榜待消化
+         _search("t2", "a", "css slash", [], ts="2026-10-05T10:00:00+08:00")]
+    by_q = {r["query"]: r for r in stats.zero_hit_board(S)}
+    assert by_q["css slash"]["digested"] is False
+    # 失败之后补库命中 → 已消化(A1 正路径, 见 test_zero_hit_board_digested)
+    S2 = [_search("t3", "a", "vite", [], ts="2026-10-01T10:00:00+08:00"),
+          _search("t4", "a", "vite 配置", ["k1"], ts="2026-10-02T10:00:00+08:00")]
+    by_q2 = {r["query"]: r for r in stats.zero_hit_board(S2)}
+    assert by_q2["vite"]["digested"] is True  # 命中 query 分词含失败词也算消化
+
+
+def test_zero_hit_board_suggest_on_failure_event_is_live_path():
+    """§35 实测: build_search_event 旧版从不写 suggest 进事件, stats 却从命中事件读
+    s.get("suggest") ——恒 None 的死分支, "按 suggest 改写后命中"路径从未生效。
+    修复: suggest 挂在**失败事件**上, 后续命中词撞上 suggest 即判消化。"""
+    S = [_search("t1", "a", "长查询 未命中词", [], suggest=["vite", "hmr"],
+                 ts="2026-10-01T10:00:00+08:00"),
+         # agent 按 suggest 改写后命中(suggest 词本身成为后续 query)
+         _search("t2", "a", "vite", ["k1"], ts="2026-10-02T10:00:00+08:00")]
+    by_q = {r["query"]: r for r in stats.zero_hit_board(S)}
+    assert by_q["长查询 未命中词"]["digested"] is True
+
+
+def test_zero_hit_board_multi_caller_requires_all_resolved():
+    """AND 语义: 同词两个 caller, 任一 caller 最新失败后仍无命中(现状未解决),
+    该词必须留在待消化榜——OR 会把 a 的消化误盖到 b 的未解决上。"""
+    S = [_search("t1", "a", "灰度 开关", [], ts="2026-10-01T10:00:00+08:00"),
+         _search("t2", "b", "灰度 开关", [], ts="2026-10-01T11:00:00+08:00"),
+         _search("t3", "a", "灰度 开关", ["k1"], ts="2026-10-02T10:00:00+08:00")]
+    by_q = {r["query"]: r for r in stats.zero_hit_board(S)}
+    assert by_q["灰度 开关"]["count"] == 2 and by_q["灰度 开关"]["digested"] is False
+
+
 def test_top_consumed_and_feed():
     S = [_search("t1", "a", "v", ["k1"]), _search("t2", "a", "v", ["k1"])]
     G = [_get("t1", "k1", "a"), _get("t2", "k1", "a")]

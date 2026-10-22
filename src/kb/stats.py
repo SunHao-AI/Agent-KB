@@ -141,28 +141,45 @@ def top_consumed(searches: list[dict], gets: list[dict], *,
 
 
 def zero_hit_board(searches: list[dict], *, limit: int = 10) -> list[dict]:
-    """零命中榜 + 已消化判定: 同 caller 后续同 query(或其 suggest 词)出现过命中。"""
-    hits_by_caller: dict[str, set[str]] = {}
-    for s in sorted(searches, key=lambda e: str(e.get("ts", ""))):
-        if s.get("returned"):
-            toks = hits_by_caller.setdefault(s.get("caller_repo") or "?", set())
-            q = (s.get("query") or "").strip().lower()
-            if q:
-                toks.add(q)  # 完整 query 串命中 = 最直接的同词消化
-                toks.update(q.split())  # 单 token 命中也算消化(agent 改查单词)
-            for w in (s.get("suggest") or []):
-                toks.add(str(w).lower())
+    """零命中榜 + 已消化判定: 同 caller 在**该次失败之后**(ts 不早于失败)出现命中,
+    且命中词覆盖原 query(或其 suggest 词)。
+
+    时间方向性(第十七轮走查): 旧实现全量预扫不分先后, "先命中后失败"的词(条目被
+    降级/删除/改名后检索不到)仍被标已消化 → 待消化榜漏掉恰恰最该补的词。
+    suggest 挂在**失败事件**上(build_search_event 零命中时透传), 旧实现从命中事件
+    读 s.get("suggest") 恒为 None, suggest 消化路径从未生效。
+    """
+    hits_by_caller: dict[str, list[tuple[str, set[str]]]] = {}
+    for s in searches:
+        if not s.get("returned"):
+            continue
+        toks: set[str] = set()
+        q = (s.get("query") or "").strip().lower()
+        if q:
+            toks.add(q)          # 完整 query 串命中 = 最直接的同词消化
+            toks.update(q.split())  # 单 token 命中也算消化(agent 改查单词)
+        if toks:
+            hits_by_caller.setdefault(s.get("caller_repo") or "?", []).append(
+                (str(s.get("ts", "")), toks))
     board: dict[str, dict] = {}
     for s in searches:
         if s.get("returned") or not s.get("query"):
             continue
         q = s["query"].strip().lower()
-        row = board.setdefault(q, {"query": q, "count": 0, "caller": s.get("caller_repo"),
-                                   "last_ts": "", "digested": False})
-        row["count"] += 1
-        row["last_ts"] = max(row["last_ts"], str(s.get("ts", "")))
-        if q in hits_by_caller.get(s.get("caller_repo") or "?", set()):
-            row["digested"] = True
+        ts = str(s.get("ts", ""))
+        sug = {str(w).strip().lower() for w in (s.get("suggest") or [])}
+        digested = any(hts >= ts and (q in toks or (sug and sug & toks))
+                       for hts, toks in hits_by_caller.get(
+                           s.get("caller_repo") or "?", []))
+        if q not in board:
+            board[q] = {"query": q, "count": 1, "caller": s.get("caller_repo"),
+                        "last_ts": ts, "digested": digested}
+        else:
+            row = board[q]
+            row["count"] += 1
+            row["last_ts"] = max(row["last_ts"], ts)
+            # AND 语义: 任一次失败之后没有命中(某 caller 现状仍未解决), 该词就该留在榜上
+            row["digested"] = row["digested"] and digested
     return sorted(board.values(), key=lambda r: -r["count"])[:limit]
 
 

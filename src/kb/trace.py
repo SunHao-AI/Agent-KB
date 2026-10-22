@@ -239,6 +239,12 @@ def build_search_event(*, trace_id: str, source: str, caller_repo: str,
     }
     if returned_chars is not None:
         ev["returned_chars"] = int(returned_chars)
+    if not returned:
+        # 零命中事件透传 suggest(FR-3.2): 周报"已消化"要判"按 suggest 改写后命中",
+        # 建议词只能挂在失败事件上(第十六轮前的旧实现挂在命中事件侧, 恒 None 死分支)。
+        sug = next((r.get("suggest") for r in reports if r.get("suggest")), None)
+        if sug:
+            ev["suggest"] = list(sug)
     return ev
 
 

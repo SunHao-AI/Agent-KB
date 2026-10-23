@@ -251,6 +251,22 @@ def test_stray_entry_at_kb_root_is_flagged_and_excluded(tmp_repo):
     assert [r["id"] for r in live + draft] == []   # 免检角落封死: 不进任何索引
 
 
+def test_stray_entry_with_broken_yaml_is_flagged(tmp_repo):
+    """§63: stray 判据此前只认"可解析 id"——front-matter 语法坏的散文件(作者显然
+    想写条目, 同时滑了位置与语法)反而静默失踪: 不进 index、lint 两条通道点名不到
+    (schema/语法错误路径只覆盖 iter_entry_paths 内的条目)。修复后语法坏的 kb 根
+    散文件同样点名; 无 front-matter 的纯笔记不受误伤。"""
+    _put(tmp_repo, "kb/broken-loose.md",
+         "---\nid: kb-20261023-bbbb\ntags: [unclosed, flow\ntitle: 坏散文件\n"
+         "type: pitfall\ndomain: [frontend]\nscope: project\nstatus: draft\n"
+         "severity: low\nconfidence: speculative\ncreated: 2026-10-23\n"
+         "updated: 2026-10-23\n---\n\n# 坏散文件\n\n正文。\n")
+    _put(tmp_repo, "kb/plain-note.md", "# 随手笔记\n\n不是条目。\n")
+    errs = lint_repo(tmp_repo, scope="project")
+    assert any("broken-loose.md" in e and "散落的条目文件" in e for e in errs)
+    assert not any("plain-note" in e for e in errs)
+
+
 def test_all_readers_share_single_discovery_rule(tmp_repo):
     """lint/index/gate/query 对"哪些文件是条目"必须给出同一集合(§42 结构性保证:
     全部走 kb.entry.iter_entry_paths)。构造 契约内条目 + kb 根散文件 + 点目录

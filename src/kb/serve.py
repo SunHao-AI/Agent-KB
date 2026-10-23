@@ -362,6 +362,15 @@ class _Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     self._json({"error": f"{k} must be YYYY-MM-DD, got {v!r}"}, 400)
                     return
+        # feed limit 入口校验(§58 同族第四处, 第四十二轮): 此前 `int(q.get(...))`
+        # 把非数值参数炸成 500 internal——客户端错误伪装成服务器故障, 面板只能
+        # 显示"internal: ValueError"无从自助。fail-loud 400 指明参数与期望格式。
+        if "limit" in q:
+            try:
+                int(q["limit"])
+            except ValueError:
+                self._json({"error": f"limit must be an integer, got {q['limit']!r}"}, 400)
+                return
         try:
             if u.path == "/api/health":
                 self._json({"ok": True, "schema": kbtrace.SCHEMA,

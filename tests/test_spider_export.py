@@ -54,6 +54,19 @@ def test_spider_id_sanitizes_and_roundtrips():
     assert spider_export.spider_id("kb-20261012-7f3a") == "kb-20261012-7f3a"
 
 
+def test_get_without_id_key_does_not_crash_consumed():
+    """§55 同函数第二行回归(第四十八轮): read_ids 有 isinstance 守卫而 consumed
+    裸取 g["id"]——净化删过 id 键的 get(§52)遇 returned 里的 null 元素时
+    `None in returned` 判真 → KeyError 掐断回放(/api/replay 与 /api/spider 500)。"""
+    tr = _trace()
+    tr["trace_id"] = None
+    tr["returned"] = ["kb-a", None]
+    gets = [{"kind": "get", "trace_id": None, "ts": "2026-10-15T14:33:00+08:00",
+             "caller_repo": "flysee_video_web", "ok": True}]  # id 键已被净化删除
+    rec = spider_export.to_record(tr, gets)   # 修复前: KeyError 'id'
+    assert rec["consumed"] == []
+
+
 def test_ext_hits_are_ext_route_and_sanitized():
     tr = _trace()
     tr["returned"] = ["kb-a", "source://tdbm/wiki/redis.md"]

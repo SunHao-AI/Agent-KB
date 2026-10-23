@@ -1785,6 +1785,224 @@ Tab 入行 Enter → `view=single&caller=agent-kb`✓。
 **沉淀**: 无既有条目命中(kb search 前端域全查), 新建 `kb-20261023-77e1`
 (自定义可点元素键盘三件套, 自审 accepted/verified)。
 
+## §60 第四十二轮: stats 聚合计算面——limit 家族第四处与错误归位
+
+**选题**: §58 判下"参与比较/切片运算的参数值域必须入口 fail-loud"后, 全仓
+`[:limit]` 表达式 hunt 收敛到最后一处用户可控入口: `/api/feed?limit=`
+(serve.py L401 `int(q.get("limit", 50))`)。stats 其余面(除零守卫、offset
+感知、消化方向、AND 语义)已有 §29/§35/§37 测试网覆盖。
+
+**D-51 feed_events limit 负数切片翻转(实锤+修复, 中)**: 探针 4 条事件
+`limit=-2` 直调与 HTTP 双面均返回 `[t4, t3]`——"要最少给最多"(§51→§56→§58
+→本轮, limit 家族第四处)。修复: `feed_events` ≤0 零名额, 与 read_traces
+同契约。
+
+**D-52 /api/feed?limit=abc 客户端错误伪装 500(实锤+修复, 中)**: `int()` 在
+路由 try 内抛 ValueError → 兜底 except 回 500 `internal: ValueError`——4xx
+的输入问题穿 5xx 的衣, 面板显示"internal:"误导为服务端故障。修复: 与
+since/until 同位置入口校验, 非整数回 400 指明参数名与收到值。
+
+**判据(第八句推论)**: 值域校验"入口拒收 + 被调方归一"成对——入口管**错误
+归位**(兜底 except 分不清"数据坏 500"与"参数错 400"), 被调方管直调面兜底;
+limit 表达式在四个模块独立重现, 佐证新入口会不断重新引入同类洞。
+
+**回归**: test_stats_serve.py +2(feed_events limit 契约、serve 非整数 400),
+pytest **347 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"limit 家族第四处 + 客户端错误伪装
+500"新发现段(第三种故障形态: 有报错但状态码撒谎)。
+
+## §61 第四十三轮: limit 家族收口——search() 公共 API 第五处
+
+**选题**: §60 断言"limit 表达式在四个模块独立出现"后不服, 用 `[:limit]` 表达式
+文本全仓穷尽 hunt(而非记忆中的模块清单), 命中 index/search 双查的后者:
+`search.search()` 公共库 API 的 `rows[:limit]`。index 构建面本体(_records
+排序由 iter_entry_paths 的 sorted 保证、id 重复 lint 点名、export 入口按主键
+防撞 §54)防御已全, 无新坑。
+
+**D-53 search.search limit 负数尾截翻转(实锤+修复, 中)**: 探针 5 条记录
+`limit=-2` 返回 3 条(全量减 2)。这是全族**唯一裸入口**——其余四处都有工具面
+(CLI/MCP/HTTP)间接触发过 limit 测试, search() 的 limit 只被正数测过。修复:
+≤0 零名额, 与 sources/layers/trace/feed 同契约, 全族五处收口。
+
+**判据(hunt 方法论升级)**: "修了 N 处同族"是漏第 N+1 处的认知陷阱——每轮
+修复后以**表达式文本**做全仓穷尽(表达式是有限集, 记忆不是), 别按"我记得改
+过哪些模块"圈范围。
+
+**回归**: test_search_eval.py +1(limit 0/-2 零名额、2 照常), pytest **348
+全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"limit 家族收口"新发现段。
+
+## §62 第四十四轮: gate review/promote/set-scope 状态流面
+
+**选题**: gate 公开写函数的枚举入参守门情况。CLI 面 `kb review --confidence`
+有 argparse choices 挡着, 但 MCP `kb_review` 与直调 gate.review() 没有任何
+校验——这是 §56(severity 非法值落盘)判据指向的同类面。
+
+**D-54 review() confidence 非法值静默忽略(实锤+修复, 中)**: 探针传
+`confidence="verifed"`(拼错)与 `"urgent"`(越界), 两处均**动作成功回执 +
+status 照常流转 accepted + 写 verification 留痕**, 但 confidence 保持原值
+(probable)——索引与回执口径不一致, 且比 §56 severity 更隐蔽: 垃圾值不落盘,
+合法值原地不动, 连事后从数据里发现异常的线索都没有。修复: gate.review()
+头部按 taxonomy `enums.confidence` 校验, 非法值 `GateViolation` 并列出合法
+枚举; 探针复验两场景均拒, 拒绝时不留半成品(status/verification 均未动)。
+
+**判据(§56 第二次独立命中)**: 同一判据(severity→confidence)在两个不同函数
+上命中, 说明逐个hunt枚举参数是被动打法——应固化为**清单式普查**: 把 gate 全部
+公开写函数(review/export_entry/set_scope/promote 等)的枚举入参列成清单, 统一
+过一遍 taxonomy 校验, 一次收口而不是每轮撞一个。
+
+**回归**: test_gate_write.py +1(非法值拒绝且不留半成品、合法值 verified 照常
+提升), pytest **349 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§56 判据第二次命中"新发现段。
+
+## §63 第四十五轮: lint/entry 失踪点名面
+
+**选题**: lint.py 全规则 vs test_lint.py 覆盖对账——规则本体覆盖很全(schema/
+duplicate id/引用/H1 围栏/占位段/指纹/stray 都有锚点), 把靶心移到**规则本身的
+判据**上: §42 反失踪检查 `stray_entry_paths` 的判据是"kb 根散文件且可解析出
+id"。
+
+**D-55 语法坏的 kb 根散文件完全静默失踪(实锤+修复, 中)**: 探针三样本对置——
+完好散文件被点名✓、无 front-matter 纯笔记不报(设计内)✓、**front-matter YAML
+语法坏的散文件零输出**✗。它同时滑了位置与语法(有 id 行却未闭合流), 是"显然想
+写条目"的两证齐全样本, 却比只滑位置的失踪得更彻底: 不进 index、stray 解析不出
+id 不点名、lint 的 YAML 语法错误消息只覆盖 iter_entry_paths 内条目也够不着。
+修复: stray 判据放宽为"带 id **或** yaml_error"(parse 层降级信息直接复用),
+lint 消息按实际分叉措辞; 探针复验语法坏散文件被点名、纯笔记仍不报。
+
+**判据**: **"点名条件建立在可解析性上"的失踪检测, 对坏得最彻底的样本天然
+失明**——越该报警的样本越解析不出报警所需字段, 形成"完好者被点名、残骸者隐身"
+的倒挂。与 §53"修复让问题隐身须显式点名"同一元规则: 每加一层降级, 就要为降级
+样本单独建一条点名通道。
+
+**回归**: test_lint.py +1(语法坏散文件点名+纯笔记不误伤), pytest **350 全绿**;
+ruff F,E9 通过。
+
+**沉淀**: 命中 §42 族主条目 `kb-20261022-8b8f` 追加"§63 坏得越彻底越隐身"新
+发现段。
+
+## §64 第四十六轮: stats 榜单三函数 limit 契约(§58 同族第六~八处)
+
+**选题**: §61 判据"表达式文本穷尽"的机械执行——对 src/ 全仓重跑 `[:limit]`
+grep 逐条对账。§43 说"五处收口"时, 同文件 stats.py 里躺着**三处裸 `[:limit]`**
+(top_queries/top_consumed/zero_hit_board)没人看一眼——§60 修 feed_events 时
+整个文件都在屏幕上, 视线只落在被报障的函数上。
+
+**D-56 三榜单 limit 负数尾截翻转(实锤+修复, 中)**: 探针 `limit=-2` 下
+top_queries/top_consumed 返回"全量减 2", zero_hit_board 因样本 2 条被"去尾
+2"全吃掉。修复: 三函数统一 `rows[:limit] if limit > 0 else []`, 与全族契约
+对齐; `summary(limit)`(内部固定 120)与 `_suggest`(纯内部)语义是"截断长度"
+非"取前 N 名额", 无注入面不过度修。
+
+**判据(§61 再收紧一档)**: **"修完并宣布收口"这个动作会提前关闭你的搜索**——
+收口宣言写下的瞬间该家族在心里"处理完了", 而表达式实例数不因宣言减少。穷尽
+必须是每轮的机械动作(grep→逐条对照守门代码→对不上立靶), 不是收口时的一次性
+动作。本轮三处正是机械重跑撞出来的。
+
+**回归**: test_stats_serve.py +1(三榜单 0/-2 零名额、2 照常), pytest **351
+全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§64 收口宣言自己成了陷阱"新发现段。
+
+## §65 第四十七轮: trace 文件 meta 行不可信输入面
+
+**选题**: §26 净化家族(_coerce)的**覆盖范围**对账——净化器建在事件行上, 同
+一文件的 meta 首行走另一条原始解析路径(`meta.get` / `int(meta["schema"])`),
+从未被问过"你可信吗"。
+
+**D-57 脏 meta 行打崩整库读取(实锤+修复, 高)**: 探针三场景——`schema:"2"`
+(字符串数字)碰巧能过; **`schema:"v2"` → int() ValueError 崩 `read_traces`,
+stats/feed/callers 三端点全挂**; meta 行是 JSON 数组 → `.get` AttributeError
+同崩。爆炸半径与被净化保护的事件行崩掉完全相同, 而 trace 文件明示"由各客户端/
+手工写入"属不可信输入。修复: 非对象 meta 行按缺 meta 跳过, 非数值 schema 按
+本地版本兼容读取+warn(读不懂版本标记≠数据坏), 事件不丢; 探针复验三场景全存活。
+
+**判据**: **净化以"输入边界"为范围单位, 不以"字段多少"为单位**——"净化器只
+覆盖它被编写时盯着的那部分输入", 元数据行被潜意识归为"自家写侧可信"是灯下黑。
+审净化器要问"这个边界内还有哪些解析路径没经过它", 不是"这个函数字段防全没"。
+
+**回归**: test_trace.py +2(非数值 schema 兼容读取不丢事件 / 非对象 meta 行
+跳过), pytest **353 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§65 净化家族灯下黑"新发现段。
+
+## §66 第四十八轮: spider_export 同函数相邻两行防线不等厚
+
+**选题**: §62"清单式普查"判据向函数内收缩——同一份数据在一个函数里被消费
+多次时, 每次消费的防线是否等厚。读 `spider_export.to_record` 时发现 read_ids
+与 consumed 两个相邻集合推导消费同一 `get_evs`, 守卫厚度却不同。
+
+**D-58 consumed 裸取 `g["id"]` KeyError 掐断回放(实锤+修复, 中)**: read_ids
+有 `isinstance(g.get("id"), str)` 守卫, 两行外的 consumed 是裸 `g["id"]`——
+§52 净化删过 id 键的 get 事件, 只要 returned 里混进 null 元素(JSON 合法,
+`_coerce` 不清列表元素), `None in returned` 判真, `g["id"]` KeyError 沿
+to_record 上炸 /api/replay、/api/spider 500。探针场景 A 实锤 KeyError, 场景 B
+(returned 无 null)对照通过; 修复补同款守卫后两场景均存活, consumed 干净为空。
+
+**判据**: **"同函数第二行"**——防线是**表达式级**的不是**数据级**的, 同一变量
+在本函数内第二次被消费时完全可以裸奔, 且相邻两行在评审视线里容易被归为"刚防
+过的同一段逻辑"。修完某行对 X 的守卫后, 立即 grep X 在本文件的全部其他消费点
+逐点确认; 评审时"上一行 `.get(k)` 下一行 `[k]`"相邻对直接按缺陷读。这是 §62
+(清单式普查)与 §64(修完即失明)判据的微观终态: 视线单元可缩到函数内相邻两行。
+
+**回归**: test_spider_export.py +1(get 缺 id 键 + returned 含 null 不崩),
+pytest **354 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§66 同函数相邻两行防线不等厚"新发现段。
+
+## §67 第四十九轮: cli trace export --latest 对净化可删键裸索引
+
+**选题**: §66"同函数第二行"判据换尺度重跑——净化器(_coerce §52)声明 trace_id
+非字符串**删键**, 即对全仓下游宣布"该键可能缺失"; 按新机械动作对全仓
+`["trace_id"]` 裸索引 grep, 唯一命中 `cli.py` export --latest 的
+`newest[0]["trace_id"]`。
+
+**D-59 export --latest KeyError traceback(实锤+修复, 中)**: 探针写入最新事件
+trace_id=12345(int)——`_coerce` 删键后 `newest[0]["trace_id"]` KeyError 未捕获,
+CLI 直接 traceback。讽刺点是 `_newest_first` 把坏样本排最前, "取最新"必踩雷;
+同一数据 `trace list` 正常(全用 `.get`)。修复: 取键校验非字符串则如实报错
+退 1 引导显式 `<id>`(不做"跳过坏条找次新"的过度设计); 探针复验 rc=1 干净报错。
+
+**判据**: **净化器的"删键"是对全仓下游的契约变更**, 消费点散布在其他模块,
+写净化器的人看不到。每新增删键分支即对该键名全仓裸索引 grep 一遍; 评审看到
+`ev["k"]` 先问"k 是不是净化可删键"。§66+§67 合并: 防线审计的视线单元从
+"相邻两行"扩到"生产者-消费者全链"。
+
+**回归**: test_trace_command.py +1(坏 trace_id 最新事件下 export --latest 退 1
+不 traceback), pytest **354 全绿 + 1 flaky**(test_spider_live 时序用例全量套件
+下偶发失败、单跑 10/10 通过, sleep 0.3/max_sec 2.5 真实等待在负载下不足,
+登记观察非本轮引入); ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§67 净化删键契约没有下游消费清单"新发现段。
+
+## §68 第五十轮: 净化可删键全链普查——生产者往消费集合塞 None
+
+**选题**: §67 机械动作整轮执行——对 _coerce 全部净化可删键(trace_id/id/
+caller_repo/layer/source/ts/layers/ext/suggest/read/query)做全仓裸索引普查,
+消费点逐条核对来源面, 顺路审到消费集合的生产者。
+
+**D-60 _gets_by_trace 把 None 装进消费集合(实锤+修复, 中)**: get 事件 id 被
+净化删键后, `add(g.get("id"))` 不看类型, None 进入"已消费 id 集合"。三下游
+三症状: **top_consumed** `g["id"] in consumed` 真分支裸取 KeyError; **feed
+read** None+str 混合 `sorted()` TypeError(单 None 时输出 `[null]` 污染 API);
+**aggregate consumed_total** 把 None 记成真实消费——KPI 虚高不崩但说谎, 比崩
+更隐蔽。探针三场景实锤(场景1 TypeError/场景2 KeyError/场景3 虚报 1), 修复在
+生产者侧一行 `isinstance(gid, str)` 类型收敛, 复验三场景全干净、consumed_total
+归正。
+
+**判据**: §67 的另一半——删键的下游债不只有裸索引点, 还有**把可缺值装进有
+类型语义容器的生产者**。审删键分支问两句: "谁裸索引这个键"(§67)、"谁把它装进
+容器再分发"(§68)。装容器处=类型收敛点, 守一次胜过消费方逐点补防。
+
+**回归**: test_stats_serve.py +1(删键 get 混正常 get: top_consumed 只计正常、
+read 不 TypeError、consumed_total 不虚报), pytest **356 全绿**(flaky 用例本轮
+未复现); ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§68 生产者往消费集合塞 None"新发现段。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

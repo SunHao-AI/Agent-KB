@@ -219,6 +219,14 @@ def review(repo, id: str, to: str, today: dt.date | None = None, *,
     p = _find(repo, id)
     e = parse_entry(p)
     fm = dict(e.fm)
+    # confidence 枚举守门(第四十四轮走查 D-54, §56 severity 同判据): CLI 面有
+    # argparse choices 挡, MCP kb_review 经 gate 直写没有——`confidence='verifed'`
+    # 拼错时旧实现静默忽略(字段保持原值)却照常 accepted + 写 verification 留痕,
+    # 调用方以为已提升 verified, 索引里实际还是 probable。
+    if confidence is not None and confidence not in load_taxonomy()["enums"]["confidence"]:
+        raise GateViolation(
+            f"unknown confidence: {confidence} "
+            f"(valid: {', '.join(load_taxonomy()['enums']['confidence'])})")
     if to == "accepted" and confidence in ("verified", "probable"):
         fm["confidence"] = confidence
     frm = e.fm.get("status", "")

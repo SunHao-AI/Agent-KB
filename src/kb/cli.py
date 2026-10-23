@@ -419,7 +419,15 @@ def _dispatch(argv: list[str] | None = None) -> int:
                     print("no trace records" + (f" for caller={args.caller}"
                                                 if args.caller else ""), file=sys.stderr)
                     return 1
-                args.id = newest[0]["trace_id"]
+                # §66 同函数第二行的对端: trace_id 是 §52 净化可删的键, 最新事件
+                # trace_id 非字符串被删键后这里裸索引 KeyError(未捕获 → traceback)。
+                # 如实报错退 1, 引导显式 <id>; 不做"跳过坏条找次新"的过度设计。
+                tid = newest[0].get("trace_id")
+                if not isinstance(tid, str):
+                    print("export: 最近一次检索缺有效 trace_id(已按缺失净化), "
+                          "请显式指定 <id>", file=sys.stderr)
+                    return 1
+                args.id = tid
             ev = kbtrace.find_trace(args.id, root=root)
             if ev is None:
                 print(f"trace not found: {args.id}", file=sys.stderr)

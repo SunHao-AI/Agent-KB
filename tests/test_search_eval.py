@@ -76,6 +76,16 @@ def test_search_delegates_and_limit_unchanged(tmp_path):
     assert search.search(tmp_path, query="nope") == []
 
 
+def test_search_limit_contract_nonpositive(tmp_path):
+    """§58 同族第五处(第四十三轮): search() 公共库 API 的 `rows[:limit]` 是全族
+    唯一漏网——`limit=-2` 旧行为返回全量减 2 条(尾截翻转, "要最少给最多")。
+    修复后 ≤0 零名额, 与 sources/layers/trace/feed 同契约。"""
+    _mk(tmp_path, [_rec(i) for i in range(5)])
+    assert search.search(tmp_path, limit=0) == []
+    assert search.search(tmp_path, limit=-2) == []   # 旧行为: 返回 3 条(全量减 2)
+    assert len(search.search(tmp_path, limit=2)) == 2
+
+
 def test_case_insensitive(tmp_path):
     _mk(tmp_path, [_rec(1, title="Vite HMR Guide", tags=(), summary="")])
     _, rep = search.evaluate(tmp_path, query="VITE")

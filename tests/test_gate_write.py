@@ -130,6 +130,24 @@ def test_review_agent_accept_still_blocks_speculative(tmp_repo):
         review(tmp_repo, "kb-20261014-a3a3", "accepted", by="agent")
 
 
+def test_review_invalid_confidence_rejected(tmp_repo):
+    """§56 同判据(第四十四轮 D-54): MCP kb_review 无 argparse choices, confidence
+    拼错('verifed')旧实现**静默忽略**却照常 accepted + 写 verification 留痕——
+    调用方以为提升 verified, 索引实际还是 probable(比报错危险的静默失真)。
+    守门挂 review 头部, 枚举唯一事实源 taxonomy。"""
+    _mk(tmp_repo, "kb-20261014-c1c1", status="proposed", conf="probable")
+    with pytest.raises(GateViolation, match="unknown confidence"):
+        review(tmp_repo, "kb-20261014-c1c1", "accepted", by="agent",
+               confidence="verifed", evidence="x", today=TODAY)
+    # 拒绝不留半成品: 状态仍 proposed、无 verification
+    e = parse_entry(tmp_repo / "kb" / "pitfall" / "frontend" / "kb-20261014-c1c1.md")
+    assert e.fm["status"] == "proposed" and "verification" not in e.fm
+    # 合法值照常提升
+    e = review(tmp_repo, "kb-20261014-c1c1", "accepted", by="agent",
+               confidence="verified", evidence="实测", today=TODAY)
+    assert e.fm["confidence"] == "verified"
+
+
 # --- §43 第二十五轮: 写路径改 live 池字段后必须重建索引 ---
 def test_review_accepted_makes_entry_searchable_immediately(tmp_repo):
     """红线1 闭环: agent 自审 accepted"无需等人工"——若 review 不重建 index.jsonl,

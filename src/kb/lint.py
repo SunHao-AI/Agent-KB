@@ -49,7 +49,9 @@ def lint_repo(repo_root: Path, scope: str = "project",
     # 它们不再进 index/检索, 若不显式报错就变成"静默失踪"(比免检更糟), 必须点名
     # (§42: 发现规则统一后散落条目从"进检索免检"翻转为"不可见", 两端都要堵)。
     for p in stray_entry_paths(repo_root):
-        errors.append(f"{p.name}: 散落的条目文件(kb 根直下): 带 id 但不符合"
+        # §63: 判据放宽后 stray 也可能只有坏 front-matter 而无 id, 措辞按实际分叉
+        mark = "带 id " if parse_entry(p).fm.get("id") else "front-matter 语法坏"
+        errors.append(f"{p.name}: 散落的条目文件(kb 根直下): {mark}但不符合"
                       f" kb/<type>/<domain>/<slug>.md 布局, 不进检索索引, 请移入条目目录")
     ids = {e.fm.get("id") for e in entries}
     id_counts = Counter(e.fm.get("id") for e in entries if e.fm.get("id"))

@@ -166,12 +166,26 @@ def _parse_file(f: Path) -> tuple[list, list, list]:
             meta = json.loads(lines[0])
         except json.JSONDecodeError:
             meta = {}
-        if meta.get("kind") != "meta":
+        # meta 行同属不可信输入(§26 净化了事件行却漏了 meta 行, §47): 非对象行
+        # (JSON 数组/标量)让 .get 抛 AttributeError、schema 非数值让 int() 抛
+        # ValueError——_parse_file 爆炸沿 read_traces 上炸 stats/feed/callers
+        # 三端点全挂, 与事件行崩的爆炸半径完全相同。
+        skip = False
+        if not isinstance(meta, dict) or meta.get("kind") != "meta":
             warns.append(f"{f.name}: 缺 meta 首行, 跳过")
-        elif int(meta.get("schema", 0)) > SCHEMA:
-            warns.append(f"{f.name}: schema={meta.get('schema')} "
-                         f"高于本地 {SCHEMA}, 跳过")
+            skip = True
         else:
+            try:
+                schema = int(meta.get("schema", 0))
+            except (TypeError, ValueError):
+                schema = SCHEMA  # 读不懂的 schema 标记: 按兼容处理, 事件仍如实呈现
+                warns.append(f"{f.name}: schema={meta.get('schema')!r} 非数值, "
+                             f"按本地 {SCHEMA} 兼容读取")
+            if schema > SCHEMA:
+                warns.append(f"{f.name}: schema={meta.get('schema')} "
+                             f"高于本地 {SCHEMA}, 跳过")
+                skip = True
+        if not skip:
             for ln in lines[1:]:
                 try:
                     ev = json.loads(ln)

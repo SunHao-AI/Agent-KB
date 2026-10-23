@@ -138,12 +138,21 @@ def iter_entry_paths(repo_root) -> list[pathlib.Path]:
 
 def stray_entry_paths(repo_root) -> list[pathlib.Path]:
     """布局契约外的"散落条目": kb 根直下的 *.md(非生成物)且带可解析 front-matter
-    id。它们被 iter_entry_paths 排除在检索外, 但带 id 说明是手滑放错位置的条目
+    id, **或 front-matter YAML 语法坏**(§63: 判据只认"可解析 id"时, 语法坏的散
+    文件——作者显然想写条目却同时滑了位置和语法——反而静默失踪, 恰是最该点名的一类;
+    无 front-matter 的纯笔记 fm={} 且 yaml_error=None, 不受误伤)。它们被
+    iter_entry_paths 排除在检索外, 但带 id 说明是手滑放错位置的条目
     (静默不可见比报错更糟), 由 lint 显式报出。只查 kb 根一层, 不下探点目录
     (外仓自管)。
     """
     kb = pathlib.Path(repo_root) / "kb"
     if not kb.exists():
         return []
-    return [p for p in sorted(kb.glob("*.md"))
-            if p.name not in GENERATED_NAMES and parse_entry(p).fm.get("id")]
+    out: list[pathlib.Path] = []
+    for p in sorted(kb.glob("*.md")):
+        if p.name in GENERATED_NAMES:
+            continue
+        e = parse_entry(p)
+        if e.fm.get("id") or e.yaml_error:
+            out.append(p)
+    return out

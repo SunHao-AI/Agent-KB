@@ -89,8 +89,13 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
             events.append({"id": spider_id(eid), "label": f"外接 {e.get('source')}: {eid}"[:40],
                            "route": final, "status": "completed",
                            "detail": f"source://{e.get('source')}"})
+    # §55 同函数第二行(第四十八轮): read_ids 加了 isinstance 守卫, 两行外的
+    # consumed 仍是裸 `g["id"]`——净化删过 id 键的 get(§52)遇 returned 里的
+    # null 元素(JSON 合法, _coerce 不清列表元素)时 `None in returned` 判真,
+    # `g["id"]` KeyError 掐断回放。同一行数据两侧口径必须一致。
     consumed = {g["id"] for g in get_evs
-                if g.get("trace_id") == sid and g.get("id") in returned}
+                if g.get("trace_id") == sid
+                and isinstance(g.get("id"), str) and g["id"] in returned}
     events.sort(key=lambda e: (e["route"] != "code", e["route"] != "model",
                                e["route"] != "ext", e["id"]))
     layers_note = " · ".join(

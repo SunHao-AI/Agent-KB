@@ -179,4 +179,7 @@ def search(repo_root: Path, type=None, domain=None, tag=None, scope=None,
            status=None, confidence=None, query=None, limit: int = 20) -> list[dict]:
     rows, _ = evaluate(repo_root, type=type, domain=domain, tag=tag, scope=scope,
                        status=status, confidence=confidence, query=query)
-    return rows[:limit]
+    # limit 契约(§58 同族第五处, 第四十三轮): 公共库 API 的负数入参同样受
+    # `[:-2]` 尾截翻转影响("要最少给最多"); ≤0 零名额, 与 sources/layers/
+    # trace/feed 同契约——同族四处已修, 漏这一处即全族判据未落地完整。
+    return rows[:limit] if limit > 0 else []

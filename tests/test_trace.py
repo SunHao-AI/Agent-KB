@@ -110,6 +110,24 @@ def test_read_skips_future_schema(kbroot):
     assert any("schema" in w for w in warns)
 
 
+def test_read_survives_nonnumeric_meta_schema(kbroot):
+    """§47 回归(第四十七轮): meta 行也是不可信输入——schema='v2' 曾让 int()
+    抛 ValueError 打崩整个 read_traces(stats/feed/callers 三端点全挂, 与事件行
+    崩同半径); meta 行是 JSON 数组时 .get 抛 AttributeError 同崩。修复: 非数值
+    schema 按本地兼容读取+warn, 非对象 meta 行按缺失跳过。"""
+    _write(kbroot, "2026-01-03.jsonl", ['{"kind": "meta", "schema": "v2"}', _ev(1)])
+    searches, _, warns = trace.read_traces(root=kbroot)
+    assert [s["trace_id"] for s in searches] == ["t-1"]  # 兼容读取不丢事件
+    assert any("非数值" in w for w in warns)
+
+
+def test_read_survives_meta_line_non_dict(kbroot):
+    _write(kbroot, "2026-01-04.jsonl", ["[1, 2]", _ev(2)])
+    searches, _, warns = trace.read_traces(root=kbroot)
+    assert searches == []
+    assert any("meta" in w for w in warns)
+
+
 def test_read_skips_bad_line_and_warns(kbroot):
     _write(kbroot, f"{dt.date.today():%Y-%m-%d}.jsonl",
            [{"kind": "meta", "schema": 1}, _ev(1), "{ broken json", _ev(2)])

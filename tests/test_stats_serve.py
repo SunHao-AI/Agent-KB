@@ -176,6 +176,63 @@ def test_top_consumed_and_feed():
     assert feed[0]["details"]["k1"]["title"] == "Tk1"
 
 
+def test_gets_by_trace_drops_non_str_id():
+    """§67(第五十轮): get 事件 id 被净化删键后, _gets_by_trace 裸 add 把 None
+    塞进消费集合——top_consumed 遇 `g["id"]` KeyError、feed read 遇 None+str
+    混合 sorted TypeError、aggregate consumed_total 虚报。集合元素必须是 str。"""
+    S = [_search("t1", "a", "q", ["kb-a", None])]   # returned 含 null 元素
+    G = [{"kind": "get", "trace_id": "t1", "source": "mcp",      # id 键被净化删除
+          "caller_repo": "a", "ok": True, "ts": "2026-10-18T10:00:05+08:00"},
+         _get("t1", "kb-a", "a")]
+    assert stats.top_consumed(S, G) == [{"id": "kb-a", "title": "Tkb-a", "count": 1}]
+    feed = stats.feed_events(S, G)
+    assert feed[0]["read"] == ["kb-a"]   # 混合形态不再 TypeError
+    assert stats.aggregate(S, G)["consumed_total"] == 1   # None 不再冒充消费
+
+
+def test_feed_events_limit_contract_nonpositive():
+    """§58 同族第四处(第四十二轮): feed_events limit 负数切片 `[:-2]` 是"去尾"
+    语义, `limit=-2` 返回倒数第二条起的全部——"要最少给最多"翻转。修复后 ≤0
+    零名额, 与 read_traces / search_layers_report 同契约。"""
+    S = [_search(f"t{i}", "a", f"q{i}", [], ts=f"2026-10-2{i}T10:00:00+08:00")
+         for i in range(1, 5)]
+    assert stats.feed_events(S, [], limit=0) == []
+    assert stats.feed_events(S, [], limit=-2) == []   # 旧行为: 返回 t4/t3(全量减 2)
+    assert [e["trace_id"] for e in stats.feed_events(S, [], limit=2)] == ["t4", "t3"]
+
+
+def test_board_functions_limit_contract_nonpositive():
+    """§58 同族(第四十六轮): top_queries/top_consumed/zero_hit_board 三榜单
+    与 feed_events 同文件同族却各自漏网——`[:limit]` 负数尾截"要最少给最多"
+    翻转。修复后 ≤0 零名额; limit=2 照常截前 2。"""
+    S = [_search(f"t{i}", "a", f"q{i}", [f"kb-x{i}"] if i % 2 == 0 else [],
+                 ts=f"2026-10-2{i}T10:00:00+08:00") for i in range(1, 6)]
+    G = [{"kind": "get", "trace_id": f"t{i}", "ts": f"2026-10-2{i}T10:01:00+08:00",
+          "caller_repo": "a", "id": f"kb-x{i}", "ok": True} for i in range(2, 6, 2)]
+    for fn, args in ((stats.top_queries, (S,)),
+                     (stats.top_consumed, (S, G)),
+                     (stats.zero_hit_board, (S,))):
+        assert fn(*args, limit=0) == [], fn
+        assert fn(*args, limit=-2) == [], fn   # 旧行为: 全量减 2(尾截翻转)
+    assert len(stats.top_queries(S, limit=2)) == 2
+
+
+def test_serve_feed_limit_noninteger_rejected_400(tmp_path):
+    """§58 同族(第四十二轮): /api/feed?limit=abc 此前被 `int()` 炸成 500
+    internal——客户端错误伪装成服务器故障。修复: 入口校验回 400 指明参数;
+    负数合法(零名额语义在 stats 层), 数值照常。"""
+    srv, base = _serve(tmp_path)
+    try:
+        for bad in ("abc", "1.5", "1e3"):
+            st, body = _get_any(f"{base}/api/feed?limit={bad}")
+            assert st == 400 and "limit" in body["error"], bad
+        st, body = _get_url(f"{base}/api/feed?limit=2")
+        assert st == 200 and isinstance(body, list)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_callers_stale_detection():
     S = [_search("t1", "fresh", "v", ["k1"], ts="2026-10-19T10:00:00+08:00"),
          _search("t2", "dead", "v", ["k1"], ts="2026-01-01T10:00:00+08:00")]

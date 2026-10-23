@@ -65,8 +65,13 @@ def _gets_by_trace(gets: list[dict]) -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     for g in gets:
         tid = g.get("trace_id")
-        if tid and g.get("ok"):
-            out.setdefault(tid, set()).add(g.get("id"))
+        gid = g.get("id")
+        # §67 生产者-消费者全链(第五十轮): id 是 §52 净化可删键, 此前裸 add 把
+        # None 塞进消费集合——下游一半 `x in consumed` 判真后 `g["id"]` KeyError
+        # (top_consumed), 一半 sorted() 遇 None+str 混合 TypeError(feed read)。
+        # 集合语义要求元素是 str, 在唯一的入口守一次, 消费方不再逐点补防。
+        if tid and g.get("ok") and isinstance(gid, str):
+            out.setdefault(tid, set()).add(gid)
     return out
 
 
@@ -136,13 +141,18 @@ def aggregate(searches: list[dict], gets: list[dict], *,
 
 
 def top_queries(searches: list[dict], *, limit: int = 10) -> list[dict]:
-    """热门被消费 query(按命中次数); 面板榜单用。"""
+    """热门被消费 query(按命中次数); 面板榜单用。
+
+    limit 契约(§58 同族, 第四十六轮): ≤0 零名额——负数切片 `[:-2]` 是"去尾"
+    不是"取前 -2", "要最少给最多"翻转(top_consumed/zero_hit_board 同修)。
+    """
     cnt: dict[str, int] = {}
     for s in searches:
         if s.get("returned") and s.get("query"):
             cnt[s["query"]] = cnt.get(s["query"], 0) + 1
-    return [{"query": q, "count": c}
-            for q, c in sorted(cnt.items(), key=lambda x: -x[1])[:limit]]
+    rows = [{"query": q, "count": c}
+            for q, c in sorted(cnt.items(), key=lambda x: -x[1])]
+    return rows[:limit] if limit > 0 else []
 
 
 def top_consumed(searches: list[dict], gets: list[dict], *,
@@ -159,8 +169,9 @@ def top_consumed(searches: list[dict], gets: list[dict], *,
     for g in gets:
         if g.get("ok") and g.get("id") in consumed:
             cnt[g["id"]] = cnt.get(g["id"], 0) + 1
-    return [{"id": i, "title": titles.get(i, ""), "count": c}
-            for i, c in sorted(cnt.items(), key=lambda x: -x[1])[:limit]]
+    rows = [{"id": i, "title": titles.get(i, ""), "count": c}
+            for i, c in sorted(cnt.items(), key=lambda x: -x[1])]
+    return rows[:limit] if limit > 0 else []  # limit 契约同 top_queries(§58 同族)
 
 
 def zero_hit_board(searches: list[dict], *, limit: int = 10) -> list[dict]:
@@ -203,7 +214,8 @@ def zero_hit_board(searches: list[dict], *, limit: int = 10) -> list[dict]:
             row["last_ts"] = _later(row["last_ts"], ts)
             # AND 语义: 任一次失败之后没有命中(某 caller 现状仍未解决), 该词就该留在榜上
             row["digested"] = row["digested"] and digested
-    return sorted(board.values(), key=lambda r: -r["count"])[:limit]
+    rows = sorted(board.values(), key=lambda r: -r["count"])
+    return rows[:limit] if limit > 0 else []  # limit 契约同 top_queries(§58 同族)
 
 
 def feed_events(searches: list[dict], gets: list[dict], *, caller: str | None = None,
@@ -216,7 +228,10 @@ def feed_events(searches: list[dict], gets: list[dict], *, caller: str | None = 
     S = [s for s in searches if not caller or s.get("caller_repo") == caller]
     got_by_tid = _gets_by_trace(gets)
     out = []
-    for s in sorted(S, key=lambda e: _ts_key(e.get("ts")), reverse=True)[:limit]:
+    # limit 契约(§58 同族第四处, 第四十二轮): 负数切片 `[:-2]` 是"去尾"不是
+    # "取前 -2", 语义翻转为"要最少给最多"; ≤0 一律零名额(read_traces 同款)。
+    order = sorted(S, key=lambda e: _ts_key(e.get("ts")), reverse=True)
+    for s in (order[:limit] if limit > 0 else []):
         tid = s.get("trace_id")
         returned = s.get("returned", [])
         ret_set = set(returned)

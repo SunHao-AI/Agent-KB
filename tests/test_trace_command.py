@@ -61,6 +61,20 @@ def test_list_repo_flag(tmp_path, monkeypatch, capsys):
     assert "t-10" in out and "t-11" in out
 
 
+def test_export_latest_survives_sanitized_trace_id(env, capsys):
+    """§66(第四十九轮): 最新事件 trace_id 非字符串被 _coerce 删键后,
+    export --latest 裸索引 newest[0]["trace_id"] KeyError 直接 traceback。
+    修复后如实报错退 1, 引导显式 <id>。"""
+    trace.append_event({"kind": "search", "trace_id": 12345,   # 非字符串 → 净化删键
+                        "ts": "2026-10-16T10:00:00+08:00", "source": "cli",
+                        "caller_repo": "web", "query": "q", "returned": []},
+                       root=env)
+    _seed(env)   # 次新的正常事件 t-11(ts 10-15), 最新一条是坏 trace_id
+    capsys.readouterr()
+    assert main(["trace", "export", "--latest"]) == 1
+    assert "trace_id" in capsys.readouterr().err
+
+
 def test_since_invalid_date_rejected(env, capsys):
     """§58(第四十轮): 字符串比较式日期过滤对非法 --since 静默滤空且 exit 0——
     "暂无记录"冒充"窗口没数据"、周报"已全部消化"假绿。argparse 入口即拒。"""

@@ -118,6 +118,25 @@ def _coerce(ev: dict, warns: list[str], src: str) -> None:
         elif not isinstance(v, list):
             warns.append(f"{src}: {k} 非列表({type(v).__name__}), 按缺失处理")
             del ev[k]
+    # §52: 身份字段非字符串同族——caller_repo/ts 会进 by_caller 键与 ts_key 比较,
+    # ingest 口已拒收(serve §52), 但手工写入/异构客户端的存量文件仍可能带 dict/
+    # list; 读侧一并净化(删键+warn), 坏事件降级为"项目未知"而非打崩聚合。
+    for k in ("trace_id", "id", "caller_repo", "layer", "source", "ts"):
+        v = ev.get(k)
+        if v is not None and not isinstance(v, str):
+            warns.append(f"{src}: {k} 非字符串({type(v).__name__}), 按缺失处理")
+            del ev[k]
+    # §55: query 是检索词而非身份, 数值查询(agent 查"123"被 JSON 化成 123)
+    # 标量化保留语义; 容器(list 不可哈希、dict)删键——消费方 top_queries 拿它
+    # 做 Counter 键、zero_hit_board 调 .strip(), 第三十七轮实测双双崩。
+    q = ev.get("query")
+    if q is not None and not isinstance(q, str):
+        if isinstance(q, (int, float, bool)):
+            ev["query"] = str(q)
+            warns.append(f"{src}: query 非字符串({type(q).__name__}), 已转字符串")
+        else:
+            del ev["query"]
+            warns.append(f"{src}: query 为容器({type(q).__name__}), 按缺失处理")
     for k in ("chars", "returned_chars"):
         v = ev.get(k)
         if v is not None and not isinstance(v, (int, float)):
@@ -227,7 +246,10 @@ def read_traces(root: Path | None = None, *, caller: str | None = None,
         searches = [s for s in searches if not s.get("returned")]
     searches, gets = _newest_first(searches), _newest_first(gets)
     if limit is not None:
-        searches = searches[:limit]
+        # limit 契约(§58, sources/layers 同族): Python 切片 `[:-2]` 是"去掉尾部
+        # 两个"而非"取前 -2 个"——`kb trace list --limit -2` 曾返回全量减 2 条,
+        # "要最少给最多"的翻转语义。≤0 一律零名额(空), None 才是"不限"。
+        searches = searches[:limit] if limit > 0 else []
     return searches, gets, warns
 
 

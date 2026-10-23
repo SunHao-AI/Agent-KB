@@ -29,7 +29,7 @@
         padding:4px 12px;border-radius:14px;letter-spacing:1px;flex:none}
   .conn.bad{color:var(--bad);border-color:#5a2d26;animation:pulse 1.4s infinite}
   @keyframes pulse{50%{opacity:.45}}
-  button:focus-visible,input:focus-visible,.feed-item:focus-visible,.drill:focus-visible{outline:2px solid var(--ext);outline-offset:2px}
+  button:focus-visible,input:focus-visible,.feed-item:focus-visible,.drill:focus-visible,.matrix-link:focus-visible{outline:2px solid var(--ext);outline-offset:-2px}
   .card{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:16px 18px;margin:14px 0}
   .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
   .kpi{background:var(--panel2);border:1px solid var(--bd);border-radius:10px;padding:13px;transition:border-color .18s}
@@ -288,14 +288,19 @@ async function loadMatrix(){
       +srcs.map(([k])=>`${k}: ${bs[k]} 次(${(100*bs[k]/total).toFixed(0)}%)`).join(' / ');
     const bar=srcs.map(([k,,c],i)=>`<div title="${barTitle}" style="flex:${bs[k]};min-width:3px;background:${c}${i?';border-left:1px solid rgba(255,255,255,.25)':''}"></div>`).join('');
     const health=(x.ext||[]).map(e=>`<span title="${esc(e.error||'ok')}" style="color:${e.ok?'var(--ok,#42D6A4)':'var(--bad)'}">●${esc(e.source)}</span>`).join(' ')||'—';
-    return `<tr class="${x.stale?'stale':''} matrix-link" data-caller="${esc(x.caller)}" title="点击下钻到 ${esc(x.caller)} 单项目视图"><td>${esc(x.caller)}</td><td>${x.searches}</td>
+    // §59(D-50): 行级 onclick 交互必须同步 tabindex+role+键盘处理——此前矩阵行是
+    // 全屏唯一"仅鼠标可操作"的交互(同页零命中榜行/检索流条目均有), 键盘 Tab 直接跳过。
+    return `<tr class="${x.stale?'stale':''} matrix-link" data-caller="${esc(x.caller)}" tabindex="0" role="button" aria-label="下钻到项目 ${esc(x.caller)} 单项目视图" title="点击下钻到 ${esc(x.caller)} 单项目视图"><td>${esc(x.caller)}</td><td>${x.searches}</td>
     <td>${x.hit_rate==null?'—':(x.hit_rate*100).toFixed(1)+'%'}</td>
     <td><div style="display:flex;height:10px;min-width:90px;border-radius:3px;overflow:hidden;background:#ffffff14">${bar}</div></td>
     <td>${health}</td><td>${fmtTs(x.last_ts)}</td>
     <td>${x.stale?'⚠ trace 掉线(>14d)':'活跃'}</td></tr>`;}).join('');
-  $('matrix').querySelectorAll('.matrix-link').forEach(tr=>tr.onclick=()=>{
-    view='single';caller=tr.dataset.caller;render(true);   // 下钻入栈: 返回键可回联邦
-    banner('ok',`已下钻到项目 <b>${esc(caller)}</b>(单项目视图)`);});
+  $('matrix').querySelectorAll('.matrix-link').forEach(tr=>{
+    const go=()=>{view='single';caller=tr.dataset.caller;render(true);   // 下钻入栈: 返回键可回联邦
+      banner('ok',`已下钻到项目 <b>${esc(caller)}</b>(单项目视图)`);};
+    tr.onclick=go;
+    tr.onkeydown=e=>{if(e.target!==tr)return;   // M-1 同款: 仅焦点在行本身时响应, 防内部元素冒泡双触发
+      if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}};});
 }
 // ---- 检索流: 数组真源 + 过滤 + 客户端分页(50/页) ----
 // feedArr 新→旧; SSE search 事件 unshift, get(已读)事件并入对应 trace 的 read。

@@ -111,10 +111,13 @@ def event_to_updates(search: dict) -> tuple[dict, list[dict]]:
     # returned 且调用方未必都过它), .get 默认值对"键存在但为 null"不生效
     returned = set(search.get("returned") or [])
     layers = search.get("layers") or []
-    proj_repo = layers[0]["repo"] if layers else None
+    proj_repo = layers[0].get("repo") if layers else None
     events, seen = [], set()
     for ly in layers:
         for m in ly.get("matched", []):
+            # §55 硬索引普查(与 spider_export 同族): matched 子项缺 id 跳过而非掐直播
+            if not isinstance(m.get("id"), str):
+                continue
             if m["id"] not in returned or m["id"] in seen:
                 continue
             seen.add(m["id"])

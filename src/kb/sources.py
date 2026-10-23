@@ -47,8 +47,17 @@ class SourceConnector:
         self.last_error: str | None = None
 
     def search(self, query: str, limit: int = 5) -> list[Hit]:
+        # 契约"条数≤limit"归一(第三十三轮走查 §51): 旧实现 `max(1, min(limit, 20))`
+        # 把 limit≤0 抬成 1, 再经 `[:limit]` 截空——语义拧巴, 且对远程连接器白白
+        # 多打一次网络请求。limit≤0 直接零命中, 不触后端。
         try:
-            hits = self._search(query, max(1, min(limit, 20)))
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 5
+        if limit <= 0:
+            return []
+        try:
+            hits = self._search(query, min(limit, 20))
             return [h for h in hits if isinstance(h, Hit)][:limit]
         except Exception as exc:  # 红线: 故障静默降级, 记健康不抛出
             self.last_error = f"{type(exc).__name__}: {exc}"[:200]
@@ -194,10 +203,15 @@ def build_connectors(only: str | None = None) -> list[SourceConnector]:
     """
     import os
     wanted = (only or os.environ.get("KB_SOURCES", "")).lower()
+    # 逗号切分**精确**匹配(第三十三轮走查 §51): 旧实现 `"demo" in wanted` 子串
+    # 匹配, `KB_SOURCES=notdemo` 这类"明确排除"的配置反而意外启用 demo——
+    # 外接源会把外部内容混进 agent 检索结果, 开关语义必须精确。未知 token
+    # 静默忽略(与前向兼容: 新版本连接器名在旧版本上不至于炸)。
+    tokens = {t.strip() for t in wanted.split(",") if t.strip()}
     out: list[SourceConnector] = []
-    if "demo" in wanted:
+    if "demo" in tokens:
         out.append(DemoConnector())
-    if "tdbm" in wanted:
+    if "tdbm" in tokens:
         c = TdbmConnector()
         if c.configured():
             out.append(c)

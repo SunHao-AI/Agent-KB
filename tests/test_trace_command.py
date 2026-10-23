@@ -59,3 +59,20 @@ def test_list_repo_flag(tmp_path, monkeypatch, capsys):
     assert main(["trace", "list", "--repo", str(root)]) == 0
     out = capsys.readouterr().out
     assert "t-10" in out and "t-11" in out
+
+
+def test_since_invalid_date_rejected(env, capsys):
+    """§58(第四十轮): 字符串比较式日期过滤对非法 --since 静默滤空且 exit 0——
+    "暂无记录"冒充"窗口没数据"、周报"已全部消化"假绿。argparse 入口即拒。"""
+    _seed(env)
+    capsys.readouterr()
+    for bad in ("2026-13-99", "垃圾", "2026/10/15"):
+        with pytest.raises(SystemExit) as ex:
+            main(["trace", "list", "--since", bad])
+        assert ex.value.code == 2
+        assert "YYYY-MM-DD" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as ex:
+        main(["trace", "report", "--since", bad])
+    assert ex.value.code == 2
+    # 合法日期照常
+    assert main(["trace", "list", "--since", "2026-10-15"]) == 0

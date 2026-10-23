@@ -33,6 +33,24 @@ def test_related_bidirectional(tmp_repo):
     assert {r["id"] for r in rel} == {"kb-20261012-aaaa"}
 
 
+def test_related_excludes_draft_neighbors(tmp_repo):
+    """§57(第三十九轮): related 是第二条发现通道, draft 邻接行必须剔除——
+    正向(accepted 引用 draft)与反向(draft 引用 accepted, 环带出 draft 行)
+    两条泄漏路径都堵; self 是 draft 时邻人照报(人工问自己的草稿)。"""
+    _put(tmp_repo, "kb/pitfall/frontend/x.md",
+         make_entry(id="kb-20261012-xxxx", status="accepted",
+                    related=["kb-20261012-dddd"]))  # 正向指向 draft
+    _put(tmp_repo, "kb/pitfall/frontend/d.md",
+         make_entry(id="kb-20261012-dddd", status="draft",
+                    related=["kb-20261012-xxxx"]))  # 反向引用 accepted
+    build_indexes(tmp_repo)
+    rel = related(tmp_repo, "kb-20261012-xxxx")
+    assert rel == []  # 正向 draft 邻居被剔
+    # self 为 draft: 自己的 accepted 邻人照报
+    rel_d = related(tmp_repo, "kb-20261012-dddd")
+    assert {r["id"] for r in rel_d} == {"kb-20261012-xxxx"}
+
+
 def test_stat_counts(tmp_repo):
     _seed(tmp_repo)
     s = stat(tmp_repo)

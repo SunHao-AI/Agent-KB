@@ -62,6 +62,11 @@ def lint_repo(repo_root: Path, scope: str = "project",
             continue
         if id_counts.get(e.fm.get("id"), 0) > 1:
             errors.append(f"{rid}: duplicate id {e.fm['id']}")
+        # §53: 列表字段退化在 parse 入口已归一(消费链不再子串假通过), schema
+        # 校验看到的是归一后的值——病因必须由 list_degraded 显式点名, 否则
+        # "修复让问题隐身"比不修更糟。
+        for dmsg in e.list_degraded:
+            errors.append(f"{rid}: front-matter {dmsg}")
         for err in sorted(validator.iter_errors(e.fm), key=lambda x: x.json_path):
             errors.append(f"{rid}: schema {err.json_path}: {err.message}")
         if e.fm.get("scope") == "project" and scope == "agent-kb":

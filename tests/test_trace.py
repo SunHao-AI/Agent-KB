@@ -159,6 +159,24 @@ def test_read_coerces_all_list_fields(kbroot):
     stats.by_source(searches)
 
 
+def test_read_coerces_query_types(kbroot):
+    """§55: query 是检索词不是身份——数值(agent 查 "123" 被 JSON 化成 123)转
+    字符串保留语义; 容器(list 不可哈希/dict)删键。消费方 top_queries 做 Counter
+    键、zero_hit_board 调 .strip(), 修复前实测双双崩。"""
+    from kb import stats
+    ev1 = dict(_ev(21), returned=[], query=123)
+    ev2 = dict(_ev(22), returned=[], query=["a", "b"])
+    _write(kbroot, f"{dt.date.today():%Y-%m-%d}.jsonl",
+           [{"kind": "meta", "schema": 1}, ev1, ev2])
+    searches, _, warns = trace.read_traces(root=kbroot)
+    by = {s["trace_id"]: s for s in searches}
+    assert by["t-21"]["query"] == "123"                 # 标量转字符串
+    assert "query" not in by["t-22"]                    # 容器删键
+    assert any("query" in w for w in warns)
+    stats.top_queries(searches)
+    stats.zero_hit_board(searches)
+
+
 def test_read_filters_and_ordering(kbroot):
     for i, caller in enumerate(["web", "algo", "web"]):
         ev = _ev(i, caller=caller, returned=())
@@ -172,6 +190,18 @@ def test_read_filters_and_ordering(kbroot):
     assert len(limited) == 2
     since, _, _ = trace.read_traces(root=kbroot, since="2026-10-13")
     assert {s["trace_id"] for s in since} == {"t-2"}
+
+
+def test_read_limit_nonpositive_is_zero_slots(kbroot):
+    """§58(第四十轮): Python 切片 `[:-2]` 是"去尾两个"——`--limit -2` 曾返回
+    全量减 2 条("要最少给最多"翻转语义)。≤0 一律零名额, None 才是"不限"。"""
+    for i in range(3):
+        trace.append_event(_ev(i, caller="web"), root=kbroot)
+    for bad in (0, -2):
+        limited, _, _ = trace.read_traces(root=kbroot, limit=bad)
+        assert limited == []
+    full, _, _ = trace.read_traces(root=kbroot, limit=None)
+    assert len(full) == 3
 
 
 def test_find_and_latest_search_id(kbroot):

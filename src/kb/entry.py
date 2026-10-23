@@ -18,12 +18,46 @@ def _normalize_dates(fm: dict) -> dict:
     return fm
 
 
+# 列表语义字段(front-matter): 消费链大量使用 `in` 成员判断与 join/Counter 遍历。
+# 手改 YAML 写成 `domain: frontend`(标量)或 `tags:`(空→None)时, `"front" in
+# "frontend"` 是**子串**真——filter 假通过、related 截断 id 假命中、Counter 把
+# 字符串拆成字母计数(第三十五轮走查 §53 实测)。与 §52 同理: front-matter 也是
+# 不可信输入, 在 parse 单一入口归一, 全体消费方终身受益; 退化情况记入
+# Entry.list_degraded 供 lint 点名(schema 校验看不到归一后的值)。
+_LIST_FIELDS = ("domain", "tags", "related")
+
+
+def _normalize_lists(fm: dict) -> list[str]:
+    """就地归一列表字段, 返回退化描述(空=全部正常)。"""
+    degraded: list[str] = []
+    for k in _LIST_FIELDS:
+        if k not in fm:
+            continue
+        v = fm[k]
+        if isinstance(v, list):
+            cleaned = [x for x in v if isinstance(x, str) and x]
+            if len(cleaned) != len(v):
+                degraded.append(f"{k}: 列表含非字符串元素, 已剔除")
+            fm[k] = cleaned
+        elif isinstance(v, str) and v:
+            degraded.append(f"{k}: 应为列表, 标量 {v!r} 已按单元素列表处理")
+            fm[k] = [v]
+        elif v is None:
+            del fm[k]  # `tags:` 空值 → 视作缺失(下游默认值生效)
+            degraded.append(f"{k}: 空值(null), 已按缺失处理")
+        else:
+            del fm[k]
+            degraded.append(f"{k}: 类型 {type(v).__name__} 非法, 已按缺失处理")
+    return degraded
+
+
 @dataclass
 class Entry:
     fm: dict
     body: str
     path: pathlib.Path
     yaml_error: str | None = None   # front-matter YAML 语法错误原文(第十三轮走查)
+    list_degraded: tuple[str, ...] = ()  # 列表字段退化描述(§53, 供 lint 点名)
 
     def h1(self) -> str | None:
         for line in self.body.splitlines():
@@ -63,8 +97,10 @@ def parse_entry(path: pathlib.Path) -> Entry:
     if not isinstance(data, dict):
         return Entry(fm={}, body=text, path=pathlib.Path(path))
     fm = _normalize_dates(data)
+    degraded = _normalize_lists(fm)
     body = m.group(2)
-    return Entry(fm=fm, body=body, path=pathlib.Path(path))
+    return Entry(fm=fm, body=body, path=pathlib.Path(path),
+                 list_degraded=tuple(degraded))
 
 
 def dump_entry(entry: Entry) -> str:

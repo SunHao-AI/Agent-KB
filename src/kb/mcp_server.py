@@ -48,6 +48,25 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
         零命中返回 {"hits": [], "hint": 死因计数, "suggest": 近似词} —— hint 区分
         "库内没有/被过滤/词太长", 按 suggest 改写重试, 不要直接断定库里没有。"""
         t0 = time.perf_counter()
+        try:
+            limit = int(limit)  # 非数值回退默认(§51 同族); 零/负值不抬成 1, 见下
+        except (TypeError, ValueError):
+            limit = 10
+        if limit <= 0:  # 零名额: 不扫库不触外接源, 如实告知(旧实现扫全库后
+            out = _compact({"hits": [],  # 产出"死于过滤器 0/词匹配 0"的自相矛盾
+                            "hint": f"limit={limit} 名额为零, 未执行检索; "
+                                    "请用正整数 limit 重试",
+                            "suggest": []})
+            if kbtrace.trace_enabled():
+                kbtrace.append_event(kbtrace.build_search_event(
+                    trace_id=kbtrace.new_trace_id(), source="mcp", caller_repo=name,
+                    query=query, filters={"type": type, "domain": domain, "tag": tag,
+                                           "scope": scope, "status": None,
+                                           "confidence": None},
+                    limit=limit, reports=[], returned=[],
+                    duration_ms=round((time.perf_counter() - t0) * 1000),
+                    returned_chars=len(out)))
+            return out
         rows, reports = search_layers_report(
             layers, type=type, domain=domain, tag=tag, scope=scope, query=query, limit=limit)
         # FR-6.1 联邦: 外接源摘要先行补位(预算=剩余名额), 任何源故障静默跳过

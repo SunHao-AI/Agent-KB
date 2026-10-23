@@ -136,6 +136,29 @@ def test_zero_hit_trace_valid():
     assert "0 命中" in rec["config"]["subtitle"]
 
 
+def test_dirty_trace_survives_hard_index_sweep():
+    """§55 实锤: _coerce 对非字符串身份字段**删键**, 硬索引消费方成雷区——
+    get 缺 id → g["id"] KeyError; search 缺 trace_id → search_ev["trace_id"]
+    KeyError, 回放屏整个掐断。尽力呈现消费方必须缺键跳过而非炸。"""
+    tr = _trace()
+    gets = _gets()
+    gets[0].pop("id")                       # 模拟净化删键后的 get
+    rec = spider_export.to_record(tr, gets)  # 旧: KeyError 'id'
+    assert rec["consumed"] == []             # 缺 id 的 get 不再认领消费
+    tr2 = _trace()
+    tr2.pop("trace_id")                      # 模拟净化删键后的 search
+    rec2 = spider_export.to_record(tr2, _gets())  # 旧: KeyError 'trace_id'
+    assert rec2["id"] == ""
+    tr3 = _trace()
+    tr3["layers"][0]["matched"][0].pop("id")     # matched 子项缺 id(不在净化名单)
+    rec3 = spider_export.to_record(tr3, _gets())
+    assert [e["id"] for e in rec3["events"]] == ["kb-b"]   # 坏项跳过, 好项保留
+    tr4 = _trace()
+    tr4["layers"].append("not-a-dict")                 # 层本身非 dict
+    rec4 = spider_export.to_record(tr4, _gets())
+    assert len(rec4["events"]) == 2                    # subtitle/truncated 均不再炸
+
+
 def test_subtitle_truncation_note():
     tr = _trace()
     tr["layers"][1]["truncated_at_limit"] = True

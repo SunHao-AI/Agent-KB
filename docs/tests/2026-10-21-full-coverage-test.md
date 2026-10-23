@@ -1528,6 +1528,263 @@ pytest **327 全绿**; ruff F,E9 通过。
 拷贝的第三种形态 = "同一净化名单只列了一个字段"(字段维度); `.get(k, 默认值)`
 对键存在值为 null 不生效, 不可信输入应在进缓存前一次净化。
 
+---
+
+## §51 第三十三轮: sources.py 外接源连接器装配面
+
+**选题**: FR-6 外接源层从未独立走查(只在 MCP 联邦测试里被顺带经过)。读码即疑:
+`build_connectors` 用 `if "demo" in wanted` 对 `KB_SOURCES` 整串做子串匹配。
+
+**D-38 开关子串匹配, 反向配置反而启用(实锤+修复, 中)**:
+- 探针: `KB_SOURCES=notdemo`/`nodemo_nowiki`(意图=排除)→ 装配 `['demo']`,
+  外部内容混进 agent 联邦检索。故障方向不对称: 误开=注入面, 误关=没数据。
+- 修复: 逗号切分精确 token 匹配(lower/strip 保留, 未知 token 忽略前向兼容)。
+- 全仓 grep `in wanted` 同款指纹仅此一处, 修复半径闭合(D-28 普查法)。
+
+**D-39 search(limit) 契约拧巴(实锤+修复, 低)**: `max(1, min(limit, 20))` 把
+limit≤0 抬成 1(远程连接器真发一次网络请求)再由 `[:limit]` 截空——结果碰巧对、
+路径错。修复: ≤0 直接零命中不触后端; 非数值回退默认 5。
+
+**通过面**: Hit.make 摘要 300 硬截+标注; 故障静默降级+health 记录; TDBM
+分隔符归一/refs-ref 字段(真机联调 schema)回归在位; 凭据只从环境读红线守住。
+
+**回归**: test_sources.py +2(装配精确匹配含正反例/limit 契约含触后端次数断言),
+pytest **329 全绿**; ruff F,E9 通过。
+
+**沉淀**: 新建 `kb-20261023-358e`(accepted/verified)——判据: `in` 的左操作数
+若是"名字", 右操作数必须是集合而非拼好的字符串; 有分隔符就必须先切开再判断。
+
+---
+
+## §52 第三十四轮: serve /api/ingest 团队上报写面
+
+**选题**: 第十轮只走了 ingest 的"正文键名红线"读侧误杀面, 写面本身的字段
+类型契约从未探针。读码发现幂等 key 元组直接取 `ev.get(...)` 构造, 无任何
+类型校验。
+
+**D-40 身份字段类型不设防, 写侧崩或投毒(实锤+修复, 高)**:
+- 探针三连: `trace_id=list` → 幂等 key 构造 TypeError → handler 线程崩、
+  连接重置(§26 家族首次现于**写侧**); `caller_repo=dict` → 写侧 200 照收
+  落盘入账本, 读侧 `by_caller.setdefault(dict)` 把 /api/stats 打崩 500——
+  "写侧宽容、读侧崩"是账本系统最坏组合(污染持久、崩溃复利); `ts=dict` 同族。
+- 修复双轨(执行 §50 判据且比上次完整): 写面对 schema 全量六字段
+  (`trace_id/id/caller_repo/layer/source/ts`)非 str 即 400 fail-loud; 读面
+  `_coerce` 同批净化**存量**脏文件(删键+warn, 降级"项目未知")——入口拒收
+  只管未来, 存量净化兜底旧账, 缺一条腿都残留 500。
+
+**通过面**: 无 token 401、正文键名红线(键不查值)、kind 白名单、64KB 上限、
+幂等 dedup、ingest=False 防中继成环——第十轮修复面回归全绿。
+
+**回归**: test_stats_serve.py +2(写面四字段拒收+正常不受牵/存量脏文件读侧
+净化三消费方不再炸), pytest **331 全绿**; ruff F,E9 通过。插曲: SearchReplace
+误删既有测试 docstring, 下一步立即恢复。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加新发现段——账本型系统类型校验必须写在
+入口, 且**入口拒收与存量净化成对出现**; 只有前者=旧账继续崩, 只有后者=新账
+继续进。
+
+---
+
+## §53 第三十五轮: front-matter 列表字段消费面(query/search/stat/related)
+
+**选题**: 检索 filters 边界面。读 `_filtered_out` 见 `domain not in rec["domain"]`
+——`in` 对字符串是子串。疑点: front-matter 手改把列表写成标量会怎样。
+
+**D-41 列表字段退化 → `in` 变子串, 假通过/假命中/字母计数(实锤+修复, 高)**:
+- 探针三例: `domain: frontend`(标量)→ `search(domain="front"/"ront")` 均假
+  通过; `related` 标量 → `related("kb-…-aaa")` 截断 id 假命中(反向链接出现
+  不存在的邻居); `Counter(…for d in r["domain"])` 把 frontend 拆成
+  `{'f':1,'r':1,'o':1,…}` 字母计数, stat 安静地错。
+- 隐蔽点: schema 校验能报(not of type array), 但**门控报了 ≠ 消费链安全**——
+  读路径照常失真(存量文件/绕过 lint 的写入)。
+- 修复(§52 判据第三次完整执行): `parse_entry` 单一入口 `_normalize_lists`
+  对 schema 全量列表字段(domain/tags/related)归一——标量→单元素列表、null→
+  删键、脏元素剔除; 退化记 `Entry.list_degraded` 由 lint 显式点名(归一让
+  schema 看不到病因, 净化器必须与点名器成对, 否则"修复让问题隐身")。
+- schema 核对: domain/tags/related 为 array, supersedes/superseded_by 本就是
+  string|null——`_LIST_FIELDS` 恰好只列前者, 边界正确。
+
+**回归**: test_entry.py +3(标量归一+退化记录/null 与脏元素/消费链端到端
+filter 精确+stat 不再字母分解), pytest **334 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加第四形态——列表字段与 `in` 共生的系统,
+解析入口就要把"可能是标量"的输入归一成列表; 故障形态从崩溃升级为静默错答。
+
+---
+
+## §54 第三十六轮: export 跨仓上提面(主键判据的跨仓形态)
+
+**选题**: `kb export` 是 D-35(本仓 id 唯一性)判据天然的跨仓延伸点。读码见
+冲突检查只有 `dst.exists()`——路径由可变的 slug 派生, 主键 id 无检查。
+
+**D-42 export 只查路径碰撞, 同 id 不同 slug 长驱直入(实锤+修复, 高)**:
+- 探针: 目标仓已有同 id(slug 不同, 模拟"早前从别的项目上提过")时 export
+  成功 → 目标仓同 id 双条目、`_find` 只命中一个另一条断链; 且 export 是
+  **破坏性搬移**(src 已删), 事后 lint 才发现=两仓回不去。
+- 修复: 搬移前遍历目标仓条目(`iter_entry_paths` 唯一事实源)按 **id** 比对,
+  同 id 即 GateViolation 拒收且不删源——主键校验对象是主键本身, 不是它的
+  派生投影(路径)。
+
+**通过面(读码+既有回归)**: 目标仓无 kb/ 拒收不建假仓(§32 修复在位)、
+同 slug 路径冲突拒收、to_scope=project 拒收、未终审条目警示不拦(人工有权
+带草稿)、source.project 保留已有值、双方索引重建(§32)。
+
+**回归**: test_gate_write.py +1(同 id 不同 slug 拒收+不删源), pytest
+**335 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-c9c8`(D-35 主键判据)追加跨仓形态——同一主键的
+每一个写入路径(新建/导入/合并/搬移)都要各自强制; 破坏性写入的校验必须在
+删之前, 拒收不得留半状态。
+
+---
+
+## §55 第三十七轮: spider 导入/导出面(净化器与硬索引消费方的暗雷)
+
+**选题**: spider_export(回放 record 转换)与 spider_live(直播映射)是 trace 事件
+的重度消费方, 从未做过脏事件专项。读码即见大量硬索引(`g["id"]`、
+`search_ev["trace_id"]`、`l["repo"]`、`m["id"]`)——§52 净化器"删键"策略下全是
+雷。
+
+**D-43 净化删键 × 硬索引消费方 KeyError(实锤+修复, 中)**:
+- 探针: get 被删 id 键 → `g["id"]` KeyError; search 被删 trace_id →
+  `search_ev["trace_id"]` KeyError——回放屏整个掐断。修复: to_record 全链
+  降 `.get`+isinstance 守卫(matched 子项/层对象本身都防), 缺键条目跳过、
+  坏层过滤; spider_live.event_to_updates 同族同步。
+- 判据(净化家族第五句): 净化器选"删键"策略时必须普查全体消费方硬索引
+  访问并降 `.get`——改形状的那一刀要同时清点所有读这把形状的手。
+
+**D-44 query 非字符串打崩 stats 榜面(实锤+修复, 中)**: `_coerce` 名单缺
+query——`query: 123`(agent 查"123"被 JSON 数值化)让 `top_queries` 的 Counter
+键 TypeError(list 时)、`zero_hit_board` 的 `.strip()` AttributeError。修复:
+标量转字符串保留语义(检索词不是身份字段), 容器删键。§50"名单对 schema
+全量列"欠的最后一块补上。
+
+**回归**: test_spider_export.py +1(四段脏事件容错)、test_trace.py +1(query
+类型净化+两榜不再炸), pytest **337 全绿**; ruff F,E9 通过。插曲: 测试自己
+先炸出主循环漏过滤非 dict 层——测试也是探测器。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加第五形态——删键策略与硬索引消费方的
+普查义务; 尽力呈现型消费方宜"置默认"而非"删键"。
+
+---
+
+## §56 第三十八轮: MCP 工具参数边界面(防线不等厚与误导性自解释)
+
+**选题**: mcp_server 是 agent 的主写入口, 六工具参数从未做值域专项(CLI 面
+的参数防御靠 argparse, MCP 面经 FastMCP JSONSchema 只有类型没有值域)。读码
+对比两面即见 `severity` 一字段 CLI 有 choices、MCP/gate 零校验; kb_search 的
+limit 直接进漏斗无归一。
+
+**D-45 severity 枚举只在 CLI 面设防(实锤+修复, 中)**:
+- 探针: `kb_create(severity='blocker')`/`kb_update(severity='紧急')` 均落盘
+  并写进 draft 索引, lint 事后才报 schema 违规——索引污染已发生。
+- 修复: `gate._check_severity` 挂 `create_draft`/`update_draft` 头部(所有
+  入口共用的最后一跳), 枚举读 taxonomy.yaml 不抄字面量; CLI choices 保留
+  (服务 --help 提示), 两处语义同源。
+- 判据(净化家族第六句): 同一数据契约的守门强度按**最弱合法入口**对齐;
+  枚举/类型校验放共用写函数入口, 不是各入口各写一份。
+
+**D-46 kb_search limit≤0 产出自相矛盾的误导 hint(实锤+修复, 中)**:
+- 探针: `limit=0/-3` 返回 `"scanned 1: 死于过滤器 0, 死于词匹配 0; 建议用
+  更短单 token 重试"`——两死因皆 0 却建议改词, 真相是名额为零根本没扫出
+  机会(旧实现每层 take=0 但 report 照扫全库)。
+- 修复: `layers.search_layers_report` 漏斗归一(int() 容错/上限 100/≤0 截零
+  短路不扫库, report 全零); MCP 面零名额直接返回"名额为零, 未执行检索"
+  如实 hint; CLI 面同吃漏斗修复。
+- 判据: **带自解释的输出会放大上游契约缺陷**——上游必须如实区分"没查到"
+  与"没去查"; 数值参数的值域契约只能由被调方自己守(JSONSchema int 不拒负)。
+
+**回归**: test_mcp.py +2(零名额如实 hint/严重度两面拒收+合法值可用)、
+test_layers.py +1(limit 契约四路: 0/-3 不扫库、'3' 容忍、'abc' 回退),
+pytest **340 全绿**; ruff F,E9 通过。
+
+**沉淀**: `kb-20261023-463c` 追加第六形态(入口防线不等厚)、
+`kb-20261023-358e` 追加 limit 契约洞在检索漏斗的重现(误导性自解释形态)。
+
+---
+
+## §57 第三十九轮: related 反向链接/发现通道面(隐藏承诺只装了一条通道)
+
+**选题**: related 图面从未做可见性专项。读码发现 `query.related` 底座
+`_records` 读 live+draft **双池**(反向环需要 draft 行), 而红线1 承诺"draft
+不进检索"只落实在 search 单通道上——第二条发现通道(kb_related/MCP)裸奔。
+
+**D-47 draft 条目经 related 双向泄漏给 agent(实锤+修复, 中)**:
+- 探针: accepted 甲 `related:[草稿丙]`(正向)+ 草稿乙 `related:[甲]`(反向环
+  带出乙行), `related(甲)` 返回两条 draft 的完整索引行(标题+摘要+path),
+  同库 `search` 命中里 draft 干净缺席——同一承诺一面守一面漏。
+- 修复: `query.related` 邻接行剔 `status==draft`(正反两环都堵); self 可为
+  draft(人工 `kb related` 问自己的草稿, 邻人照报); get 面不动(已知 id 的
+  读取面, 非发现面)。
+- 判据(净化家族第七句): §56 的读面镜像——**多出口的过滤按同一承诺对齐**;
+  每加一条"从不可信池读全量再输出"的通道都要回头补过滤, 宜下沉共享谓词
+  `visible(r)` 让承诺只写一次。
+
+**回归**: test_query.py +1(正向 draft 邻居剔除/self 为 draft 邻人照报),
+pytest **341 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加第七形态(发现通道不等厚, §56 的读面
+镜像)。
+
+---
+
+## §58 第四十轮: CLI 参数解析/错误路径面(值域不设防的两种静默故障)
+
+**选题**: CLI/serve 参数面此前只吃过"路径不存在"(§15)与枚举 choices 两类
+教训, "值域"(负数/非法格式)从未专项。读码圈定 `trace list --limit/--since`
+两条字符串/切片运算参数。
+
+**D-48 trace list --limit 负数切片翻转(实锤+修复, 中)**: 探针 5 条事件喂
+`--limit -2` 返回 3 条(全量减 2)——`searches[:-2]` 的"去尾"语义。修复:
+`read_traces` limit≤0 一律零名额, None 才"不限"(§51/§56 同族第三处)。
+
+**D-49 非法 --since 静默滤空+周报假绿(实锤+修复, 中)**: `--since 2026-13-99`
+让 list 显示"暂无记录" exit 0; `kb trace report --since 垃圾` 输出"零命中已
+全部消化 ✅"假绿。修复: argparse `type=_date_arg` 入口拒收(exit 2), serve
+API `since/until` 同步校验 400(面板假空态同族)。库层不净化——§52 原则:
+入口拒收, 数据面不为编造参数兜底。
+
+**判据(净化家族第八句)**: 参与比较/切片运算的参数值域校验必须在入口且
+fail-loud——这两种运算对错值都不抛异常; 警惕"坏参数→空结果"路径(空结果
+在展示层=合法空态, 假绿比报错危险)。
+
+**回归**: test_trace.py +1(limit 0/-2 零名额、None 不限)、
+test_trace_command.py +1(三种非法 since exit 2+合法照常), pytest **343 全绿**;
+ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加第八形态(参数值域静默故障)。
+
+## §59 第四十一轮: 前端键盘/无障碍/空态面(真实浏览器逐屏实测)
+
+**选题**: 前端键盘可达性/空态从未专项(§18 只测过浮层 Esc, §22 只测过空态文案)。
+真实 serve(token 态)+ 浏览器逐屏: '/' 聚焦、Tab 序、Enter/空格重放、Esc 关层
+焦点归还、←→ 步进、零命中榜键盘追因、三形态空态(过滤无匹配/下钻无记录/
+KPI 零值)。
+
+**通过面**: '/' 聚焦过滤框✓; feed 条目 Enter 弹回放浮层✓; Esc 关闭后焦点
+归还最后播放条目(aria-label 断言)✓; 浮层开着 → 步进换 trace(rpLastTid 变化)✓;
+零命中榜行 Enter 追因(fq+fState.f+计数三处联动)✓; 空态文案区分"没匹配"与
+"没有记录"且 fcnt=0/15、fpage 隐藏✓; focus-visible 样式在位✓。
+
+**D-50 联邦矩阵下钻行仅鼠标可操作(实锤+修复, 中)**: Tab 遍历 6 跳全落榜行/
+按钮, 矩阵行不在序列; `tr.focus()` 后 activeElement=BODY——`loadMatrix` 后加的
+`tr.onclick` 漏了 tabindex/role/键盘三件套(同页其余行级交互全做对)。修复:
+模板补 `tabindex=0 role=button aria-label`, 绑定共用 go() + onkeydown(M-1 同款
+target 守卫), :focus-visible 名单加 `.matrix-link`(负 offset)。真实复验:
+Tab 入行 Enter → `view=single&caller=agent-kb`✓。
+
+**走查方法论(过程自纠, 值得记)**: 修复后浏览器复验仍旧值(withTabindex:0),
+才 grep 发现 serve 启动时一次性读入 index_html(serve.py L453)——**改静态资源前
+应先核实服务侧加载路径**(启动读一次 vs 每请求读盘), 别拿"改文件即可见"的
+默认假设代替读码; 重启端口后复验才有效。与净化家族"动手前确认机制真实
+执行路径"同源。
+
+**回归**: test_stats_serve.py +1(静态守护: 可点行模板必含 tabindex、矩阵绑定
+段必含 onkeydown), pytest **345 全绿**; ruff F,E9 通过。
+
+**沉淀**: 无既有条目命中(kb search 前端域全查), 新建 `kb-20261023-77e1`
+(自定义可点元素键盘三件套, 自审 accepted/verified)。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

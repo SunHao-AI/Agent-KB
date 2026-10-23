@@ -282,6 +282,22 @@ def test_serve_health_stats_and_page(tmp_path):
         srv.server_close()
 
 
+def test_serve_since_until_invalid_rejected(tmp_path):
+    """§58(第四十轮): 非法 since/until 参与字符串比较式过滤会静默滤空,
+    面板把"参数写错"显示成"窗口内真没数据"(假空态)。入口 fail-loud 400。"""
+    srv, base = _serve(tmp_path)
+    try:
+        st, body = _get_any(f"{base}/api/stats?since=2026-13-99")
+        assert st == 400 and "since" in body["error"]
+        st, body = _get_any(f"{base}/api/stats?until=%E5%9E%83%E5%9C%BE")  # 垃圾
+        assert st == 400 and "until" in body["error"]
+        st, body = _get_url(f"{base}/api/stats?since=2026-10-01")
+        assert st == 200  # 合法日期照常
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_serve_token_enforced(tmp_path):
     srv, base = _serve(tmp_path, token="s3cret")
     try:
@@ -344,6 +360,27 @@ def test_panel_api_requests_use_apiurl():
            if "/api/" in m.group(0)]
     assert not bad, f"面板 /api/* 请求未经 apiUrl() 手拼 URL(须走 apiUrl 注入 token): {bad}"
     assert "function apiUrl(" in html, "apiUrl() 统一注入器必须存在"
+
+
+def test_panel_custom_clickables_are_keyboard_reachable():
+    """§59(D-50) a11y 回归守护: 自定义(非 button/a)元素绑 onclick 必须同时具备
+    tabindex + role + 键盘处理——实测踩坑: 联邦矩阵下钻行只有 onclick, 是全屏唯一
+    "仅鼠标可操作"的交互, 键盘 Tab 直接跳过(同页零命中榜行/检索流条目都做对了)。"""
+    import re
+    from pathlib import Path
+    from kb.serve import _asset_dir
+    html = (Path(_asset_dir()) / "index.html").read_text(encoding="utf-8")
+    # 自定义可点模板(div/tr 生成 HTML 时)须带 tabindex+role=button+aria-label
+    for cls in ("matrix-link", "bar"):
+        tpl = [m.group(0) for m in re.finditer(rf'<(?:tr|div) class="[^"]*{cls}[^"]*"[^>]*>',
+                                               html)]
+        for t in tpl:
+            if 'data-zq' in t or 'matrix-link' in t:  # 可下钻的行才要求键盘可达
+                assert 'tabindex=' in t, f"可点击行缺 tabindex(键盘不可达): {t[:80]}"
+    # 矩阵行绑定处须有 Enter/空格键盘处理
+    i = html.find("querySelectorAll('.matrix-link')")
+    assert i >= 0, "矩阵下钻绑定缺失"
+    assert "onkeydown" in html[i:i + 500], "矩阵下钻行缺键盘处理(Enter/空格)"
 
 
 # ---- B-2: /api/replay 与 /api/spider(懒启动桥) ----------------------------
@@ -514,6 +551,52 @@ def test_ingest_append_dedup_and_redlines(tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_ingest_rejects_non_string_identity_fields(tmp_path):
+    """§52 实锤: 旧 ingest 口不校验身份字段类型——trace_id=list 让幂等 key 元组
+    构造处 TypeError(handler 线程崩→连接重置, §26 同构但在写侧);
+    caller_repo=dict 虽 200 入账本, 读侧 by_caller 聚合再炸 500。修复后 400 拒收。"""
+    srv, base = _serve(tmp_path, token="tk")
+    try:
+        for k, bad_val in [("trace_id", ["a", "b"]), ("caller_repo", {"evil": 1}),
+                           ("ts", {"h": 1}), ("id", [1])]:
+            ev = _search("typed-1", "proj-t", "q", [])
+            ev[k] = bad_val
+            st, body = _post_json(f"{base}/api/ingest", ev, token="tk")
+            assert st == 400 and k in body["error"], (k, st, body)
+        # 正常事件不受牵连
+        st, body = _post_json(f"{base}/api/ingest", _search("typed-ok", "p", "q", []),
+                              token="tk")
+        assert st == 200 and body["ok"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_read_coerces_non_string_identity_fields(tmp_path):
+    """存量脏文件(ingest 修复前入账本/手工写入)读侧同批净化: caller_repo=dict
+    降级为'项目未知'并 warn, 聚合/矩阵/实时流不再 500。"""
+    import datetime as dt
+
+    from kb import trace as kbtrace
+    good = {"kind": "search", "trace_id": "g1", "caller_repo": "good",
+            "query": "q", "returned": [], "ts": "2026-10-15T10:00:00+08:00"}
+    bad = {"kind": "search", "trace_id": {"weird": 1},
+           "caller_repo": {"evil": "dict"}, "query": "q", "returned": [],
+           "ts": "2026-10-15T10:00:01+08:00"}
+    d = tmp_path / "traces"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{dt.date.today():%Y-%m-%d}.jsonl").write_text(
+        "\n".join(json.dumps(x) for x in
+                  [{"kind": "meta", "schema": 2}, good, bad]) + "\n",
+        encoding="utf-8")
+    s, g, warns = kbtrace.read_traces(root=tmp_path)
+    assert any("caller_repo 非字符串" in w for w in warns)
+    agg = stats.aggregate(s, g)
+    assert set(agg["by_caller"]) <= {"?", "good"}    # dict 键不再入 by_caller
+    stats.callers(s)
+    stats.feed_events(s, g)
 
 
 def test_ingest_body_key_redline_checks_keys_not_values(tmp_path):

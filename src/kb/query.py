@@ -29,15 +29,24 @@ def get_entry(repo_root: Path, id: str) -> str | None:
 
 
 def related(repo_root: Path, id: str) -> list[dict]:
+    """正反向关联条目(发现面)。draft 邻接行剔除(第三十九轮走查 §57):
+    `_records` 读 live+draft 双池让反向环能引用 draft 行——kb_search 承诺
+    "draft 条目永不返回", 但 related 是第二条发现通道, 未对齐则草稿经
+    related 字段(正向)或他人引用(反向)泄漏标题+摘要给 agent, 红线1"草稿
+    不出土"绕道失效。self 可为 draft(人工 kb related 问自己的草稿, 邻人
+    照报); get 面不受影响(已知 id 的读取面, 非发现面)。"""
     recs = _records(repo_root)
     by_id = {r["id"]: r for r in recs}
     self = by_id.get(id)
     out, seen = [], set()
     if self:
         for rid in self.get("related", []):
-            if rid in by_id and rid not in seen:
-                out.append(by_id[rid]); seen.add(rid)
+            r = by_id.get(rid)
+            if r and r.get("status") != "draft" and rid not in seen:
+                out.append(r); seen.add(rid)
     for r in recs:
+        if r.get("status") == "draft":
+            continue
         if id in r.get("related", []) and r["id"] not in seen:
             out.append(r); seen.add(r["id"])
     return out

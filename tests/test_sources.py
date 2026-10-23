@@ -56,6 +56,35 @@ def test_build_tdbm_requires_config(monkeypatch):
     assert sources.build_connectors(only="tdbm") == []  # 未配置不启用
 
 
+def test_build_tokens_exact_not_substring():
+    """§51 实锤: 旧 `"demo" in wanted` 子串匹配, KB_SOURCES=notdemo(明确想排除)
+    反而意外启用 demo——外接源内容会混进 agent 检索结果, 开关必须精确。"""
+    assert sources.build_connectors(only="notdemo") == []
+    assert sources.build_connectors(only="nodemo_nowiki") == []
+    # 正例不回退: 大小写不敏感、空白容忍、未知 token 忽略(前向兼容)
+    assert [c.name for c in sources.build_connectors(only="DEMO")] == ["demo"]
+    assert [c.name for c in sources.build_connectors(only=" demo , tdbm ")] == ["demo"]
+    assert [c.name for c in sources.build_connectors(only="futurex,demo")] == ["demo"]
+
+
+def test_search_limit_contract():
+    """§51: 契约"条数≤limit"。旧实现 limit≤0 被 max(1,…) 抬成 1 再被 [:limit]
+    截空——语义拧巴且对远程连接器白打一次网络。修复后 ≤0 直接零命中不触后端。"""
+    calls = []
+
+    class Counting(DemoConnector):
+        def _search(self, query, limit):
+            calls.append(limit)
+            return super()._search(query, limit)
+
+    c = Counting()
+    assert c.search("网关", limit=0) == [] and not calls   # 不触后端
+    assert c.search("网关", limit=-1) == [] and not calls
+    assert len(c.search("网关", limit=1)) == 1
+    assert c.search("网关", limit="abc")            # 非数值回退默认 5, 不炸
+    assert len(c.search("网关", limit=99)) == len(c.search("网关", limit=20))
+
+
 # ---- TDBM 解析(不联网, 响应为 2026-10-20 真机联调核实过的真实 schema) ----
 
 def test_tdbm_search_real_schema(monkeypatch):

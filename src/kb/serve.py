@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import threading
 import time
@@ -312,6 +313,15 @@ class _Handler(BaseHTTPRequestHandler):
         if _has_body_key(ev):
             self._json({"error": "body/content keys not allowed"}, 400)
             return
+        # 身份字段必须是 str(第三十四轮走查 §52): trace_id/id 参与幂等 key 元组
+        # (非 str 不可哈希 → handler 线程 TypeError → 连接被重置, §26 同构但在写侧);
+        # caller_repo/ts 会原样落盘, 读侧 by_caller.setdefault(dict) 同样炸 500。
+        # 写侧 fail-loud 拒收(400)好过脏数据入团队账本后读侧反复崩。
+        for k in ("trace_id", "id", "caller_repo", "layer", "source", "ts"):
+            v = ev.get(k)
+            if v is not None and not isinstance(v, str):
+                self._json({"error": f"{k} must be string or null"}, 400)
+                return
         key = (ev.get("kind"), ev.get("trace_id"), ev.get("id"), ev.get("ts"))
         if key in srv.seen_ingest:  # trace_id 幂等: 重发不再落盘/不再广播
             self._json({"ok": True, "deduped": True})
@@ -340,6 +350,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"error": "unauthorized"}, 401)
             return
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        # since/until 入口校验(§58, CLI --since 同族): 字符串比较式日期过滤对
+        # 非法值静默滤空——面板拿到"全空数据"却显示为合法空态(假空), 与"该窗口
+        # 真没数据"不可区分。fail-loud 400, 前端窗口参数由 sinceDate() 生成合法
+        # ISO 日期, 正常流量零影响。
+        for k in ("since", "until"):
+            v = q.get(k)
+            if v:
+                try:
+                    dt.date.fromisoformat(v)
+                except ValueError:
+                    self._json({"error": f"{k} must be YYYY-MM-DD, got {v!r}"}, 400)
+                    return
         try:
             if u.path == "/api/health":
                 self._json({"ok": True, "schema": kbtrace.SCHEMA,

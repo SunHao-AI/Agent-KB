@@ -1,5 +1,5 @@
 from kb.index import build_indexes
-from kb.layers import search_layers, get_layered, related_layers
+from kb.layers import search_layers, search_layers_report, get_layered, related_layers
 from conftest import make_entry
 
 
@@ -40,6 +40,23 @@ def test_limit_truncates_across_layers(tmp_path):
     proj = _repo(tmp_path, "docs", [(f"kb-20261014-4{i:02d}", f"甲{i}") for i in range(5)])
     kb = _repo(tmp_path, "agentkb", [(f"kb-20261014-5{i:02d}", f"甲{i}") for i in range(5)])
     assert len(search_layers([proj, kb], query="甲", limit=3)) == 3
+
+
+def test_limit_contract_nonpositive_and_nonnumeric(tmp_path):
+    """§56(第三十八轮): limit 契约归一——limit≤0 截零且不扫库(report 全零,
+    MCP 才不会产出"死于过滤器 0/词匹配 0"的自相矛盾 hint); 非数值回退默认。
+    JSONSchema 的 int 不拒负数、JSON 允许小数, 校验层拦不住, 必须在漏斗处归一。"""
+    proj = _repo(tmp_path, "docs", [(f"kb-20261014-4{i:02d}", f"甲{i}") for i in range(5)])
+    kb = _repo(tmp_path, "agentkb", [(f"kb-20261014-5{i:02d}", f"甲{i}") for i in range(5)])
+    for bad in (0, -3):
+        rows, reports = search_layers_report([proj, kb], query="甲", limit=bad)
+        assert rows == []
+        assert all(r["scanned"] == 0 and r["matched"] == [] for r in reports)
+    rows, _ = search_layers_report([proj, kb], query="甲", limit="3")
+    assert len(rows) == 3  # 数字字符串容忍(int() 语义)
+    rows, _ = search_layers_report([proj, kb], query="甲", limit="abc")
+    assert len(rows) == 10  # 非数值回退默认 10(proj 5 + kb 5 全取)
+
 
 
 def test_missing_returns_none(tmp_path):

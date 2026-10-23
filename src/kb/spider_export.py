@@ -54,15 +54,25 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
 
     event.id 一律经 spider_id 归一(原生 id 可含 '/' 等对端非法字符);
     consumed 仍回原生 id(仓内语义), 仅 record 内做映射。
+
+    §55 硬索引普查: 净化器(_coerce)删过键的事件(§52)与嵌套子结构
+    (layers.matched 不在 _coerce 名单内)都可能缺 id/trace_id/repo——回放屏
+    是"尽力呈现"消费方, 缺键条目跳过而非 KeyError 掐断整个回放。
     """
-    read_ids = {g["id"] for g in get_evs if g.get("trace_id") == search_ev["trace_id"]}
+    sid = search_ev.get("trace_id")
+    read_ids = {g["id"] for g in get_evs
+                if g.get("trace_id") == sid and isinstance(g.get("id"), str)}
     ts = str(search_ev.get("ts", ""))[:10]
     returned = set(search_ev.get("returned", []))
     events: list[dict] = []
     for idx, layer in enumerate(search_ev.get("layers", []) or []):
+        if not isinstance(layer, dict):
+            continue
         route = _LAYER_ROUTE.get(idx, "model")
         # .get: 零命中层可整键缺 matched(仿真脚本/手工 trace 常见形态), 缺=该层无命中
         for m in layer.get("matched") or []:
+            if not isinstance(m, dict) or not isinstance(m.get("id"), str):
+                continue
             if m["id"] not in returned:
                 continue
             final = "you" if m["id"] in read_ids else route
@@ -80,19 +90,19 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
                            "route": final, "status": "completed",
                            "detail": f"source://{e.get('source')}"})
     consumed = {g["id"] for g in get_evs
-                if g.get("trace_id") == search_ev["trace_id"] and g["id"] in returned}
+                if g.get("trace_id") == sid and g.get("id") in returned}
     events.sort(key=lambda e: (e["route"] != "code", e["route"] != "model",
                                e["route"] != "ext", e["id"]))
     layers_note = " · ".join(
         # .get: rejected 子键可缺(手工/早期 schema), 回放不得因此炸
-        f"{l['repo']} 扫描{l.get('scanned', '?')} 过滤-{(l.get('rejected') or {}).get('filter', 0)}"
+        f"{l.get('repo', '?')} 扫描{l.get('scanned', '?')} 过滤-{(l.get('rejected') or {}).get('filter', 0)}"
         f" 词-{(l.get('rejected') or {}).get('query', 0)}"
-        for l in search_ev.get("layers", []))
-    truncated = next((l["repo"] for l in search_ev.get("layers", [])
-                      if l.get("truncated_at_limit")), None)
+        for l in search_ev.get("layers", []) if isinstance(l, dict))
+    truncated = next((l.get("repo") for l in search_ev.get("layers", [])
+                      if isinstance(l, dict) and l.get("truncated_at_limit")), None)
     n = len(events)
     config = {
-        "title": f"KB 命中回放 {search_ev['trace_id']}"[:80],
+        "title": f"KB 命中回放 {sid or '?'}"[:80],
         "subtitle": ((f"query: {search_ev.get('query') or '-'} | {layers_note} | "
                       f"limit={search_ev.get('limit')}"
                       + (f" | 截断于{truncated}层" if truncated else "")
@@ -139,7 +149,7 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
     rev += 1
     log.append({"revision": rev, "at": end, "type": "complete",
                 "status": "completed"})
-    return {"format": FORMAT, "version": 1, "id": search_ev["trace_id"],
+    return {"format": FORMAT, "version": 1, "id": sid or "",
             "status": "completed", "duration": end,
             "initialConfig": config, "config": config,
             "events": events, "log": log,

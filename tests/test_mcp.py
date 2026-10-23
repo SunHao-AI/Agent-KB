@@ -48,6 +48,41 @@ async def test_search_zero_hit_returns_hint_not_bare_list(layers):
     assert "vite" in out["suggest"]
 
 
+async def test_search_zero_limit_honest_hint(layers):
+    """§56(第三十八轮): limit≤0 曾扫全库后走零命中分支, 产出"死于过滤器 0,
+    死于词匹配 0"的自相矛盾 hint 误导 agent 改查询词——真相是名额为零。
+    修复后如实告知未执行检索。"""
+    proj, kb = layers
+    srv = build_server(proj, agent_kbs=[kb], repo_name="docs")
+    err, out = await _call(srv, "kb_search", {"query": "Vite", "limit": 0})
+    assert err is False
+    assert out["hits"] == [] and "名额为零" in out["hint"]
+    assert "死于" not in out["hint"]  # 不再是伪装成死因分析的误导
+    err, out = await _call(srv, "kb_search", {"query": "Vite", "limit": -5})
+    assert err is False and "名额为零" in out["hint"]
+
+
+async def test_create_invalid_severity_rejected(layers):
+    """§56: MCP kb_create/kb_update 曾对 severity 零校验(CLI 面有 choices),
+    'blocker' 一路落盘进 draft 索引, lint 事后才报。gate 写入口必须拒收。"""
+    proj, kb = layers
+    srv = build_server(proj, agent_kbs=[kb], repo_name="docs")
+    err, out = await _call(srv, "kb_create", {
+        "type": "pitfall", "domain": "frontend", "title": "严重度非法值探针",
+        "body": "## 根因\nRedis 连接池默认上限过低导致高并发排队超时。\n",
+        "severity": "blocker"})
+    assert err is True and "severity" in str(out)
+    # 合法值仍正常
+    err, out = await _call(srv, "kb_create", {
+        "type": "pitfall", "domain": "frontend", "title": "严重度合法值探针",
+        "body": "## 根因\nKafka 消费者组再平衡引发重复消费的机制说明。\n",
+        "severity": "high"})
+    assert err is False and out["severity"] == "high"
+    # kb_update 同守
+    err, out = await _call(srv, "kb_update", {"id": out["id"], "severity": "紧急"})
+    assert err is True and "severity" in str(out)
+
+
 async def test_get_returns_full_text(layers):
     proj, kb = layers
     srv = build_server(proj, agent_kbs=[kb], repo_name="docs")

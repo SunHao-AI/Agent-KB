@@ -98,10 +98,22 @@ def _dup_hits(repos: list[Path], fp: str, title: str) -> list[dict]:
     return hits
 
 
+def _check_severity(severity: str | None) -> None:
+    """severity 枚举守门(第三十八轮走查): CLI 面有 argparse choices 挡, MCP 面经
+    gate 直写**没有**任何枚举校验——`severity='blocker'` 一路落盘进 draft 索引,
+    lint 事后才报 schema 违规, 而索引已污染。写入口与 CLI 面等防, 枚举唯一事实源
+    仍是 taxonomy.yaml。"""
+    if severity is not None and severity not in load_taxonomy()["enums"]["severity"]:
+        raise GateViolation(
+            f"unknown severity: {severity} "
+            f"(valid: {', '.join(load_taxonomy()['enums']['severity'])})")
+
+
 def create_draft(repo, *, type: str, domain: str, title: str, body: str | None = None,
                  tags: list[str] | None = None, severity: str | None = None,
                  agent_kbs: tuple = (), today: dt.date | None = None) -> Entry:
     """Agent 唯一写入口: 强制 draft/speculative/project + 查重拒建."""
+    _check_severity(severity)
     today = today or dt.date.today()
     repos = [Path(repo)] + [Path(p) for p in agent_kbs]
     fp = ""
@@ -173,6 +185,7 @@ def update_draft(repo, id: str, *, title: str | None = None, body: str | None = 
                  tags: list[str] | None = None, severity: str | None = None,
                  today: dt.date | None = None) -> Entry:
     """人工 CLI: 仅 draft 可编辑正文/元数据."""
+    _check_severity(severity)
     p = _find(repo, id)
     e = parse_entry(p)
     if e.fm.get("status") != "draft":
@@ -283,6 +296,16 @@ def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
     dst = target_kb / rel
     if dst.exists():
         raise GateViolation(f"target already exists: {dst}")
+    # §54: 路径检查挡不住"同 id 不同 slug"——目标仓已有早前从别处上提的同 id
+    # 条目时, 搬入即让目标仓同 id 双条目(_find 只命中一个, 另一条 show/review
+    # 断链), 且是**破坏性**搬移(src.unlink 已删源), 事后 lint 才发现=两仓都回不去。
+    # 权威主键(id)的碰撞必须在写入点按主键查, 路径只是它的派生投影(D-35 同族,
+    # 跨仓维度)。
+    for p in iter_entry_paths(Path(agent_kb_repo)):
+        if p != dst and parse_entry(p).fm.get("id") == id:
+            raise GateViolation(
+                f"target repo already has id {id} at {p.name}; "
+                f"合并请先人工处理该条目, 勿重复上提")
     e = parse_entry(src)
     fm = dict(e.fm)
     if fm.get("status") != "accepted" or fm.get("confidence") == "speculative":

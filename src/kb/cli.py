@@ -20,6 +20,18 @@ from kb.promote import promote
 from kb.query import due_review, get_entry, needs_scope, related, stat
 
 
+def _date_arg(v: str) -> str:
+    """--since 等日期参数的 argparse type(§58): 字符串比较式日期过滤(ts[:10] >=
+    since)对非法日期**静默滤空**且 exit 0——`--since 2026-13-99` 让"暂无记录"
+    冒充"该窗口没数据", `--since 垃圾` 让周报冒充"零命中已全部消化"(假绿)。
+    入口即拒(argparse 红字 exit 2), 不把坏值放进数据面。"""
+    try:
+        dt.date.fromisoformat(v)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"需 YYYY-MM-DD 日期, 收到 {v!r}") from None
+    return v
+
+
 def _dispatch(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="kb")
     common = argparse.ArgumentParser(add_help=False)
@@ -144,7 +156,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_tl.add_argument("--repo", default=None,
                       help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
     p_tl.add_argument("--caller", default=None)
-    p_tl.add_argument("--since", default=None, help="YYYY-MM-DD")
+    p_tl.add_argument("--since", default=None, type=_date_arg, help="YYYY-MM-DD")
     p_tl.add_argument("--zero-hit", action="store_true")
     p_tl.add_argument("--limit", type=int, default=30)
     p_ts = tr_sub.add_parser("show")
@@ -165,7 +177,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_trp = tr_sub.add_parser("report", help="零命中周报(消化率+高频待消化词)")
     p_trp.add_argument("--repo", default=None,
                        help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
-    p_trp.add_argument("--since", default=None, help="YYYY-MM-DD, 默认近 7 天")
+    p_trp.add_argument("--since", default=None, type=_date_arg,
+                       help="YYYY-MM-DD, 默认近 7 天")
     p_trp.add_argument("--caller", default=None)
     p_trp.add_argument("--format", default="md", choices=["md", "json"])
 

@@ -267,6 +267,23 @@ def test_export_conflict_rejected(tmp_repo, tmp_path):
         export_entry(tmp_repo, kb2, "kb-20261014-0b0b", to_scope="stack")
 
 
+def test_export_rejects_same_id_different_slug(tmp_repo, tmp_path):
+    """§54 实锤: 路径冲突检查挡不住"同 id 不同 slug"(目标仓有早前从别处上提的
+    同 id 条目)。搬入=破坏性(删源)后目标仓同 id 双条目、_find 断链, 事后 lint
+    才知=两仓回不去。主键碰撞必须按 id 查, 路径只是派生投影。"""
+    kb2 = tmp_path / "agentkb"
+    (kb2 / "kb" / "pitfall" / "frontend").mkdir(parents=True)
+    _mk(tmp_repo, "kb-20261014-0f0f")            # 源 slug: 默认(标题派生)
+    (kb2 / "kb" / "pitfall" / "frontend" / "earlier-import.md").write_text(
+        make_entry(id="kb-20261014-0f0f", title="早前上提", scope="stack"),
+        encoding="utf-8")
+    src = tmp_repo / "kb" / "pitfall" / "frontend"
+    with pytest.raises(GateViolation, match="already has id"):
+        export_entry(tmp_repo, kb2, "kb-20261014-0f0f", to_scope="stack")
+    assert any(p.read_text(encoding="utf-8").count("id: kb-20261014-0f0f")
+               for p in src.glob("*.md"))         # 拒收不得删源
+
+
 def test_export_rejects_project_scope_target(tmp_repo, tmp_path):
     kb2 = tmp_path / "agentkb"
     (kb2 / "kb").mkdir(parents=True)

@@ -118,6 +118,35 @@ def _coerce(ev: dict, warns: list[str], src: str) -> None:
         elif not isinstance(v, list):
             warns.append(f"{src}: {k} 非列表({type(v).__name__}), 按缺失处理")
             del ev[k]
+    # §77: §50 的列表归一只到"是不是 list"为止, 元素级裸奔同族引爆——手工/异构
+    # 客户端写 layers:["x"] 通过归一后, stats 的 by_source/callers/feed_events/
+    # top_consumed 四个消费方全部 `ly.get(...)` AttributeError(探针实锤, serve
+    # stats/callers/feed 三端点 500)。"消费方逐点补防不如解析期一次归零"的
+    # 原则下钻一层: 结构字段(layers/ext)的元素必须是 dict, 非 dict 元素剔除;
+    # layers 元素内的 matched 同规则(须为 list 且元素为 dict)。
+    # 就地过滤[:]——缓存共享的 dict 引用不变, 重复净化幂等。
+    def _only_dicts(lst: list, what: str) -> list:
+        keep = [x for x in lst if isinstance(x, dict)]
+        if len(keep) != len(lst):
+            warns.append(f"{src}: {what} 含非对象元素, 已剔除"
+                         f"({len(lst) - len(keep)} 个)")
+        return keep
+
+    for k in ("layers", "ext"):
+        v = ev.get(k)
+        if isinstance(v, list):
+            keep = _only_dicts(v, k)
+            if len(keep) != len(v):
+                ev[k] = keep                     # 剔的是顶层列表槽位, 可换引用
+    for ly in ev.get("layers") or []:
+        if isinstance(ly, dict):
+            m = ly.get("matched")
+            if m is not None and not isinstance(m, list):
+                del ly["matched"]                # 标量 matched: 消费方 .get([], []) 兜底
+            elif isinstance(m, list):
+                keep = _only_dicts(m, "layers.matched")
+                if len(keep) != len(m):
+                    m[:] = keep                  # 嵌套列表就地过滤, 不动共享引用
     # §52: 身份字段非字符串同族——caller_repo/ts 会进 by_caller 键与 ts_key 比较,
     # ingest 口已拒收(serve §52), 但手工写入/异构客户端的存量文件仍可能带 dict/
     # list; 读侧一并净化(删键+warn), 坏事件降级为"项目未知"而非打崩聚合。

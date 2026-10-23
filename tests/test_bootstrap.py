@@ -158,6 +158,21 @@ def test_install_cmd_uv_vs_std(tmp_path):
     assert cmd.endswith("biz/.venv/Scripts/python.exe")  # 绝对解释器路径, 可直接粘贴
 
 
+def test_is_uv_venv_substring_not_misjudged(tmp_path):
+    """§74(第五十七轮): 旧实现全文子串 "uv" in text——标准 venv 的 command 行
+    恰含 uv 子串(用户名 uvuser)即误判, doctor 开出机器上没有的 uv 命令。
+    文档承诺的是 `uv = <ver>` 键行, 必须行级键匹配。"""
+    biz = tmp_path / "biz"
+    (biz / ".venv").mkdir(parents=True)
+    (biz / ".venv" / "pyvenv.cfg").write_text(
+        "home = /home/uvuser/.pyenv/versions/3.12\n"
+        "version = 3.12.4\n"
+        "command = /home/uvuser/.pyenv/.../python -m venv /home/uvuser/x/.venv\n",
+        encoding="utf-8")
+    assert _is_uv_venv(biz) is False
+    assert "-m pip install" in _install_cmd(biz, ".venv/bin/python", "pytest")
+
+
 def test_doctor_gate_missing_dep_hints_uv_command(fake_layout, monkeypatch):
     biz, ak = fake_layout
     from kb import bootstrap

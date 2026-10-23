@@ -42,6 +42,20 @@ def test_index_md_links_relative_to_kb_dir(tmp_repo):
     assert rec["path"] == "kb/pitfall/frontend/a.md"
 
 
+def test_index_md_multiline_title_keeps_one_line_per_record(tmp_repo):
+    """§69 同族(第五十四轮): title 是 YAML 多行块时旧 _md 把一条记录劈成两行,
+    INDEX.md"一记录一行"契约碎裂, 按行消费的 L2 面错位。修复后折叠为单行。"""
+    _put(tmp_repo, "kb/pitfall/frontend/a.md",
+         make_entry(title='"第一行\\n第二行"', status="accepted"))
+    _put(tmp_repo, "kb/pitfall/frontend/b.md",
+         make_entry(id="kb-20261012-0002", title="正常", status="accepted"))
+    md, _, _ = build_indexes(tmp_repo)
+    items = [ln for ln in md.read_text(encoding="utf-8").splitlines()
+             if ln.startswith("- [")]
+    assert len(items) == 2                       # 两条记录恰好两行, 无游离行
+    assert "第一行 第二行" in items[0]
+
+
 def test_index_dedup_key_is_fingerprint(tmp_repo):
     d = tmp_repo / "kb" / "pitfall" / "frontend"
     d.mkdir(parents=True)

@@ -177,6 +177,34 @@ def test_read_coerces_all_list_fields(kbroot):
     stats.by_source(searches)
 
 
+def test_read_coerces_non_dict_list_elements(kbroot):
+    """§77 回归: §50 的列表归一只到"是不是 list"为止——手工/异构客户端写
+    layers:["x"] / matched:[123] 通过归一后, stats 的 by_source/callers/
+    feed_events/top_consumed 全部 `ly.get(...)` AttributeError(探针实锤,
+    serve stats/callers/feed 三端点 500)。结构字段元素级净化下钻一层。"""
+    from kb import stats
+    ev = dict(_ev(31), returned=["kb-a"],
+              layers=["坏层", {"repo": "docs",
+                               "matched": ["坏命中", {"id": "kb-a", "title": "T"}]}],
+              ext=["坏ext", {"source": "s", "ok": True, "hits": []}])
+    ev2 = dict(_ev(32), returned=[], layers=[{"repo": "d", "matched": "标量"}])
+    _write(kbroot, f"{dt.date.today():%Y-%m-%d}.jsonl",
+           [{"kind": "meta", "schema": 1}, ev, ev2])
+    searches, _, warns = trace.read_traces(root=kbroot)
+    by = {s["trace_id"]: s for s in searches}
+    lys = by["t-31"]["layers"]
+    assert len(lys) == 1                                  # "坏层"已剔除
+    assert lys[0]["matched"] == [{"id": "kb-a", "title": "T"}]  # 坏命中剔除
+    assert all(isinstance(x, dict) for x in by["t-31"]["ext"])
+    assert "matched" not in by["t-32"]["layers"][0]       # 标量 matched → 视作缺失
+    assert any("非对象元素" in w for w in warns)
+    stats.by_source(searches)                             # 曾经四连 AttributeError
+    stats.callers(searches)
+    stats.feed_events(searches, [])
+    stats.top_consumed(searches, [])
+    trace.read_traces(root=kbroot)                        # 缓存命中: 净化幂等不重复剔
+
+
 def test_read_coerces_query_types(kbroot):
     """§55: query 是检索词不是身份——数值(agent 查 "123" 被 JSON 化成 123)转
     字符串保留语义; 容器(list 不可哈希/dict)删键。消费方 top_queries 做 Counter

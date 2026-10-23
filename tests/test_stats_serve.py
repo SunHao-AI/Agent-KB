@@ -1,6 +1,8 @@
 """FR-1.2 指标口径唯一实现(kb.stats)的口径回归 + serve 服务端点冒烟。"""
 import json
+import socket
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -582,6 +584,42 @@ def _post_json(url, obj, token=None):
             return r.status, json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode())
+
+
+def test_ingest_401_drains_body_so_response_survives(tmp_path):
+    """§76 实锤: 旧 do_POST 在鉴权失败回 401 时不回读请求体就 close——
+    http.client 分"头段+体段"两次 write, 体段晚于 close 到达即触发服务端
+    RST(Windows), 把已写出的 401 吞成 ConnectionReset/Aborted(全量套件
+    test_ingest 偶发 flaky 的根因, 探针受控时序复现)。修复后: 出错路径先
+    drain body, 慢体客户端也能稳定读到 401。"""
+    srv, base = _serve(tmp_path, token="tk")
+    try:
+        port = int(base.rsplit(":", 1)[1])
+        body = json.dumps(_search("slow-1", "p", "q", [])).encode()
+        head = (f"POST /api/ingest HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
+        s = socket.create_connection(("127.0.0.1", port), timeout=5)
+        try:
+            s.sendall(head.encode())        # 只发头(无 Authorization → 401)
+            time.sleep(0.3)                 # 让服务端先写完 401 并进入收尾
+            try:
+                s.sendall(body)             # 迟到的 body: 修复前在这里引爆 RST
+            except OSError:
+                pass                        # 个别平台发送即知关闭, 不影响断言
+            data = b""
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            assert data.startswith(b"HTTP/1.0 401"), data[:60]  # 401 必须可读
+        finally:
+            s.close()
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 def test_ingest_append_dedup_and_redlines(tmp_path):

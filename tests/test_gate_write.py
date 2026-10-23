@@ -275,6 +275,26 @@ def test_export_keeps_existing_source_project(tmp_repo, tmp_path):
     assert parse_entry(dst).fm["source"]["project"] == "orig-name"
 
 
+def test_export_survives_non_dict_source(tmp_repo, tmp_path):
+    """§66(第五十三轮): source 回填相邻两行防线都不等厚——`or {}` 防 None 漏
+    标量({**'manual'} TypeError), `.get('source', {})` 默认值对"键存在为 null"
+    不生效(None.get AttributeError)。front-matter 是不可信输入, 两种手工形态
+    都写得出来, 修复后按缺失处理+warn, 搬移照常。"""
+    kb2 = tmp_path / "agentkb4"
+    (kb2 / "kb").mkdir(parents=True)
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True, exist_ok=True)
+    for i, src_line in (("1a1a", "source:"), ("1b1b", "source: manual")):
+        (d / f"kb-20261014-{i}.md").write_text(
+            make_entry(id=f"kb-20261014-{i}").replace(
+                "confidence: speculative",
+                f"confidence: speculative\n{src_line}"), encoding="utf-8")
+        dst = export_entry(tmp_repo, kb2, f"kb-20261014-{i}",
+                           to_scope="stack", today=TODAY)
+        fm = parse_entry(dst).fm
+        assert isinstance(fm["source"]["project"], str) and fm["source"]["project"]
+
+
 def test_export_conflict_rejected(tmp_repo, tmp_path):
     kb2 = tmp_path / "agentkb"
     (kb2 / "kb" / "pitfall" / "frontend").mkdir(parents=True)

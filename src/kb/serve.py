@@ -274,20 +274,31 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         srv = self.server  # type: ignore[attr-defined]
         u = urlparse(self.path)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = 0
+        # 回任何错误(404/401/400)前必须先把请求体读干: 客户端(http.client)是
+        # "头一段、体一段"两次 write, 若服务端没读 body 就回 401 并 close, 晚到
+        # 的 body 落在已关连接上 → 服务端 OS 回 RST(Windows), 把刚写出的 401
+        # 响应字节一并吞掉——客户端拿到 ConnectionResetError(10054)而非干净 401
+        # (全量套件 test_ingest 偶发 flaky ~1/8, 探针受控时序复现; RFC 9110 亦
+        # 要求带体请求出错先 drain 再关)。读上限与合法路径同 64KB, 超限不读直接
+        # 关(防放大)。
+        raw = b""
+        if 0 < n <= 64 * 1024:
+            raw = self.rfile.read(n)
+        elif n > 64 * 1024:
+            self.close_connection = True
         if u.path != "/api/ingest":
             self._json({"error": "not found"}, 404)
             return
         if not self._authorized():
             self._json({"error": "unauthorized"}, 401)
             return
-        try:
-            n = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            n = 0
         if n <= 0 or n > 64 * 1024:
             self._json({"error": "bad body"}, 400)
             return
-        raw = self.rfile.read(n)
         try:
             ev = json.loads(raw.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):

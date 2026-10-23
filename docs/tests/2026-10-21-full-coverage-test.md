@@ -2003,6 +2003,212 @@ read 不 TypeError、consumed_total 不虚报), pytest **356 全绿**(flaky 用�
 
 **沉淀**: 命中 `kb-20261023-463c` 追加"§68 生产者往消费集合塞 None"新发现段。
 
+## §69 第五十二轮: stat --format md 多行 title 劈碎表格
+
+**选题**: §65"净化覆盖范围"判据换面重跑——转义函数是净化器的孪生面。审
+cli.py 全部输出格式化点, `_md_cell`(stat --needs-scope --format md)只转义竖线。
+
+**D-61 多行 title 劈碎 md 表格(实锤+修复, 低)**: title 是 YAML 多行块(lint
+不禁止多行标题)时, 旧 `_md_cell` 把换行原样打进单元格——1 条记录输出 3 行
+(半行+游离行+残尾), 表格碎裂, 按行解析下游全错位。探针实锤后修复: 先折叠
+全部空白为单空格再转义竖线(与 entry.summary 同款), 复验一记录一行、行尾闭合。
+
+**判据**: **一切"把自由文本放进结构化载体"的函数都是净化器**——先写出目标
+载体的完整不变量(md 单元格=单行+无裸竖线), 逐条对照处理是否齐全, 不是"想到
+哪个字符转哪个"。§65 判据第三次独立命中(事件行→meta 行→转义器)。
+
+**回归**: test_cli.py +1(多行+竖线 title: 数据行 1 条、行尾闭合、折叠+转义
+断言), pytest **357 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§69 转义器也是净化器"新发现段。
+
+## §70 第五十三轮: export_entry source 回填相邻两行各种半个防法
+
+**选题**: §66"同函数第二行"判据重跑, 从 spider_export/cli 换到 gate.export_entry
+——front-matter 是不可信输入, 回填 source.project 时对 `fm["source"]` 的相邻
+两行消费值得逐行对账。
+
+**D-62 source 非对象崩 export(实锤+修复, 中)**: 上行 `{**(fm.get("source") or {})}`
+`or {}` 防 None 漏标量(`source: manual` → `{**"manual"}` TypeError); 下行
+`fm.get("source", {}).get("project")` 中招 §47 陷阱(`source:` 空值 → 默认值不
+生效 → `None.get` AttributeError)。探针双场景实锤(搬移进行到一半崩, 破坏性
+流程尤其危险)。修复: `isinstance(dict)` 类型收敛一次+非对象 warn, 两行共享
+同一事实; 复验两场景搬移照常、source.project 为干净字符串。
+
+**判据**: §66 的对称子形态——**两侧都有防、防法还不同**。"一处防一处裸"评审
+显眼, "两个惯用式各防一半"双双过审。识别信号: 同一变量相邻几行防御写法不一致
+(`or {}` vs `.get(k,{})` vs isinstance)时逐式问"你防不住什么"再取并集。
+
+**回归**: test_gate_write.py +1(source 空值/标量两形态 export 照常、project
+回填为字符串), pytest **358 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§70 相邻两行各种半个惯用防法"新发现段。
+
+## §71 第五十四轮: INDEX.md 多行 title 劈碎一记录一行契约
+
+**选题**: §69 判据的操作化重跑——对自由字段 title 列出全部输出载体清单
+(stat md 单元格=已修 / INDEX.md 列表行 / index.jsonl=JSON 转义天然安全), 逐
+载体核不变量。第二站 `index._md` 命中。
+
+**D-63 INDEX.md 多行 title 劈行(实锤+修复, 低)**: title 是 YAML 多行块时
+`_md` 原样插入列表行, 2 条记录输出 3 行(1 游离行), "一记录一行"契约碎裂,
+按行消费的 L2 面错位。同函数内 summary 已折叠(title 裸奔)——§66"第二行"在
+字段维度重现。修复同款 `re.sub(r"\s+", " ")` 折叠, 复验 2 记录 2 行无游离。
+
+**判据**: 修一个载体≠修该字段——**每个自由字段列全部输出载体清单逐载体核**。
+jsonl 因 JSON 转义免检, md 面两载体一防一裸。§69 判据当轮即复用见效, 证明
+其可作为机械动作固化。
+
+**回归**: test_index.py +1(多行 title 两记录恰两行、折叠断言), pytest
+**359 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§71 同一字段第二载体裸奔"新发现段。
+
+## §72 第五十五轮: autostart 计划任务 PowerShell 单引号裸插值(命令注入)
+
+**选题**: §69/§71"自由文本进结构化载体"判据按**爆炸半径排序**优先扫最重档——
+shell 命令拼接。`autostart.install_windows` 把 repo 路径与 default_caller
+裸插进 `-Execute '{cmd}' -Argument '{args}'` 单引号串, 零转义。
+
+**D-64 install_windows 断串/命令注入(实锤+修复, 高)**: 探针替换 `_ps` 捕获
+脚本——路径 `O'Brien` 单引号原样入串(注册 cmdlet 必炸且报错指向假因),
+`--default-caller "evil'; <命令>; '"` 断串后可在本机用户上下文执行任意命令。
+修复 `_psq()` 按 PS 规则单引号加倍, 三个插值点全过; 权威复验用**真实
+PowerShell 解析器**回吐变量值: 注入串完整保留为字面量、`7*7` 未执行。
+探针期间自查一桩: 自写的 regex 判据(`'; ` 即泄漏)对加倍转义假阳性(`'';`
+第二个 `'` 非闭合符), 真解析器才可信。
+
+**判据**: 载体清单按爆炸半径排序, shell 拼接(RCE 原语)>md 错位;**验证转义
+用目标载体真解析器, 不要另发明近似判据**。
+
+**回归**: test_autostart.py +1(路径/caller 单引号加倍、引号成对), pytest
+**360 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§72 shell 载体漏转义=执行"新发现段。
+
+## §73 第五十六轮: systemd unit 值内换行注入指令行
+
+**选题**: §72 载体清单判据在 autostart 模块内走完第二站——同一 serve 命令的
+Linux 载体 `render_systemd_unit`。逐条目答两问: 破坏字符=换行(unit 值跨行即
+新指令行), 转义语法=**无**(systemd 引号不跨行、无值内换行转义)。
+
+**D-65 systemd unit 换行注入(实锤+修复, 高)**: 探针把
+`--default-caller "evil\nExecStartPre=/bin/sh -c pwned"` 喂进渲染, 实锤
+`ExecStartPre=` 作为独立指令行落盘(下一次服务启动即执行)。修复: 渲染入口
+对 command/args/working_dir 三字段拒收换行(fail-loud ValueError), cli 侧把
+ValueError 并入 autostart 友好报错通道(旧 except 元组接不住会 traceback)。
+Windows 面复核无需二次修: PS 单引号串允许值内换行, 不破坏安全。
+
+**判据**: 载体条目两问——"破坏字符是什么"+"该载体有没有转义语法"。**转义表
+为空的载体(INI 族/CSV 裸字段/日志行)唯一防线是准入拒收**, 守门点选在生产者
+出口。与 §72(有转义语法的 shell→正确转义)合成完整决策树。
+
+**回归**: test_autostart.py +1(含换行 caller 渲染拒绝), pytest **361 全绿**;
+ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§73 转义不存在的载体只能拒收"新发现段。
+
+## §74 第五十七轮: _is_uv_venv 全文子串误判(§53 判据的格式面变体)
+
+**选题**: 换靶 bootstrap.py(§45 只防过 doctor 崩溃面, init/安装命令生成分支
+未细审)。审 `_is_uv_venv` 时对照 docstring 承诺与实现, 发现"写明 `uv = <ver>`
+行, 实现是全文 in"。
+
+**D-66 uv venv 误判给标准用户开死路命令(实锤+修复, 低)**: 标准 venv 的
+`command = /home/uvuser/... -m venv` 行含 "uv" 子串(用户名/路径恰好命中)即误
+判, doctor 给标准 venv 用户开出机器上不存在的 `uv pip install` 命令(探针场景
+A 误判 True)。修复: 行级键匹配(`uv =`/`uv=` 行首锚定), 复验误判场景 False、
+真 uv venv 仍 True、装包命令回到 `python -m pip`。
+
+**判据**: **识别 key=value 格式文件(pyvenv.cfg/ini/env)的标志必须行级键匹
+配**——格式文件的"检测"就是廉价解析器, 写它就得按解析器规矩来; 全文 in 对
+"路径/用户名碰巧含标志词"恒误判。§53 判据(子串恒真)从值面打到格式面的第二
+个方向。附"承诺审计": docstring 带格式示例的判据函数, 测试照示例造正反例。
+
+**回归**: test_bootstrap.py +1(uvuser 用户名标准 venv 不误判), pytest
+**362 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§74 格式文件检测=廉价解析器"新发现段。
+
+## §75 第五十八轮: _dispatch get 分支裸取净化可删键(§66 判据收缩到同函数两分支)
+
+**选题**: 审 serve 全端点/launcher/userconf/stats 均无果后转 spider_live, 对照
+`_dispatch` 两分支对同一 trace 事件的字段取法, 发现 search 分支经
+event_to_updates 有 `isinstance(m.get("id"), str)` 守卫而 get 分支裸取
+`ev["id"]`。
+
+**D-67 get 分支 KeyError 静默丢播(实锤+修复, 低-中)**: trace 文件经 §52 净化
+把非字符串 id 删键后, get 分支 `ev["id"]` 直接 KeyError, 被 run 循环
+`except Exception: continue` 吞掉——该条"已读消费"标注在直播流静默丢失(探针
+场景A id=12345 修复前 KeyError, 修复后安全跳过; 场景B 合法 id 照常发 you
+标注)。修复: `if ev.get("ok") and isinstance(ev.get("id"), str)` 对齐 search
+分支口径。
+
+**判据**: **净化器删过的每个键, 全部消费点按同一口径处理**——拿净化删键清单
+(trace_id/id/caller_repo/layer/source/ts)当检查表 grep 裸索引, 同函数内"一处
+守卫一处裸取"即缺陷。异常被上层循环吞掉时这类炸点是**静默丢数据**而非崩溃,
+比崩溃更难发现。§66"两行等厚"判据收缩到同一函数内部的两分支。
+
+**回归**: test_spider_live.py +1(_coerce 删键后 _dispatch 不崩不发/合法 id 照常
+发), pytest **363 全绿**; ruff F,E9 通过。观察: 首跑 test_ingest_append_dedup_and_redlines
+偶发 ConnectionResetError(WinError 10054), 单跑与复跑均过——serve 测试第二例
+flaky(前有 test_spider_live 时序用例), 登记暂不修。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§75 同函数两分支对净化可删键同口径"新
+发现段。
+
+## §76 第五十九轮: serve do_POST 出错路径不 drain 请求体→401 被 RST 吞(登记 flaky 转正)
+
+**选题**: 上一轮把"test_ingest 偶发 ConnectionResetError"从"环境 flaky 暂不修"
+提级为走查对象。循环探针首轮实测复现率 1/8(单跑/16 连跑单文件全过——证实它
+只在套件负载下拉长两段时间差时出现)。
+
+**D-68 出错路径不 drain 请求体, 已写出的 401 被 RST 吞(实锤+修复, 中)**:
+`http.client` 发带体请求是"头段+体段"两次 write; 旧 `do_POST` 鉴权失败直接回
+401 并 close、全程不读 body——体段晚于 close 到达时内核回 RST, 把客户端尚未
+读走的 401 字节一并丢弃(WinError 10054/10053)。探针用原始 socket 受控时序
+(发头→睡 0.4s→发体)让必现化: 修复前读响应必炸, 修复后稳定读到
+`HTTP/1.0 401`。修复: Content-Length 解析+回读提到全部错误返回之前(404/401/400
+统一先 drain), 超 64KB 不读直接关(防放大)。
+
+**判据**: **带体请求的任何错误响应, 回之前先把请求体读干**(RFC 9110 §10.1.4)
+——"先校验后读体"的裸 HTTP 服务端都中招; 这类缺陷的现场特征是**偶发连接重置
+而非稳定失败**, 极易被误登记为"环境 flaky 暂不修"。方法论: 被登记的 flaky 是
+走查的免费选题清单——"只在负载下出现"本身就是机制线索(负载拉开了哪两件事的
+时间差?)。验证方法: git stash 回退源码确认新测试对旧代码敏感(否则测试是摆设)。
+
+**回归**: test_stats_serve.py +1(受控时序: 迟到 body 后 401 必须可读; stash 回退
+即失败), pytest **364 全绿**; ruff F,E9 通过; test_stats_serve.py 连跑 8 次
+0 失败(修复前 1/8)。
+
+**沉淀**: 新建 `kb-20261023-1dd3`(backend, 独立病灶族不入 463c), 自审
+accepted/verified(evidence=受控探针+8 连跑)。
+
+## §77 第六十轮: _coerce 列表归一不做元素级——layers:["x"] 打崩 stats 四聚合
+
+**选题**: 按 §75 判据全仓 grep 净化可删键裸索引消费点(存量均有守卫, 无新靶)
+后, 转审 `_coerce` 净化面自身: §50 把 layers/ext 归一为 list 的循环只校验
+"是不是 list", 列表**元素**与 layers 元素内的 matched 完全裸奔, 而 stats 全部
+消费方假定"层是 dict、matched 是 list"。
+
+**D-69 结构字段元素级裸奔(实锤+修复, 中)**: 手工/异构客户端 trace 文件写
+`layers: ["坏层", {...}]`, 通过既有归一进缓存后, `by_source`/`callers`/
+`feed_events`/`top_consumed` 四函数全部 `ly.get(...)` AttributeError(探针实锤
+四连崩; serve stats/callers/feed 端点在同一文件下 500)。修复: `_coerce` 增加
+元素级净化——layers/ext 剔除非 dict 元素(换引用), matched 须为 list 否则删键、
+其内非 dict 元素 `m[:] =` 就地过滤(缓存共享 dict 引用不可换), 全部带 warn。
+
+**判据**: **净化深度 = 消费方下钻深度**——"解析期一次归零"原则下, 消费方对
+结构的每一层假设(层是 dict → matched 是 list → 元素是 dict)都要在净化层有
+对应校验, 否则只是把炸点从第一层推到第二层。审计法: 拿消费方下钻链
+`s.get("layers") → ly.get("matched") → m.get("id")` 当深度尺量净化器。
+
+**回归**: test_trace.py +1(元素级剔除+标量 matched 删键+缓存幂等), pytest
+**365 全绿**; ruff F,E9 通过。
+
+**沉淀**: 命中 `kb-20261023-463c` 追加"§76/§77 flaky 免费选题+净化深度下钻"
+合并新发现段(两判据同根: 审计既有防线的边界在哪停住)。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

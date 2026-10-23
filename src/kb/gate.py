@@ -323,8 +323,19 @@ def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
               file=sys.stderr)
     fm["scope"] = to_scope
     fm["tags"] = _strip_promote_tags(fm)
-    fm["source"] = {**(fm.get("source") or {}),
-                    "project": fm.get("source", {}).get("project") or _project_name(project_repo)}
+    # §66 同函数第二行(第五十三轮): 相邻两行对 source 用了两种厚度的防线——
+    # `or {}` 防 None 漏标量(`{**"manual"}` TypeError), `.get(k, {})` 的默认值
+    # 对"键存在但为 null"不生效(§47 陷阱, None.get AttributeError)。front-matter
+    # 是不可信输入, source 非对象手工写得出来。类型收敛一次, 两行共享同一事实。
+    src_meta = fm.get("source")
+    if src_meta is not None and not isinstance(src_meta, dict):
+        print(f"kb warning: {id} front-matter source 非对象"
+              f"({type(src_meta).__name__}), 回填 project 时按缺失处理",
+              file=sys.stderr)
+        src_meta = None
+    src_meta = src_meta or {}
+    fm["source"] = {**src_meta,
+                    "project": src_meta.get("project") or _project_name(project_repo)}
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(dump_entry(Entry(fm=fm, body=e.body, path=dst)), encoding="utf-8")
     src.unlink()

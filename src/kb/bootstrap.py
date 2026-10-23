@@ -167,7 +167,12 @@ def _is_uv_venv(venv_root: Path) -> bool:
     cfg = Path(venv_root) / ".venv" / "pyvenv.cfg"
     if not cfg.exists():
         return False
-    return "uv" in cfg.read_text(encoding="utf-8", errors="replace")
+    # 行级键匹配(第五十七轮 §74): 文档承诺的是 `uv = <ver>` 键行, 旧实现却是
+    # 全文子串 `"uv" in text`——标准 venv 的 command 行含 "uv" 子串(用户名如
+    # uvuser、路径如 /srv/uvtool)即误判, doctor 给标准 venv 用户开出机器上
+    # 根本不存在的 `uv pip install` 死路命令。cfg 是 key = value 格式, 按键认。
+    return any(ln.strip().startswith("uv =") or ln.strip().startswith("uv=")
+               for ln in cfg.read_text(encoding="utf-8", errors="replace").splitlines())
 
 
 def _install_cmd(venv_root: Path, interp: str, pkgs: str) -> str:

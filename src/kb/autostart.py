@@ -29,6 +29,14 @@ def serve_command(repo: Path, port: int, bind: str,
 
 
 def render_systemd_unit(command: str, args: str, working_dir: str) -> str:
+    # §72 同族(第五十六轮): unit 文件的载体不变量是"值不跨行"(换行=新指令行,
+    # systemd 无值内换行转义)。`--default-caller "evil\nExecStartPre=…"` 曾直接
+    # 注入新指令行(探针实锤 ExecStartPre 落盘)。systemd 没有可依赖的值内转义,
+    # 唯一正确姿势是渲染入口 fail-loud 拒收——这是安装参数, 报错比装出坏 unit 好。
+    for name, v in (("command", command), ("args", args), ("working_dir", working_dir)):
+        if any(ch in str(v) for ch in ("\n", "\r")):
+            raise ValueError(f"systemd unit 字段 {name} 含换行, 拒绝渲染"
+                             f"(unit 值跨行会被解析成新指令行)")
     return (f"[Unit]\n"
             f"Description=Agent-KB kb serve (managed by kb serve --install-autostart)\n"
             f"\n[Service]\n"
@@ -56,6 +64,14 @@ def _ps(script: str) -> tuple[int, str]:
     return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script])
 
 
+def _psq(s: str) -> str:
+    """PowerShell 单引号串内转义: 唯一的转义规则是 ' → ''。路径含单引号
+    (用户名 O'Brien 等)时旧实现裸插值直接断串——注册失败且报错指向 cmdlet
+    而非真因; --default-caller 是任意 CLI 串, 含 `'; <命令>; '` 即在本机
+    用户上下文执行任意命令(自伤面为主, 但这是命令注入的原语级缺陷)。"""
+    return str(s).replace("'", "''")
+
+
 def install_windows(repo: Path, port: int, bind: str,
                     default_caller: str | None,
                     tmp_dir: Path | None = None) -> str:
@@ -69,8 +85,10 @@ def install_windows(repo: Path, port: int, bind: str,
           "-RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1); "
           "Register-ScheduledTask -TaskName {TASK_NAME} -Action $a -Trigger $t "
           "-Settings $si -Force | Out-Null; "
-          "Start-ScheduledTask -TaskName {TASK_NAME}").format(cmd=cmd, args=args,
-                                                              wd=wd, TASK_NAME=TASK_NAME)
+          "Start-ScheduledTask -TaskName {TASK_NAME}").format(cmd=_psq(cmd),
+                                                              args=_psq(args),
+                                                              wd=_psq(wd),
+                                                              TASK_NAME=TASK_NAME)
     rc, msg = _ps(ps)
     if rc != 0:
         raise RuntimeError(f"计划任务注册失败(可能需要管理员权限?): {msg}")

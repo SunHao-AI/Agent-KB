@@ -210,3 +210,38 @@ def test_run_survives_poisoned_line(tmp_path, monkeypatch):
     n = calls.count("spider_create_session")
     assert n >= 2                        # 毒事件后的"好"事件仍被直播(未被崩退带走)
     t.join(timeout=5)
+
+
+# ---- 第五十八轮走查(§75): _dispatch get 分支对净化可删键的同口径守卫 ------
+
+def test_dispatch_get_branch_survives_stripped_id():
+    """§66 同函数两分支: search 分支经 event_to_updates 有 isinstance 守卫,
+    get 分支曾裸取 ev["id"]——§52 净化把非字符串 id 删键后 KeyError(被 run
+    循环吞掉 = 该条已读标注静默丢播)。修复后: 坏事件安全跳过, 好事件照常发。"""
+    from kb.spider_live import _dispatch
+    from kb.trace import _coerce
+
+    class RecMcp:
+        def __init__(self):
+            self.calls = []
+
+        def tool(self, name, args):
+            self.calls.append((name, args))
+            return {"id": "s1"}
+
+    mcp = RecMcp()
+    active = {"t1": {"session": "s1", "last": 0.0, "has_hits": True}}
+
+    bad = {"kind": "get", "trace_id": "t1", "caller_repo": None,
+           "id": 12345, "ok": True}
+    _coerce(bad, [], "test.jsonl")            # §52 净化: 非字符串 id → 删键
+    _dispatch(mcp, bad, active, None)          # 不得 KeyError
+    assert mcp.calls == []                     # 坏事件不发标注
+
+    good = {"kind": "get", "trace_id": "t1", "caller_repo": None,
+            "id": "kb-20261012-7f3a", "ok": True}
+    _coerce(good, [], "test.jsonl")            # 合法 id 原样保留
+    _dispatch(mcp, good, active, None)
+    assert mcp.calls and mcp.calls[0][0] == "spider_update_events"
+    ev0 = mcp.calls[0][1]["events"][0]
+    assert ev0["route"] == "you" and ev0["status"] == "completed"

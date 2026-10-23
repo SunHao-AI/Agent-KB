@@ -196,6 +196,22 @@ def test_cli_stat_needs_scope_md(tmp_repo, capsys):
     assert "待认定" in capsys.readouterr().out
 
 
+def test_cli_stat_md_multiline_title_keeps_table(tmp_repo, capsys):
+    """§69(第五十二轮): title 是 YAML 多行块(lint 不禁止)时, 旧 _md_cell 只转义
+    竖线不折叠换行——一条记录被劈成"半个表头列 + 游离行", md 表格碎裂,
+    下游按行解析错位。修复后换行折叠为空格, 一记录一行。"""
+    d = tmp_repo / "kb" / "pitfall" / "backend"; d.mkdir(parents=True)
+    (d / "a.md").write_text(
+        make_entry(id="kb-20261023-e5e5", title='"第一行\\n第二行|竖线"',
+                   tags=["needs-scope-review"]), encoding="utf-8")
+    assert main(["stat", "--needs-scope", "--format", "md", "--repo", str(tmp_repo)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    data = [ln for ln in lines if ln.startswith("| kb-")]
+    assert len(data) == 1
+    assert data[0].endswith("|")                 # 行尾闭合, 未被劈开
+    assert "第一行 第二行\\|竖线" in data[0]      # 换行折叠 + 竖线转义
+
+
 def test_cli_search_agent_kb_layers(tmp_path, capsys):
     # 双层检索: 项目层 + agent-kb 层各命中一条, repo 字段区分来源
     proj_kb = tmp_path / "proj"

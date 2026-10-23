@@ -86,8 +86,13 @@ def _md(records) -> str:
     for r in records:
         # INDEX.md 位于 kb/ 内, 链接必须相对 kb/ 目录; jsonl 的 path 保持 repo 相对
         link = r["path"].removeprefix("kb/")
+        # §69 同族(第五十四轮): "一记录一行"是 INDEX.md 的载体不变量, title 是
+        # YAML 多行块(lint 不禁止)时旧实现把一条记录劈成两行, L2 消费面按行解析
+        # 错位。summary 出自 Entry.summary 已折叠, title 未过任何归一——同一文件
+        # 里两个自由字段, 一个防了一个裸奔(§66 的"第二行"又现)。
+        title = re.sub(r"\s+", " ", str(r["title"])).strip()
         lines.append(
-            f"- [{r['title']}]({link}) · {r['type']} · "
+            f"- [{title}]({link}) · {r['type']} · "
             f"{','.join(r['domain'])} · {r['status']} · {r['summary']}"
         )
     return "\n".join(lines) + "\n"

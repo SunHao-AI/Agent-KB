@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -343,7 +344,11 @@ def _dispatch(argv: list[str] | None = None) -> int:
         if args.needs_scope:
             rows = needs_scope(repo)
             if args.format == "md":
-                _md_cell = lambda s: str(s).replace("|", "\\|")
+                # md 表格一行一条记录: title 可能是 YAML 多行块(lint 不禁止),
+                # 换行会把行劈成"1 个表头列 + 游离行", 表格碎裂且下游按行解析错位。
+                # 与 entry.summary 同款: 先折叠全部空白为单空格, 再转义竖线。
+                _md_cell = (lambda s: re.sub(r"\s+", " ", str(s)).strip()
+                            .replace("|", "\\|"))
                 print("| id | title | type | domain | summary |")
                 print("| --- | --- | --- | --- | --- |")
                 for r in rows:
@@ -369,7 +374,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
                         Path(args.repo).resolve() if args.repo
                         else Path(__file__).resolve().parents[2],
                         args.port, args.bind, args.default_caller))
-            except (RuntimeError, OSError) as exc:
+            except (RuntimeError, OSError, ValueError) as exc:
+                # ValueError: 安装参数被渲染守门拒绝(如 systemd 字段含换行, §72 同族)
                 print(f"kb serve autostart: {exc}", file=sys.stderr)
                 return 1
             return 0

@@ -237,6 +237,10 @@ def _dispatch(mcp: SpiderMcp, ev: dict, active: dict, caller: str | None) -> Non
     elif tid in active:  # 迟到的 get → you 分支"已读消费"(id 与建会话时同样归一)
         a = active[tid]
         a["last"] = time.monotonic()
-        if ev.get("ok"):
+        # §66 同函数两支(第五十八轮): search 分支经 event_to_updates 已对
+        # matched id 做 isinstance 守卫, get 分支的 ev["id"] 却裸取——§52 净化
+        # 删过 id 键的非字符串 get 事件 KeyError(被 run 循环吞成"该条已读静默
+        # 丢播")。同一 _dispatch 内两分支对同一净化可删键必须同口径: 无效跳过。
+        if ev.get("ok") and isinstance(ev.get("id"), str):
             mcp.tool("spider_update_events", {"sessionId": a["session"], "events": [
                 {"id": spider_id(ev["id"]), "route": "you", "status": "completed"}]})

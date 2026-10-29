@@ -74,6 +74,9 @@ kb doctor --repo docs --agent-kb .agent-kb      # 接入自检(FAIL 才退 1)
     sections 四处, keywords 每段配额有限、sections 每段最多 20 个段落首句——只加正文
     不动 tags, 下一次 `kb search` 很可能搜不到这次追加的内容, 红线 #3 的去重随之
     失效(2026-10-29 线上实测: 追加约 1400 字后旧查询仍零命中, 补 tag 后立即命中)。
+    **tag 语言须与查询习惯一致**: 补的 tag 若只有英文, 中文查询仍零命中(同日实测:
+    `pre-push-gate`/`repo-name` 命中而 `pre-push 门禁 repo 名同源` 零命中, 补中文
+    tag 后才命中)——中英各补一组, 别只补一边。
 4. 无实测证据的结论**必须**标 `confidence: speculative`; 采信时默认只信 verified/probable,
    `speculative` 结论须自行验证后才可依据(检索本身不做 confidence 过滤)。
 5. 单次任务最多沉淀 **3 条**, 自主终审 accepted 单会话也**最多 3 条**, 防刷噪音。

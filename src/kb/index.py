@@ -2,16 +2,20 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from kb.dedup import fingerprint
-from kb.entry import iter_entry_paths, parse_entry
+from kb.dedup import fingerprint, h2_sections
+from kb.entry import Entry, iter_entry_paths, parse_entry
 
 # FR-3.4 keywords 派生(竞品 Mem0 "entity 信号"的零依赖本地化): agent 最自然的
-# 查询词往往是报错串/函数名/配置键, 它们只出现在正文。取三类高信息标识符,
-# 每条 ≤20 词; 只进 index 匹配面, 不是正文句子(敏感度与 summary 同级)。
+# 查询词往往是报错串/函数名/配置键, 它们只出现在正文。取三类高信息标识符;
+# 只进 index 匹配面, 不是正文句子(敏感度与 summary 同级)。
+#
+# 配额按 H2 段分桶(spec 4.1, 修线上故障): 旧实现全文取词 + 全局 cap=20, 而六段式
+# 条目正文远超 20 词, 于是先写的段占满配额、后追加的病灶面**永远进不了检索面**——
+# 全库 577 条 447 条(77%)被截断。分桶后每段各有配额, 顺序偏置消除; 取值规则本身未动。
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 _IDENT_RE = re.compile(r"[A-Za-z_$][\w$.]{3,}")
-_H2_RE = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
-_KEYWORDS_CAP = 20
+_SECTION_KW_CAP = 8
+_KEYWORDS_CAP = 64
 
 
 def _is_informative(w: str) -> bool:
@@ -19,36 +23,64 @@ def _is_informative(w: str) -> bool:
     return any(c.isupper() for c in w) or "_" in w or "." in w or "$" in w
 
 
-def derive_keywords(body: str) -> list[str]:
+def _section_words(header: str, content: str) -> list[str]:
+    """单个 H2 段内的四级派生(围栏 → 行内码 → 段名 → 段落), 保序, 不跨段去重不复用配额。
+
+    围栏与行内码两级**不做** _is_informative 过滤(沿用 FR-3.4 既有规则: 代码里的
+    普通词也是有效实体), 段名与段落两级做过滤。
+    """
     out: list[str] = []
-    seen: set[str] = set()
 
     def add(w: str) -> None:
         w = w.strip("` '\"()[]")
-        if len(w) >= 4 and w.lower() not in seen:
-            seen.add(w.lower())
+        if len(w) >= 4:
             out.append(w)
 
-    for fence in _FENCE_RE.findall(body):
+    for fence in _FENCE_RE.findall(content):
         lines = fence.splitlines()
         # 首行是 ```lang 语言标记, 不是代码, 不参与派生
         for w in _IDENT_RE.findall("\n".join(lines[1:])):
             add(w)
-    for line in body.splitlines():
+    for line in content.splitlines():
         s = line.strip()
         if s.startswith("#") or not s:
             continue
         for w in _IDENT_RE.findall(" ".join(re.findall(r"`[^`]+`", s))):
             add(w)
-    for m in _H2_RE.findall(body):
-        if _is_informative(m):  # 中文段名无检索价值, 只收含标识符的段名
-            add(m)
-    for para in re.split(r"\n\s*\n", body):
+    if _is_informative(header):  # 中文段名无检索价值, 只收含标识符的段名
+        add(header)
+    for para in re.split(r"\n\s*\n", content):
         # 跳过标题行: H1=标题、H2=段名已各自覆盖, keywords 只收正文独有实体
         text = " ".join(ln for ln in para.splitlines() if not ln.strip().startswith("#"))
         for w in _IDENT_RE.findall(text):
             if _is_informative(w):
                 add(w)
+    return out
+
+
+def derive_keywords(entry: Entry) -> list[str]:
+    """按 H2 段分桶派生: 每段 ≤_SECTION_KW_CAP 词, 跨段保序去重, 全局 ≤_KEYWORDS_CAP。
+
+    配额必须在**标 seen 之后**才判满并 break: 若先判满再跳过, 段内剩余词不会被任何
+    段收录(本段不要、后续段看不到), 与旧的全局截断无异。反之超额词不标 seen 也无害
+    ——它只是没进结果, 不影响后续段的独立配额。
+
+    H2 之前的引言内容不参与派生: 六段式模板与 lint 保证内容都住在段内(实测全库
+    条目 0 例外), 由 tests/test_search_cjk_keywords.py 的 keywords 非空守护兜住该
+    假设, 不设运行时退化分支。
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for header, content in h2_sections(entry):
+        taken = 0
+        for w in _section_words(header, content):
+            if w.lower() in seen:
+                continue
+            seen.add(w.lower())
+            out.append(w)
+            taken += 1
+            if taken >= _SECTION_KW_CAP:
+                break
     return out[:_KEYWORDS_CAP]
 
 
@@ -67,7 +99,7 @@ def _records(repo_root: Path, repo_name: str):
             "confidence": fm.get("confidence", ""),
             "path": p.relative_to(repo_root).as_posix(),
             "summary": e.summary(),
-            "keywords": derive_keywords(e.body),
+            "keywords": derive_keywords(e),
             "dedup_key": fingerprint(e),
             "related": fm.get("related", []),
             "updated": fm.get("updated", ""), "repo": repo_name,

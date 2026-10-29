@@ -51,6 +51,38 @@ def _normalize_lists(fm: dict) -> list[str]:
     return degraded
 
 
+_CN_TERM = "。！？"
+_ASCII_TERM = ".!?"
+_FENCE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
+
+
+def _first_sentence(text: str) -> str:
+    """首个句末终止符处截断(保留终止符)。
+
+    ASCII 终止符须**后接空白**且**前一字符非数字**——否则 `nginx 1.27.3 起支持`
+    会从 `27.3` 那个点被剁开(版本号里的点后接空格是常态)。数字前置的点不当终止符
+    会漏判 "value is 3. Next" 这类句界, 代价只是首句偏长, 对匹配面无害(仍有 limit 截断)。
+    """
+    for i, ch in enumerate(text):
+        if ch in _CN_TERM:
+            return text[: i + 1]
+        if (ch in _ASCII_TERM and i + 1 < len(text) and text[i + 1].isspace()
+                and i > 0 and not text[i - 1].isdigit()):
+            return text[: i + 1]
+    return text
+
+
+def _nonempty_paragraphs(text: str) -> list[str]:
+    """按空行分块, 块内剔除标题行并折叠空白, 返回非空块(与 summary 的取块规则同构)。"""
+    out: list[str] = []
+    for block in re.split(r"\n\s*\n", text):
+        b = re.sub(r"\s+", " ", " ".join(
+            ln for ln in block.splitlines() if not ln.strip().startswith("#"))).strip()
+        if b:
+            out.append(b)
+    return out
+
+
 @dataclass
 class Entry:
     fm: dict
@@ -74,6 +106,22 @@ class Entry:
             if b:
                 return b[:limit]
         return ""
+
+    def sections_text(self, limit: int = 60) -> str:
+        """各 H2 段首句拼接, 只供 index 匹配面(spec §4.2)。不进 INDEX.md、不进检索返回值。
+
+        存在理由: summary 只取正文首块, 向既有条目追加新病灶面时检索面不增长,
+        红线 #3 要求的"先 search 去重"因此自我失效。每段首句是有界的高密度匹配面。
+        """
+        from kb.dedup import h2_sections  # 运行期反向依赖本模块, 延迟导入避免环
+
+        out = []
+        for _header, content in h2_sections(self):
+            # 围栏整块删除后再分段: 真首句常与紧随的代码块同段, 按段跳过会连主旨句一起丢
+            paras = _nonempty_paragraphs(_FENCE_BLOCK_RE.sub("", content))
+            if paras:
+                out.append(_first_sentence(paras[0])[:limit])
+        return " ".join(out)
 
 
 def parse_entry(path: pathlib.Path) -> Entry:

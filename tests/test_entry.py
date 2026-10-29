@@ -99,3 +99,41 @@ def test_degraded_list_search_filter_exact_match(tmp_repo):
     assert [r["id"] for r in kb_search.search(tmp_repo, domain="front")] == []
     assert [r["id"] for r in kb_search.search(tmp_repo, domain="frontend")] == ["kb-20261011-aaaa"]
     assert query.stat(tmp_repo)["by_domain"] == {"frontend": 1}
+
+
+# ---- sections_text: 各 H2 段首句拼接(只供 index 匹配面, spec 4.2) -----------
+
+def _sec_entry(tmp_path, name, body):
+    """构造带正文的 Entry(_write 要求完整 front-matter, 这里只测正文派生)."""
+    p = tmp_path / f"{name}.md"
+    p.write_text("---\nid: kb-20261029-aaaa\ntitle: t\n---\n" + body, encoding="utf-8")
+    return parse_entry(p)
+
+
+def test_sections_text_joins_first_sentence_of_each_h2(tmp_path):
+    """"每段首句"拼接: 六段式骨架下段首句即该病灶面主旨, 是 sections 匹配面的内容来源."""
+    e = _sec_entry(tmp_path, "s1",
+                   "# 标题\n\n## 根因\n启动期解析成功后上游 IP 漂移。围栏不参与。\n"
+                   "```\n假首句 Vvvv。\n```\n\n## 解决方案\n"
+                   "用 resolver 与 resolve 指令。第二段废话不该出现在结果里。\n")
+    st = e.sections_text()
+    assert "启动期解析成功后上游 IP 漂移" in st
+    assert "resolver" in st
+    assert "第二段废话" not in st          # 只取首句
+    assert "假首句" not in st              # 围栏内容不作为首句来源
+
+
+def test_sections_text_ascii_sentence_boundary_respects_dots(tmp_path):
+    """句末 `.` 须后接空白且前一字符非数字才算终止; 版本号内的点(1.27.3)不得截断首句."""
+    e = _sec_entry(tmp_path, "s2", "# t\n\n## 根因\nnginx 1.27.3 起支持 resolve。后续内容。\n")
+    assert e.sections_text().startswith("nginx 1.27.3 起支持 resolve。")
+
+
+def test_sections_text_caps_each_sentence_at_limit(tmp_path):
+    e = _sec_entry(tmp_path, "s3", "# t\n\n## 根因\n" + "很长" * 100 + "\n")
+    assert len(e.sections_text()) <= 60
+
+
+def test_sections_text_empty_without_h2(tmp_path):
+    """无 H2 段时返回空串(不抛): 派生面退化但 index 不因单条坏格式中断."""
+    assert _sec_entry(tmp_path, "s4", "# t\n\n裸正文没有分段。\n").sections_text() == ""

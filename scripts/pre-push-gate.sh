@@ -11,6 +11,9 @@
 #      (真错误类)。各仓全量 lint 存量欠账已挂账 (roadmap §6), 不做全仓硬门禁。
 #   2. 全量 pytest 硬门禁: 失败即拦截 push (A6 验收标准)
 #   3. coverage 报告: 只输出不设阈值 (无 --cov-fail-under)
+#   4. kb 库门禁: 本次 push 触碰 docs/kb(业务仓)或 kb/(Agent-KB)时, 对被推 tip
+#      跑 kb lint --strict + kb index --check(临时 worktree 判定, 与 lint 同哲学),
+#      防"改了知识忘重建索引"漂移 (2026-10-29 该漂移曾靠人眼发现)。
 #   Node 仓 (无 pyproject.toml 仅 package.json): npm test 硬门禁。
 # 应急跳过: $env:PREPUSH_SKIP='1'; git push ...
 #
@@ -146,6 +149,7 @@ COV_ARGS=""
 
 # ---- 收集本次 push 涉及的 .py (增量 lint 范围, 记 "tip<TAB>file" 便于按被推内容取正文) ----
 py_pairs=""
+kb_tips=""
 while read -r local_ref local_sha remote_ref remote_sha; do
     [ "$local_sha" = "$ZERO" ] && continue  # 删除远端 ref, 无新内容
     if [ "$remote_sha" = "$ZERO" ]; then
@@ -160,6 +164,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         py_pairs="$py_pairs
 $local_sha	$f"
     done
+    # kb 库是否被本次 push 触碰(业务仓 docs/kb, Agent-KB 自身 kb/) → 触发第 4 段
+    if git diff --name-only "$base" "$local_sha" -- docs/kb kb/ 2>/dev/null | sed '/^$/d' | grep -q .; then
+        kb_tips="$kb_tips
+$local_sha"
+    fi
 done <<EOF
 $refs
 EOF
@@ -190,6 +199,63 @@ if [ -n "$changed" ]; then
     fi
 else
     echo "pre-push-gate: 本次 push 无 .py 变更, 跳过增量 lint" >&2
+fi
+
+# ---- 4. kb 库硬门禁: 本次 push 触碰 docs/kb(业务仓)或 kb/(Agent-KB)时强制 ----
+# ---- kb lint + index --check, 防"改了知识忘重建索引"的漂移(2026-10-29 靠 ----
+# ---- 人眼才发现一次: 64e8 追加后 draft 索引混入未提交条目)。                ----
+# 判定对象 = 被推 tip 的 kb 内容(导出到临时 worktree 跑), 工作区 WIP 不污染、
+# 也不被波及(与 lint 段同哲学; 区别于 pytest 只能就地跑)。                    ----
+# 解释器: 优先本仓 venv(kb 已随依赖装齐), 缺则退 Agent-KB 主仓 venv(同级约定)。
+if [ -n "$(printf '%s\n' "$kb_tips" | sed '/^$/d')" ]; then
+    KB_PY=""
+    "$VENV_PY" -c "import kb" 2>/dev/null && KB_PY="$VENV_PY"
+    if [ -z "$KB_PY" ]; then
+        for cand in "../Agent-KB/.venv/Scripts/python.exe" "../Agent-KB/.venv/bin/python"; do
+            [ -f "$cand" ] && "$cand" -c "import kb" 2>/dev/null && { KB_PY="$cand"; break; }
+        done
+    fi
+    if [ -z "$KB_PY" ]; then
+        echo "pre-push-gate: FAIL - 本次 push 触碰 kb 库, 但 kb 包不可用(本仓与 ../Agent-KB venv 均无)。" >&2
+        echo "  装配: uv sync(本仓含 kb 依赖) 或确认同级 Agent-KB 主仓 .venv 存在。PREPUSH_SKIP=1 应急跳过。" >&2
+        exit 1
+    fi
+    kb_tip=$(printf '%s\n' "$kb_tips" | sed '/^$/d' | tail -1)
+    # 被推 tip 里没有 kb 库(如 feature 分支未带) → 无从校验, 跳过
+    git ls-tree -d --name-only "$kb_tip" -- docs/kb kb 2>/dev/null | sed '/^$/d' | grep -q . || { echo "pre-push-gate: kb 门禁跳过(被推 tip 无 kb 库)"; kb_tip=""; }
+    if [ -n "$kb_tip" ]; then
+        kb_wt="$GITDIR/pre-push-gate.kbwt"
+        rm -rf "$kb_wt" 2>/dev/null
+        if git worktree add --detach "$kb_wt" "$kb_tip" >/dev/null 2>&1; then
+            # --repo 传"含 kb/ 的目录"(AGENTS.md 约定: 业务仓 docs, Agent-KB 仓根),
+            # CLI 自动定位其内 kb/。scope 按仓型: Agent-KB=agent-kb, 业务仓=project。
+            if [ -f "$kb_wt/kb/INDEX.md" ] && [ ! -d "$kb_wt/docs/kb" ]; then
+                KB_REPO="$kb_wt"
+                KB_SCOPE=agent-kb
+            else
+                KB_REPO="$kb_wt/docs"
+                KB_SCOPE=project
+            fi
+            KB_NAME=$(basename "$ROOT")
+            echo "pre-push-gate: kb lint + index --check (被推 tip ${kb_tip:0:8}, scope $KB_SCOPE) ..." >&2
+            if ! "$KB_PY" -m kb.cli lint --scope "$KB_SCOPE" --strict --repo "$KB_REPO"; then
+                echo "pre-push-gate: FAIL - kb lint 未过(被推内容)。修条目或按 kb 模板补齐后重推。" >&2
+                git worktree remove --force "$kb_wt" >/dev/null 2>&1
+                exit 1
+            fi
+            if ! "$KB_PY" -m kb.cli index --check --repo "$KB_REPO" --repo-name "$KB_NAME"; then
+                echo "pre-push-gate: FAIL - kb 索引与被推内容漂移。修复: 仓根跑" >&2
+                echo "  ..\\Agent-KB\\.venv\\Scripts\\python.exe -m kb.cli index --repo docs --repo-name $KB_NAME" >&2
+                echo "  然后把 docs/kb/INDEX.md index.jsonl(index.draft.jsonl 若变动)一并提交。" >&2
+                git worktree remove --force "$kb_wt" >/dev/null 2>&1
+                exit 1
+            fi
+            git worktree remove --force "$kb_wt" >/dev/null 2>&1
+            echo "pre-push-gate: kb 门禁 PASS" >&2
+        else
+            echo "pre-push-gate: WARN - kb 临时 worktree 创建失败, kb 门禁跳过(不假绿)" >&2
+        fi
+    fi
 fi
 
 # ---- 2. 全量 pytest 硬门禁 + 3. coverage 报告 (不设阈值) ----

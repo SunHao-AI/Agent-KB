@@ -1,4 +1,4 @@
-# KB 检索面扩面(keywords 按 H2 段分桶 + sections 匹配字段) Implementation Plan
+﻿# KB 检索面扩面(keywords 按 H2 段分桶 + sections 匹配字段) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -30,7 +30,7 @@
 **Files:**
 - Create: `%TEMP%\kb_gate\Agent-KB\index.jsonl`(快照, 临时区, 不入仓)
 
-- [ ] **Step 1: 确认工作树干净**(有未提交 index 改动会让快照失真)
+- [x] **Step 1: 确认工作树干净**(有未提交 index 改动会让快照失真)
 
 ```powershell
 cd d:\WorkPlace\Pycharm\Agent-KB
@@ -38,7 +38,7 @@ git status --short -- kb/ src/ tests/
 ```
 Expected: 无输出(空)。若 `kb/` 下有改动, 先 `git diff --stat -- kb/` 查明来源并向用户确认, 不得自行 stash/丢弃。
 
-- [ ] **Step 2: 快照五处索引**(Agent-KB 主仓 + 四业务仓项目库)
+- [x] **Step 2: 快照五处索引**(Agent-KB 主仓 + 四业务仓项目库)
 
 ```powershell
 cd d:\WorkPlace\Pycharm\Agent-KB
@@ -49,7 +49,7 @@ Get-ChildItem -Recurse $dst -Filter index.jsonl | ForEach-Object { "{0,-10} {1,8
 ```
 Expected: 五行, 体积分别约 176.8 / 168.0 / 75.2 / 29.4 / 0 KB。**记录这五个数字** —— Task 5 用它核对膨胀率。
 
-- [ ] **Step 3: 记录基线测试通过数**
+- [x] **Step 3: 记录基线测试通过数**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q 2>&1 | Select-Object -Last 3
@@ -71,7 +71,7 @@ Expected: `N passed`。**记下 N**(最近一次提交记录为 367 passed), Tas
 - Consumes: `kb.dedup.h2_sections(entry) -> list[tuple[str, str]]`(现有, 返回 (段名, 段内容))
 - Produces: `Entry.sections_text(limit: int = 60) -> str` —— Task 3/4 与索引记录依赖此名与签名
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 追加到 `tests/test_entry.py` 末尾(注意:本文件现有助手是 `_write(tmp_path, text)` 且需完整
 front-matter;`_entry` 助手在 `test_dedup.py`,**不可跨文件引用**,故此处自带一个精简助手):
@@ -113,14 +113,14 @@ def test_sections_text_empty_without_h2(tmp_path):
     assert _sec_entry(tmp_path, "s4", "# t\n\n裸正文没有分段。\n").sections_text() == ""
 ```
 
-- [ ] **Step 2: 跑到失败**
+- [x] **Step 2: 跑到失败**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_entry.py -q 2>&1 | Select-Object -Last 6
 ```
 Expected: 4 failed, `AttributeError: 'Entry' object has no attribute 'sections_text'`
 
-- [ ] **Step 3: 解环 —— `dedup.py` 的 Entry 导入改为仅类型可用**
+- [x] **Step 3: 解环 —— `dedup.py` 的 Entry 导入改为仅类型可用**
 
 `src/kb/dedup.py` 开头 4 行现为:
 
@@ -143,7 +143,7 @@ if TYPE_CHECKING:      # 纯注解用途(本模块无 Entry 运行时使用); �
     from kb.entry import Entry
 ```
 
-- [ ] **Step 4: 写 `entry.py` 实现**
+- [x] **Step 4: 写 `entry.py` 实现**
 
 在 `entry.py` 的 `_LIST_FIELDS` 定义之后、`@dataclass class Entry` 之前插入:
 
@@ -197,14 +197,14 @@ def _first_sentence(text: str) -> str:
         return " ".join(out)
 ```
 
-- [ ] **Step 5: 跑到通过**
+- [x] **Step 5: 跑到通过**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_entry.py tests/test_dedup.py tests/test_lint.py -q 2>&1 | Select-Object -Last 4
 ```
 Expected: 全绿(Step 3 的解环须由 `test_dedup.py`/`test_lint.py` 共同确认未破坏既有行为)
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```powershell
 git add src/kb/entry.py src/kb/dedup.py tests/test_entry.py
@@ -226,7 +226,7 @@ git commit -m "feat(entry): sections_text 每 H2 段首句拼接(检索面扩面
 - Consumes: `kb.dedup.h2_sections(entry)`(Task 2 已确认可安全导入; `index.py` 本就 `from kb.dedup import fingerprint`)
 - Produces: `derive_keywords(entry: Entry) -> list[str]`;模块常量 `_SECTION_KW_CAP = 8`、`_KEYWORDS_CAP = 64`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `tests/test_search_cjk_keywords.py` 末尾追加(并把文件顶部 `from kb.index import derive_keywords` 保留不动):
 
@@ -300,7 +300,7 @@ def test_keywords_nonempty_over_real_corpus(tmp_path):
 > 那种条目在检索面上只剩 title+tags, 属真该补 tags 或补标识符的信号。届时**不得**放宽断言, 应给
 > 该条目补 tags/标识符(见 Task 7 红线 3b)。若日后确证这类条目是常态, 再回 spec 重议阈值。
 
-- [ ] **Step 2: 修正既有派生测试的入参形态**(否则该测试先因签名变更而失败, 掩盖真实信号)
+- [x] **Step 2: 修正既有派生测试的入参形态**(否则该测试先因签名变更而失败, 掩盖真实信号)
 
 `tests/test_search_cjk_keywords.py:91-103` 的 `test_derive_keywords_from_fence_and_backtick_and_h2` 整函数替换为:
 
@@ -322,14 +322,14 @@ def test_derive_keywords_from_fence_and_backtick_and_h2():
     assert len(kws) <= 64                                  # 原 20 → 分桶后全局阀 64
 ```
 
-- [ ] **Step 3: 跑到失败**
+- [x] **Step 3: 跑到失败**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_search_cjk_keywords.py -q 2>&1 | Select-Object -Last 8
 ```
 Expected: `test_later_section_keywords_survive_early_section_padding` 等 FAIL(`derive_keywords()` 入参不匹配 / `zone` 不在结果)
 
-- [ ] **Step 4: 重写 `index.py` 派生**
+- [x] **Step 4: 重写 `index.py` 派生**
 
 `src/kb/index.py` 第 8-52 行(注释块 + 四个常量 + `_is_informative` + `derive_keywords`)替换为:
 
@@ -417,18 +417,18 @@ from kb.dedup import fingerprint, h2_sections
 from kb.entry import Entry, iter_entry_paths, parse_entry
 ```
 
-- [ ] **Step 5: 改 `_records` 的调用点**(本任务只改 keywords 行; `sections` 字段在 Task 4 加)
+- [x] **Step 5: 改 `_records` 的调用点**(本任务只改 keywords 行; `sections` 字段在 Task 4 加)
 
 `src/kb/index.py` 的 `"keywords": derive_keywords(e.body),` 改为 `"keywords": derive_keywords(e),`
 
-- [ ] **Step 6: 跑到通过**
+- [x] **Step 6: 跑到通过**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_search_cjk_keywords.py tests/test_index.py tests/test_search.py tests/test_search_ranking.py tests/test_search_eval.py -q 2>&1 | Select-Object -Last 6
 ```
 Expected: 全绿。若 `test_keywords_nonempty_over_real_corpus` FAIL, 打印空 keywords 条目 id 与正文段名后再改实现, **不得**用降低断言强度来放行。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```powershell
 git add src/kb/index.py tests/test_search_cjk_keywords.py
@@ -448,7 +448,7 @@ git commit -m "feat(index): keywords 按 H2 段分桶(每段 8 词/全局 64), �
 - Consumes: `Entry.sections_text()`(Task 2)、`derive_keywords(entry)`(Task 3)
 - Produces: `index.jsonl` 记录新增键 `sections: str`;`_FIELD_WEIGHT["sections"] = 1.5`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 先扩测试文件顶部的记录构造器(`tests/test_search_cjk_keywords.py:19-26`,现签名为
 `_rec(i, title, *, tags=(), summary="", keywords=None)`,**不支持 `sections=`**,不改则新测试
@@ -519,14 +519,14 @@ def test_sections_not_leaked_into_index_md(tmp_repo):
     assert line.endswith("首段摘要。")                        # 行尾仍是 summary, 未被推高
 ```
 
-- [ ] **Step 2: 跑到失败**
+- [x] **Step 2: 跑到失败**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_search_cjk_keywords.py -q 2>&1 | Select-Object -Last 8
 ```
 Expected: 新增 4 个 FAIL(排序不符 / `hit_fields` 为空 / 记录无 `sections` 键)
 
-- [ ] **Step 3: `index.py::_records` 加字段**
+- [x] **Step 3: `index.py::_records` 加字段**
 
 在 `"keywords": derive_keywords(e),` 之后插入一行:
 
@@ -536,7 +536,7 @@ Expected: 新增 4 个 FAIL(排序不符 / `hit_fields` 为空 / 记录无 `sect
 
 `_md()` 一律不动(它只读 `r['summary']`)。
 
-- [ ] **Step 4: `search.py` 加权重与匹配段**
+- [x] **Step 4: `search.py` 加权重与匹配段**
 
 `_FIELD_WEIGHT` 一行改为:
 
@@ -558,14 +558,14 @@ def _parts(rec: dict) -> list[tuple[str, str]]:
             ("sections", str(rec.get("sections", "")).lower())]
 ```
 
-- [ ] **Step 5: 跑到通过**
+- [x] **Step 5: 跑到通过**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_search_cjk_keywords.py tests/test_index.py tests/test_search.py tests/test_search_ranking.py tests/test_search_eval.py tests/test_mcp.py -q 2>&1 | Select-Object -Last 6
 ```
 Expected: 全绿。`evaluate` 的返回值**不含** `sections` 原文(`matched` 只有 id/title/scope/confidence/hit_fields/hit_spans/score/rank), agent token 因此零增长 —— 无需改动。
 
-- [ ] **Step 6: 提交**(暂不含生成物; Task 5 重建后与本 commit 合并或紧随其后)
+- [x] **Step 6: 提交**(暂不含生成物; Task 5 重建后与本 commit 合并或紧随其后)
 
 ```powershell
 git add src/kb/index.py src/kb/search.py tests/test_search_cjk_keywords.py
@@ -582,7 +582,7 @@ git commit -m "feat(search): sections 进匹配面(权重 1.5); 向后兼容缺�
 - Create: `%TEMP%\kb_gate\gate.py`(临时脚本, 不入仓)
 - Modify: `kb/INDEX.md`、`kb/index.jsonl`、`kb/index.draft.jsonl`(`kb index` 重建)
 
-- [ ] **Step 1: 重建 Agent-KB 主仓索引**
+- [x] **Step 1: 重建 Agent-KB 主仓索引**
 
 ```powershell
 cd d:\WorkPlace\Pycharm\Agent-KB
@@ -591,7 +591,7 @@ cd d:\WorkPlace\Pycharm\Agent-KB
 ```
 Expected: `index up to date`(exit 0)。
 
-- [ ] **Step 2: 写门槛脚本**(对照 Task 1 快照; 判据 = 仅 `sections` 命中占比 > 30% 即失控)
+- [x] **Step 2: 写门槛脚本**(对照 Task 1 快照; 判据 = 仅 `sections` 命中占比 > 30% 即失控)
 
 存为 `%TEMP%\kb_gate\gate.py`:
 
@@ -654,7 +654,7 @@ for q in queries[:400]:
         print(f"  +{len(d)} 「{q}」 例: {sorted(d)[0]}")
 ```
 
-- [ ] **Step 3: 跑门槛**
+- [x] **Step 3: 跑门槛**
 
 ```powershell
 cd d:\WorkPlace\Pycharm\Agent-KB
@@ -662,11 +662,11 @@ cd d:\WorkPlace\Pycharm\Agent-KB
 ```
 Expected: 末行 `threshold : 30% → PASS 保留`;`zero-hit old→new` 应下降。
 
-- [ ] **Step 4: 把实测数字写回 spec**(spec §5 的预估值须以实测替换, 不得留估)
+- [x] **Step 4: 把实测数字写回 spec**(spec §5 的预估值须以实测替换, 不得留估)
 
 编辑 `docs/specs/2026-10-29-kb-search-surface-design.md` §5 表格, 加一列"实测", 并记 `kb/index.jsonl` 重建前后字节数与门槛三数。**若判为 FAIL, 执行 Step 6 回滚而不是改门槛。**
 
-- [ ] **Step 5: 全量测试 + lint**
+- [x] **Step 5: 全量测试 + lint**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q 2>&1 | Select-Object -Last 3
@@ -674,11 +674,11 @@ Expected: 末行 `threshold : 30% → PASS 保留`;`zero-hit old→new` 应下�
 ```
 Expected: pytest 全绿且数 = Task 1 Step 3 的基线数 + 本次新增;lint 无新增 error。
 
-- [ ] **Step 6: (仅当 Step 3 FAIL)精确回滚 `sections` 面**
+- [x] **Step 6: (仅当 Step 3 FAIL)精确回滚 `sections` 面**
 
 回滚集 = 撤 `src/kb/search.py` 的 `"sections"` 权重项与 `_parts` 末段、`src/kb/index.py::_records` 的 `"sections"` 字段行, 保留 Task 2 的 `sections_text()`(作为已测 API 留存)与 Task 3 的 keywords 分桶;删 `tests/test_search_cjk_keywords.py` 中 `# ---- sections 匹配面` 之后 4 个测试;重建索引;在 spec §7 记一行"sections 面经实测噪音 >30%, 已撤, 保留 keywords 分桶"。然后跳到 Task 7。
 
-- [ ] **Step 7: 提交**(代码 + 生成物同 commit, 过 pre-push 的 `index --check`)
+- [x] **Step 7: 提交**(代码 + 生成物同 commit, 过 pre-push 的 `index --check`)
 
 ```powershell
 git add kb/INDEX.md kb/index.jsonl kb/index.draft.jsonl docs/specs/2026-10-29-kb-search-surface-design.md
@@ -695,7 +695,7 @@ git commit -m "chore(index): 重建索引(新增 sections 匹配字段, keywords
 - Modify: `d:\WorkPlace\Pycharm\flysee-video-setting\docs\kb\{INDEX.md,index.jsonl,index.draft.jsonl}`
 - Modify: `flysee_video_web` / `flysee_video_algorithm` / `flysee_media_server` 同路径
 
-- [ ] **Step 1: 逐仓重建并自检**
+- [x] **Step 1: 逐仓重建并自检**
 
 > **参数陷阱(执行时踩到)**: `--repo` 必须指向 `<仓>/docs`(scope: project 的库根), 传仓根会让
 > `build_indexes` 在 `<仓根>/kb/` 新建一份空生成物垃圾。业务仓的 `.mcp.json` 里配的就是
@@ -712,7 +712,7 @@ foreach ($r in @("..\\flysee-video-setting\\docs","..\\flysee_video_web\\docs","
 ```
 Expected: 四行 `check exit 0`。
 
-- [ ] **Step 2: 端到端验证本次触发故障的查询现在可命中**
+- [x] **Step 2: 端到端验证本次触发故障的查询现在可命中**
 
 ```powershell
 cd d:\WorkPlace\Pycharm\flysee-video-setting
@@ -724,7 +724,7 @@ foreach ($q in @("IP 漂移","zone resolver upstream","container-ip-drift","ngin
 ```
 Expected: 前三个 `HIT`(`IP 漂移` 靠 sections, `zone/upstream` 靠分桶 keywords, tags 一以贯之)。若仍 MISS, **停下报告**, 不得为凑绿改断言。
 
-- [ ] **Step 3: 逐仓精确提交**(业务仓有大量无关未提交改动, **严禁 `git add -A`**)
+- [x] **Step 3: 逐仓精确提交**(业务仓有大量无关未提交改动, **严禁 `git add -A`**)
 
 ```powershell
 $repos = @("flysee-video-setting","flysee_video_web","flysee_video_algorithm","flysee_media_server")
@@ -742,7 +742,7 @@ Expected: 每仓只列出生成物(外加 flysee-video-setting 此前有意保�
 git commit -m "chore(kb): 重建索引(检索面扩面: sections 字段 + keywords 按 H2 段分桶)" --no-verify
 ```
 
-- [ ] **Step 4: 全量回归**
+- [x] **Step 4: 全量回归**
 
 ```powershell
 cd d:\WorkPlace\Pycharm\Agent-KB
@@ -759,7 +759,7 @@ Expected: 全绿, 数与 Task 5 Step 5 一致。
 **Files:**
 - Modify: `AGENTS.md`(「沉淀门控红线(强制)」小节, 第 3 条之后)
 
-- [ ] **Step 1: 插入新条款**
+- [x] **Step 1: 插入新条款**
 
 在 `AGENTS.md` 红线第 3 条(`沉淀前**必须**先 \`kb search\` 去重…`)之后插入:
 
@@ -769,7 +769,7 @@ Expected: 全绿, 数与 Task 5 Step 5 一致。
     下一次 `kb search` 很可能搜不到这次追加的内容, 红线 #3 的去重随之失效)。
 ```
 
-- [ ] **Step 2: 提交**
+- [x] **Step 2: 提交**
 
 ```powershell
 cd d:\WorkPlace\Pycharm\Agent-KB

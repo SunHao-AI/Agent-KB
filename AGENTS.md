@@ -70,6 +70,10 @@ kb doctor --repo docs --agent-kb .agent-kb      # 接入自检(FAIL 才退 1)
 2. Agent **永远不能**改 `scope`(非 project); 认为值得上提 Agent-KB 时只做
    `kb promote <id> --to stack|universal` 式**建议**, 由人 `kb set-scope`/`kb export` 落地。
 3. 沉淀前**必须**先 `kb search` 去重; 命中既有条目则更新(追加"新发现"), 不新建。
+3b. 向既有条目**追加"新发现"时必须同步补 `tags`**: 检索面只有 title/tags/keywords/
+    sections 四处, keywords 每段配额有限、sections 每段最多 20 个段落首句——只加正文
+    不动 tags, 下一次 `kb search` 很可能搜不到这次追加的内容, 红线 #3 的去重随之
+    失效(2026-10-29 线上实测: 追加约 1400 字后旧查询仍零命中, 补 tag 后立即命中)。
 4. 无实测证据的结论**必须**标 `confidence: speculative`; 采信时默认只信 verified/probable,
    `speculative` 结论须自行验证后才可依据(检索本身不做 confidence 过滤)。
 5. 单次任务最多沉淀 **3 条**, 自主终审 accepted 单会话也**最多 3 条**, 防刷噪音。

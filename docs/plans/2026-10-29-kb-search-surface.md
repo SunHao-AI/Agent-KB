@@ -697,12 +697,16 @@ git commit -m "chore(index): 重建索引(新增 sections 匹配字段, keywords
 
 - [ ] **Step 1: 逐仓重建并自检**
 
+> **参数陷阱(执行时踩到)**: `--repo` 必须指向 `<仓>/docs`(scope: project 的库根), 传仓根会让
+> `build_indexes` 在 `<仓根>/kb/` 新建一份空生成物垃圾。业务仓的 `.mcp.json` 里配的就是
+> `--repo docs`, 不要凭直觉传仓路径。
+
 ```powershell
 cd d:\WorkPlace\Pycharm\Agent-KB
-foreach ($r in @("..\\flysee-video-setting","..\\flysee_video_web","..\\flysee_video_algorithm","..\\flysee_media_server")) {
-  $n = (Resolve-Path $r).Path.Split('\')[-1]
+foreach ($r in @("..\\flysee-video-setting\\docs","..\\flysee_video_web\\docs","..\\flysee_video_algorithm\\docs","..\\flysee_media_server\\docs")) {
+  $n = (Resolve-Path ($r -replace '\\docs$','')).Path.Split('\')[-1]
   .\.venv\Scripts\python.exe -m kb.cli index --repo $r --repo-name $n
-  $c = .\.venv\Scripts\python.exe -m kb.cli index --check --repo $r --repo-name $n
+  $null = .\.venv\Scripts\python.exe -m kb.cli index --check --repo $r --repo-name $n
   "$n -> check exit $LASTEXITCODE"
 }
 ```

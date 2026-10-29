@@ -107,11 +107,17 @@ class Entry:
                 return b[:limit]
         return ""
 
-    def sections_text(self, limit: int = 60) -> str:
-        """各 H2 段首句拼接, 只供 index 匹配面(spec §4.2)。不进 INDEX.md、不进检索返回值。
+    def sections_text(self, limit: int = 60, max_paras: int = 20) -> str:
+        """各 H2 段**每个段落**首句的拼接, 只供 index 匹配面(spec §4.2)。
+        不进 INDEX.md、不进检索返回值。
 
         存在理由: summary 只取正文首块, 向既有条目追加新病灶面时检索面不增长,
-        红线 #3 要求的"先 search 去重"因此自我失效。每段首句是有界的高密度匹配面。
+        红线 #3 要求的"先 search 去重"因此自我失效。
+
+        粒度必须是"每段每个段落"而非"每段首段": 追加新发现的物理位置是**段末的
+        另一个段落**, 只取段首等于对最主流的写入路径视而不见(实测 64e8 追加 1400
+        字后「IP 漂移」仍 MISS)。max_paras 给单段封顶, 防超长条目把 L1 常驻索引
+        撑爆——超出部分显式截断, 不静默丢整段。
         """
         from kb.dedup import h2_sections  # 运行期反向依赖本模块, 延迟导入避免环
 
@@ -119,8 +125,7 @@ class Entry:
         for _header, content in h2_sections(self):
             # 围栏整块删除后再分段: 真首句常与紧随的代码块同段, 按段跳过会连主旨句一起丢
             paras = _nonempty_paragraphs(_FENCE_BLOCK_RE.sub("", content))
-            if paras:
-                out.append(_first_sentence(paras[0])[:limit])
+            out.extend(_first_sentence(p)[:limit] for p in paras[:max_paras])
         return " ".join(out)
 
 

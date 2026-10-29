@@ -134,6 +134,35 @@ def test_sections_text_caps_each_sentence_at_limit(tmp_path):
     assert len(e.sections_text()) <= 60
 
 
+def test_sections_text_covers_appended_paragraph_in_same_section(tmp_path):
+    """回归: 红线 #3 要求的"追加新发现"物理位置是**段末的另一个段落**, 不是段首。
+
+    首版实现每个 H2 段只取第一个段落的首句, 于是"追加"这条最主流的写入路径
+    结构上不可见(线上 64e8 追加 1400 字后 `IP 漂移` 仍 MISS 的根因)。
+    """
+    e = _sec_entry(tmp_path, "s5",
+                   "# 标题\n\n## 解决方案\n**应急**：拉起 media 后重启恢复。\n\n"
+                   "```bash\nnginx -s reload\n```\n\n"
+                   "**新发现**：同一机制的第二病灶面 —— 上游 IP 事后漂移。\n")
+    st = e.sections_text()
+    assert "上游 IP 事后漂移" in st            # 段末追加的段落必须进面
+    assert "拉起 media 后重启恢复" in st       # 段首仍保留
+    assert "nginx" not in st                   # 围栏不作为首句来源
+
+
+def test_sections_text_paragraphs_are_bounded(tmp_path):
+    """段落数无界会让单条 sections 无限膨胀(索引是 L1 常驻面), 须有显式上限。
+
+    构造要点: 段落内**不含句末终止符**, 使每段首句都被 limit 截满 60 字——
+    否则首句天然很短, 40 个段落也远不到上限, 断言形同虚设。
+    """
+    body = "# t\n\n## 解决方案\n" + "\n\n".join(
+        f"第{i}条结论说明" + "填充" * 40 for i in range(40)) + "\n"
+    st = _sec_entry(tmp_path, "s6", body).sections_text()
+    assert len(st) <= 20 * 61          # 每段最多前 20 个段落 × 60 字 + 段间空格
+    assert st.count("第") == 20        # 第 21 个段落起被切掉(有界, 且不静默丢整段)
+
+
 def test_sections_text_empty_without_h2(tmp_path):
     """无 H2 段时返回空串(不抛): 派生面退化但 index 不因单条坏格式中断."""
     assert _sec_entry(tmp_path, "s4", "# t\n\n裸正文没有分段。\n").sections_text() == ""

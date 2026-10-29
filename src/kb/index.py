@@ -100,6 +100,7 @@ def _records(repo_root: Path, repo_name: str):
             "path": p.relative_to(repo_root).as_posix(),
             "summary": e.summary(),
             "keywords": derive_keywords(e),
+            "sections": e.sections_text(),
             "dedup_key": fingerprint(e),
             "related": fm.get("related", []),
             "updated": fm.get("updated", ""), "repo": repo_name,

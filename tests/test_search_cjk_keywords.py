@@ -16,13 +16,15 @@ def _mk(root, recs):
     return root
 
 
-def _rec(i, title, *, tags=(), summary="", keywords=None):
+def _rec(i, title, *, tags=(), summary="", keywords=None, sections=None):
     r = {"id": f"kb-{i}", "title": title, "type": "pitfall", "domain": ["backend"],
          "tags": list(tags), "scope": "project", "status": "accepted",
          "confidence": "verified", "summary": summary,
          "path": f"kb/pitfall/backend/{i}.md", "updated": "2026-10-12", "repo": "web"}
     if keywords is not None:
         r["keywords"] = keywords
+    if sections is not None:                       # spec 4.2 新增匹配字段
+        r["sections"] = sections
     return r
 
 
@@ -172,3 +174,53 @@ def test_keywords_nonempty_over_real_corpus(tmp_path):
             (dst / "index.jsonl").read_text(encoding="utf-8").splitlines()]
     assert len(recs) > 50                                    # 语料确实进来了
     assert [r["id"] for r in recs if not r["keywords"]] == []
+
+
+# ---- sections 匹配面(spec 4.2/4.3) ---------------------------------------
+
+def test_sections_field_hit_and_weight_between_keywords_and_summary(tmp_repo):
+    """权重序 title(5) > tags(3) > keywords(2) > sections(1.5) > summary(1)."""
+    _mk(tmp_repo, [
+        _rec(1, "甲", summary="正文首段提到 漂移"),
+        _rec(2, "乙", sections="后段首句提到 漂移"),
+        _rec(3, "丙", keywords=["IP漂移"]),
+    ])
+    rows = search(tmp_repo, query="漂移")
+    assert [r["id"] for r in rows] == ["kb-3", "kb-2", "kb-1"]
+
+
+def test_old_index_without_sections_field_ok(tmp_repo):
+    """老生成物缺 sections 键: 匹配面自动少一段, 不崩(向后兼容硬要求)."""
+    rec = _rec(1, "旧库条目", summary="只有摘要")
+    assert "sections" not in rec
+    _mk(tmp_repo, [rec])
+    assert [r["id"] for r in search(tmp_repo, query="只有摘要")] == ["kb-1"]
+
+
+def test_hit_fields_reports_sections(tmp_repo):
+    from kb.search import evaluate
+
+    _mk(tmp_repo, [_rec(1, "无关标题", tags=["unrelated"], sections="上游 IP 事后漂移")])
+    _, report = evaluate(tmp_repo, query="漂移")
+    assert report["matched"][0]["hit_fields"] == ["sections"]
+
+
+def test_sections_not_leaked_into_index_md(tmp_repo):
+    """INDEX.md 是 L2 人读面: 只渲染 summary, 不得因新字段每行膨胀."""
+    import json
+    from pathlib import Path
+
+    from conftest import make_entry
+    from kb.index import build_indexes
+
+    body = make_entry(status="accepted") + "\n## 根因\n" + ("段首句" * 40) + "。\n"
+    p = Path(tmp_repo) / "kb" / "pitfall" / "frontend" / "a.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+    md, jl, _ = build_indexes(tmp_repo)
+    rec = json.loads(jl.read_text(encoding="utf-8").splitlines()[0])
+    assert rec["sections"]                                   # 进 jsonl
+    line = [ln for ln in md.read_text(encoding="utf-8").splitlines()
+            if ln.startswith("- [")][0]
+    assert "段首句" not in line                              # 不进 INDEX.md
+    assert line.endswith("首段摘要。")                        # 行尾仍是 summary, 未被推高

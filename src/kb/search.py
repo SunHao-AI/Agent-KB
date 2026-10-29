@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 # FR-3.1 多信号打分权重(PRD §FR-3.1, 数值以 trace 回放验收调参)。
-_FIELD_WEIGHT = {"title": 5.0, "tags": 3.0, "keywords": 2.0, "summary": 1.0}
+_FIELD_WEIGHT = {"title": 5.0, "tags": 3.0, "keywords": 2.0, "sections": 1.5, "summary": 1.0}
 _CONF_BONUS = {"verified": 0.2, "probable": 0.1}
 _RECENCY_LAMBDA = 1 / 90.0  # exp(-Δupdated/90d)
 _STALE_FACTOR = 0.3  # deprecated/superseded 降权
@@ -23,12 +23,15 @@ def _load(repo_root: Path):
 
 
 def _parts(rec: dict) -> list[tuple[str, str]]:
-    # 拼接顺序与既有 hay 逐字节一致: title → tags → keywords → summary。
-    # keywords 为 FR-3.4 正文派生词(报错串/函数名/配置键), 老索引无此字段自动为空。
+    # 前四段顺序与历史一致: title → tags → keywords → summary; sections 为 spec 4.2
+    # 新增的"每段首句"面, 追加在末尾以最小化既有命中扰动(hay 仅在尾部多一个分隔空格,
+    # 前四段的字段边界与整词/CJK 2-gram 判定均不受影响)。
+    # keywords/sections 均为正文派生, 老索引无此字段自动为空。
     return [("title", str(rec.get("title", "")).lower()),
             ("tags", " ".join(rec.get("tags", [])).lower()),
             ("keywords", " ".join(str(k) for k in rec.get("keywords", [])).lower()),
-            ("summary", str(rec.get("summary", "")).lower())]
+            ("summary", str(rec.get("summary", "")).lower()),
+            ("sections", str(rec.get("sections", "")).lower())]
 
 
 def _token_spans(hay: str, tok: str) -> list[list[int]]:

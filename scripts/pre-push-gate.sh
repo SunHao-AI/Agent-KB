@@ -227,30 +227,33 @@ if [ -n "$(printf '%s\n' "$kb_tips" | sed '/^$/d')" ]; then
         kb_wt="$GITDIR/pre-push-gate.kbwt"
         rm -rf "$kb_wt" 2>/dev/null
         if git worktree add --detach "$kb_wt" "$kb_tip" >/dev/null 2>&1; then
-            # --repo 传"含 kb/ 的目录"(AGENTS.md 约定: 业务仓 docs, Agent-KB 仓根),
-            # CLI 自动定位其内 kb/。scope 按仓型: Agent-KB=agent-kb, 业务仓=project。
-            if [ -f "$kb_wt/kb/INDEX.md" ] && [ ! -d "$kb_wt/docs/kb" ]; then
-                KB_REPO="$kb_wt"
-                KB_SCOPE=agent-kb
-            else
-                KB_REPO="$kb_wt/docs"
-                KB_SCOPE=project
-            fi
-            KB_NAME=$(basename "$ROOT")
-            echo "pre-push-gate: kb lint + index --check (被推 tip ${kb_tip:0:8}, scope $KB_SCOPE) ..." >&2
-            if ! "$KB_PY" -m kb.cli lint --scope "$KB_SCOPE" --strict --repo "$KB_REPO"; then
-                echo "pre-push-gate: FAIL - kb lint 未过(被推内容)。修条目或按 kb 模板补齐后重推。" >&2
-                git worktree remove --force "$kb_wt" >/dev/null 2>&1
-                exit 1
-            fi
-            if ! "$KB_PY" -m kb.cli index --check --repo "$KB_REPO" --repo-name "$KB_NAME"; then
-                echo "pre-push-gate: FAIL - kb 索引与被推内容漂移。修复: 仓根跑" >&2
-                echo "  ..\\Agent-KB\\.venv\\Scripts\\python.exe -m kb.cli index --repo docs --repo-name $KB_NAME" >&2
-                echo "  然后把 docs/kb/INDEX.md index.jsonl(index.draft.jsonl 若变动)一并提交。" >&2
-                git worktree remove --force "$kb_wt" >/dev/null 2>&1
-                exit 1
-            fi
+            # 逐个校验存在的 kb 库(载体目录:lint scope)。Agent-KB 仓有两个库:
+            # 根 kb/(agent-kb) 与 docs/kb/(project); 业务仓只有后者。
+            # --repo-name 不参与猜测: repo 字段是**生成时**写进索引的值(业务仓
+            # 用仓名, Agent-KB docs 库用 "docs"), 猜错 --check 恒 stale 误报 →
+            # 直接从被推 tip 的 index.jsonl 首行自取, 与被检内容同源。
+            kb_fail=0
+            for lib in "docs:project" ".:agent-kb"; do
+                kb_rel=${lib%%:*}; KB_SCOPE=${lib##*:}
+                kb_repo="$kb_wt/$kb_rel"
+                [ -f "$kb_repo/kb/index.jsonl" ] || continue
+                KB_NAME=$(sed -n '1p' "$kb_repo/kb/index.jsonl" \
+                          | sed -n 's/.*"repo"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+                [ -n "$KB_NAME" ] || KB_NAME=$(basename "$kb_repo")
+                echo "pre-push-gate: kb lint + index --check ($kb_rel/kb, tip ${kb_tip:0:8}, scope $KB_SCOPE, repo $KB_NAME) ..." >&2
+                if ! "$KB_PY" -m kb.cli lint --scope "$KB_SCOPE" --strict --repo "$kb_repo"; then
+                    echo "pre-push-gate: FAIL - kb lint 未过(被推内容, $kb_rel/kb)。修条目或按 kb 模板补齐后重推。" >&2
+                    kb_fail=1
+                fi
+                if [ "$kb_fail" -eq 0 ] && ! "$KB_PY" -m kb.cli index --check --repo "$kb_repo" --repo-name "$KB_NAME"; then
+                    echo "pre-push-gate: FAIL - kb 索引与被推内容漂移($kb_rel/kb)。修复: 仓根跑" >&2
+                    echo "  ..\\Agent-KB\\.venv\\Scripts\\python.exe -m kb.cli index --repo $kb_rel --repo-name $KB_NAME" >&2
+                    echo "  然后把 $kb_rel/kb/INDEX.md index.jsonl 一并提交。" >&2
+                    kb_fail=1
+                fi
+            done
             git worktree remove --force "$kb_wt" >/dev/null 2>&1
+            [ "$kb_fail" -eq 0 ] || exit 1
             echo "pre-push-gate: kb 门禁 PASS" >&2
         else
             echo "pre-push-gate: WARN - kb 临时 worktree 创建失败, kb 门禁跳过(不假绿)" >&2

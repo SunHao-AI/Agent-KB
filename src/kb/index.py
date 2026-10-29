@@ -145,10 +145,15 @@ def build_indexes(repo_root: Path, repo_name: str = "agent-kb"):
 
 
 def check_indexes(repo_root: Path, repo_name: str = "agent-kb") -> bool:
-    live, draft = _records(repo_root, repo_name)
+    """live 面(INDEX.md / index.jsonl)漂移门禁; **故意不比对 index.draft.jsonl**。
+
+    draft 索引是他人 WIP 的生成物: 业务仓工作区常有未提交的 QA draft, 提交时
+    `git restore index.draft.jsonl` 后若仍比对, --check 会一直红到那批 draft 收口
+    (2026-10-29 在 flysee-video-setting 实际踩到)。门禁拦"live 面漂移", 不拦 WIP。
+    """
+    live, _draft = _records(repo_root, repo_name)
     root = Path(repo_root) / "kb"
-    want = {root / "INDEX.md": _md(live), root / "index.jsonl": _jsonl(live),
-            root / "index.draft.jsonl": _jsonl(draft)}
+    want = {root / "INDEX.md": _md(live), root / "index.jsonl": _jsonl(live)}
     for path, content in want.items():
         if not path.exists() or path.read_text(encoding="utf-8") != content:
             return False

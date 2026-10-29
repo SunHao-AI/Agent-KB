@@ -29,6 +29,21 @@ def test_check_detects_stale(tmp_repo):
     assert check_indexes(tmp_repo) is False
 
 
+def test_check_ignores_draft_index_drift(tmp_repo):
+    """draft 索引是他人 WIP 的生成物, 不进 --check 门禁(2026-10-29 实际踩到):
+    业务仓工作区常有未提交的 QA draft, 提交时还原 index.draft.jsonl 就会永久红,
+    直到那批 draft 收口——门禁拦的是"live 面漂移", 不是 WIP 未入库。
+    live 面(INDEX.md / index.jsonl)漂移仍必须检出。"""
+    _put(tmp_repo, "kb/pitfall/frontend/a.md", make_entry(status="accepted"))
+    _put(tmp_repo, "kb/pitfall/frontend/d.md", make_entry(id="kb-20261012-abcd", status="draft"))
+    build_indexes(tmp_repo)
+    assert check_indexes(tmp_repo) is True
+    (tmp_repo / "kb" / "index.draft.jsonl").write_text("", encoding="utf-8")  # 模拟 git restore
+    assert check_indexes(tmp_repo) is True
+    _put(tmp_repo, "kb/pitfall/frontend/b.md", make_entry(id="kb-20261012-0001", status="accepted"))
+    assert check_indexes(tmp_repo) is False
+
+
 def test_index_md_links_relative_to_kb_dir(tmp_repo):
     # INDEX.md 位于 kb/ 内, 链接必须相对 kb/ 目录解析;
     # 若写成 repo 相对的 kb/... 会被解析成 kb/kb/... 而断裂

@@ -168,7 +168,11 @@ class TraceWatcher(threading.Thread):
         self.subscribers: list[Queue] = []
         self._lock = threading.Lock()
         self._offsets: dict[Path, int] = {}
-        self._birth = time.time()
+        # "启动前已存在"用启动时目录快照判定, 不用 st_ctime>=time.time() 时钟比对
+        # (2026-10-29 实测该比对受 ctime 粒度混叠, 启动前毫秒级刚写的文件 200 次里
+        # 131 次被误判为新文件回放; spider_live 同款缺陷同批修复)
+        d0 = kbtrace.traces_dir(self.root)
+        self._preexisting = {f.name for f in d0.glob("*.jsonl")} if d0.exists() else set()
         self._quiet = quiet
         self.warns: list[str] = []
 
@@ -237,7 +241,7 @@ class TraceWatcher(threading.Thread):
                     self._broadcast(ev)
 
     def _is_new(self, f: Path) -> bool:
-        return f.stat().st_ctime >= self._birth
+        return f.name not in self._preexisting
 
 
 class _Handler(BaseHTTPRequestHandler):

@@ -152,10 +152,14 @@ def run(root: Path | None = None, *, spider_home: str | None = None,
     offsets: dict[Path, int] = {}
     active: dict[str, dict] = {}   # trace_id → {session, last_ts, pending_reads}
     t0 = time.monotonic()
-    # 首见文件 birth 判定必须用 wall-clock(与 st_ctime 同钟系): 旧实现拿
-    # monotonic 的 t0 与 epoch 秒的 st_ctime 比, 恒 False → 每次启动把所有历史
-    # trace 从头回放(会话洪泛)。serve watcher 用 time.time() 是对的, 此处对齐。
-    birth = time.time()
+    # 首见文件"启动前已存在"的判定用**启动时目录快照**, 不用时钟比对:
+    # §46 曾拿 monotonic 与 st_ctime 比(不同钟系恒 False → 历史全量回放); 改成
+    # wall-clock `st_ctime >= birth` 后仍受粒度混叠——实测(2026-10-29, 本机 Temp 区)
+    # "建文件后立刻取 birth" 200 次里 131 次 ctime >= birth(ctime 粒度粗于建文件与
+    # 取 birth 的间隔), 启动前毫秒级刚写的历史文件会被误判为新文件回灌。快照判定
+    # 是确定性的: 启动瞬间在目录里的文件 = 历史(offsets=size), 之后新出现的才从头播。
+    d0 = kbtrace.traces_dir(root)
+    preexisting = {f.name for f in d0.glob("*.jsonl")} if d0.exists() else set()
     try:
         while not max_sec or time.monotonic() - t0 < max_sec:
             d = kbtrace.traces_dir(root)
@@ -166,7 +170,7 @@ def run(root: Path | None = None, *, spider_home: str | None = None,
                     pos = offsets.get(f)
                     if pos is None:
                         # 首见文件: 启动后新文件从头播, 启动前已有的只记偏移不回灌
-                        offsets[f] = 0 if st.st_ctime >= birth else size
+                        offsets[f] = size if f.name in preexisting else 0
                         continue
                     if size <= pos:
                         if size < pos:  # 文件被截断/重写: 重置

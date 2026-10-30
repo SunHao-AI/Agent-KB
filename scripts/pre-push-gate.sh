@@ -15,6 +15,8 @@
 #      跑 kb lint --strict + kb index --check(临时 worktree 判定, 与 lint 同哲学),
 #      防"改了知识忘重建索引"漂移 (2026-10-29 该漂移曾靠人眼发现)。
 #   Node 仓 (无 pyproject.toml 仅 package.json): npm test 硬门禁。
+#   混合仓 (pyproject.toml + frontend/package.json): python 门禁后再跑 frontend
+#   的 npm test, 但仅当本次 push 触碰 frontend/ 才跑 (见 3.5 段)。
 # 应急跳过: $env:PREPUSH_SKIP='1'; git push ...
 #
 # 判定对象 = 被推 ref 的内容, 不是工作区 (2026-10-14 首验踩坑修正):
@@ -270,6 +272,50 @@ echo "pre-push-gate: pytest 全量 (coverage 报告: ${COV_TARGET}, 无阈值) .
     echo "pre-push-gate: FAIL - 测试未过, 禁止 push。修复后重试, 或 PREPUSH_SKIP=1 应急跳过。" >&2
     exit 1
 }
+
+# ---- 3.5 python 仓内的前端子项目 (混合仓): frontend/ 有 package.json 时纳入门禁 ----
+# 为什么单独一段: 仓型探测按 pyproject.toml 优先, 混合仓(后端 python + frontend/ 前端)
+# 永远走 python 分支, node 分支的 npm test 永不触发 → 前端测试形同无门禁。
+# (2026-10-30 flysee-video-setting 实测: 契约守护的 13 条 vitest 用例一次也不被 push 触发。)
+# 沿用本门禁三条既有哲学:
+#   a) 判定对象=被推内容: 仅当本次 push 触碰前端测试面才跑, 纯后端提交零成本;
+#   b) 就地跑前校验测试面一致(否则跑的工作区/推的 HEAD, 假绿);
+#   c) 工具/依赖缺失只 WARN 不拦(与"venv 缺 ruff 跳过 lint"同处理, 新克隆未 npm
+#      install 不该阻塞 push), 但一旦真跑起来失败就硬拦。
+if [ -f frontend/package.json ]; then
+    fe_touched=""
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        [ "$local_sha" = "$ZERO" ] && continue
+        if [ "$remote_sha" = "$ZERO" ]; then
+            base=$(git merge-base "$local_sha" origin/master 2>/dev/null) || base="$local_sha"
+        else
+            base=$(git merge-base "$remote_sha" "$local_sha" 2>/dev/null) || base="$remote_sha"
+        fi
+        if git diff --name-only "$base" "$local_sha" -- frontend 2>/dev/null | sed '/^$/d' | grep -q .; then
+            fe_touched=1
+        fi
+    done <<EOF
+$refs
+EOF
+
+    if [ -z "$fe_touched" ]; then
+        echo "pre-push-gate: frontend/ 未被本次 push 触碰, 前端测试跳过" >&2
+    elif ! command -v npm >/dev/null 2>&1; then
+        echo "pre-push-gate: WARN - 本次 push 改了 frontend/ 但未找到 npm, 前端测试跳过(不假绿)" >&2
+    elif [ ! -d frontend/node_modules ]; then
+        echo "pre-push-gate: WARN - frontend/node_modules 缺失, 前端测试跳过。" >&2
+        echo "  跑前端测试请先: cd frontend; npm install" >&2
+    else
+        assert_test_face_clean frontend/package.json frontend/package-lock.json \
+            frontend/vitest.config.js frontend/vite.config.js
+        echo "pre-push-gate: frontend npm test ..." >&2
+        ( cd frontend && npm test --silent ) || {
+            echo "pre-push-gate: FAIL - 前端测试未过, 禁止 push。修复后重试, 或 PREPUSH_SKIP=1 应急跳过。" >&2
+            exit 1
+        }
+        echo "pre-push-gate: frontend npm test PASS" >&2
+    fi
+fi
 
 echo "pre-push-gate: PASS (lint 增量 + pytest 全量 + coverage 报告)" >&2
 exit 0

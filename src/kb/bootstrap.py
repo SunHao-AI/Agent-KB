@@ -86,22 +86,33 @@ def _submodule_lag(sub: Path, main_root: Path, branch: str | None) -> tuple[int 
     if not head:
         return None, "无法解析 HEAD"
     cands: list[tuple[str, str]] = []
+    uncomparable = None
     if main_root.resolve() != sub.resolve():
         main_head = _git_out(["-C", str(main_root), "rev-parse", "HEAD"])
-        if main_head and main_head != head and \
-                _git_out(["-C", str(sub), "cat-file", "-e", f"{main_head}^{{commit}}"]) is not None:
-            cands.append((main_head, f"主仓 HEAD {main_head[:7]}"))
+        if main_head and main_head != head:
+            if _git_out(["-C", str(sub), "cat-file", "-e", f"{main_head}^{{commit}}"]) is not None:
+                cands.append((main_head, f"主仓 HEAD {main_head[:7]}"))
+            else:
+                # 主仓已前进, 但新对象没 fetch 进 submodule → 无法计数。仍要如实
+                # 带出来: 只报"不落后(参照 origin/master)"会把"主仓有新东西"这件事
+                # 藏起来, 正是本检查要消灭的虚假安全感。
+                uncomparable = f"主仓 HEAD {main_head[:7]} 未 fetch, 无法比对"
     if branch:
         ref = _git_out(["-C", str(sub), "rev-parse", "--verify", f"origin/{branch}"])
         if ref:
             cands.append((ref, f"origin/{branch}"))
     if not cands:
-        return None, "无本地参照(未 fetch 且主仓不可比)"
+        return None, uncomparable or "无本地参照(未 fetch 且主仓不可比)"
+    lags = []
     for sha, label in cands:
         n = _git_out(["-C", str(sub), "rev-list", "--count", f"HEAD..{sha}"])
-        if n is not None and int(n) > 0:
+        if n is None:
+            continue
+        if int(n) > 0:
             return int(n), label
-    return 0, "本地参照已同步"
+        lags.append(label)
+    note = " / ".join(lags + ([uncomparable] if uncomparable else [])) or "本地参照"
+    return 0, note
 
 
 def resolve_interpreter(root: Path) -> str | None:
@@ -309,7 +320,7 @@ def doctor(repo: Path, agent_kb: Path | None = None,
             elif lag is None:
                 add(("PASS", "submodule pointer", f"无从判定: {ref}"))
             else:
-                add(("PASS", "submodule pointer", "不落后"))
+                add(("PASS", "submodule pointer", f"不落后(参照: {ref})"))
             # 通用层索引新鲜度: 指针新但索引 stale 同样让双层检索降级(sections 缺位)
             if (sub / "kb").is_dir():
                 try:

@@ -210,7 +210,44 @@ def test_doctor_submodule_pointer_up_to_date_passes(fake_layout, monkeypatch):
     monkeypatch.setattr(bootstrap, "_git_out", fake_git_out)
     checks = doctor(biz / "docs", agent_kb=ak)
     by_name = {n: (lvl, msg) for lvl, n, msg in checks}
-    assert by_name["submodule pointer"] == ("PASS", "不落后"), by_name["submodule pointer"]
+    lvl, msg = by_name["submodule pointer"]
+    assert lvl == "PASS" and "origin/master" in msg, by_name["submodule pointer"]
+
+
+def test_doctor_submodule_pointer_notes_unfetched_main_tip(fake_layout, monkeypatch):
+    """主仓已前进但新对象没 fetch 进 submodule 时, "不落后"必须带出这一限定。
+
+    origin/<branch> 只是上次 fetch 的快照: 指针与快照齐平不代表通用层追上了主仓。
+    只报"不落后"会把"主仓有新东西"藏起来 —— 本检查存在的理由就是消灭这种虚假
+    安全感, 故 PASS 也要如实标注参照的时效边界。
+    """
+    from kb import bootstrap
+    biz, ak = fake_layout
+    (biz / ".gitmodules").write_text(
+        '[submodule ".agent-kb"]\n\tpath = .agent-kb\n\tbranch = master\n', encoding="utf-8")
+    (biz / ".agent-kb" / "kb").mkdir(parents=True)
+    monkeypatch.setattr(bootstrap, "_mod_ok", lambda *a, **k: True)
+    (biz / ".venv" / "Scripts").mkdir(parents=True)
+    (biz / ".venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+
+    def fake_git_out(args):
+        if args[:3] == ["-C", str(ak), "rev-parse"]:
+            return "d" * 40                                # 主仓已前进
+        if args[-1] == "HEAD":
+            return "c" * 40
+        if args[-1] == "origin/master":
+            return "c" * 40                                # 快照与指针齐平
+        if args[-2:] == ["-e", "d" * 40 + "^{commit}"]:
+            return None                                    # 新对象未 fetch 进 submodule
+        if args[-1].startswith("HEAD.."):
+            return "0"
+        return None
+
+    monkeypatch.setattr(bootstrap, "_git_out", fake_git_out)
+    checks = doctor(biz / "docs", agent_kb=ak)
+    lvl, msg = {n: (lvl, msg) for lvl, n, msg in checks}["submodule pointer"]
+    assert lvl == "PASS"
+    assert "origin/master" in msg and "未 fetch" in msg, msg
 
 
 def test_submodule_branch_parses_gitmodules(tmp_path):

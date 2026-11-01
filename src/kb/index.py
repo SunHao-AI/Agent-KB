@@ -144,6 +144,35 @@ def build_indexes(repo_root: Path, repo_name: str = "agent-kb"):
     return md, jl, dj
 
 
+_REPO_FIELD_RE = re.compile(r'"repo"\s*:\s*"([^"]+)"')
+
+
+def resolve_repo_name(repo_root: Path, explicit: str | None = None) -> str:
+    """repo 标签从**被检内容自取**, 不从挂载路径反推(同 pre-push-gate.sh:234-244)。
+
+    `repo` 是 `kb index` **生成时**写进每条记录的固化标签(业务仓项目层写仓名,
+    通用层写 agent-kb), 与 kb 载体目录名没有必然关系。校验侧若从目录名反推再与
+    固化值全等比对, 在"载体目录名 ≠ 逻辑仓名"的布局下恒判 stale:
+    `.agent-kb` → `.agent-kb` vs 固化 `agent-kb`; `docs` → `docs` vs 固化
+    `flysee-video-setting`。主仓 kb/ 恰好载体名=仓根同名, 自测全绿掩盖了漂移
+    (§45 第二十七轮把"业务仓根名"改成"载体名", 仍是从可变量反推, 未触及根因)。
+
+    恒假阳性的 `index fresh` 检查与没有检查等价, 且更糟——它提供虚假的安全感,
+    使通用层 submodule 索引过期长期无人发现。故读取顺序: 显式 --repo-name →
+    index.jsonl 首行自取 → 仅在索引不存在时回落目录名。
+    """
+    if explicit:
+        return explicit
+    jl = Path(repo_root) / "kb" / "index.jsonl"
+    try:
+        with jl.open(encoding="utf-8", errors="replace") as fh:
+            first = fh.readline()          # 每条记录都带 repo, 首行足够
+    except OSError:
+        return Path(repo_root).resolve().name.lower()
+    m = _REPO_FIELD_RE.search(first)
+    return m.group(1) if m else Path(repo_root).resolve().name.lower()
+
+
 def check_indexes(repo_root: Path, repo_name: str = "agent-kb") -> bool:
     """live 面(INDEX.md / index.jsonl)漂移门禁; **故意不比对 index.draft.jsonl**。
 

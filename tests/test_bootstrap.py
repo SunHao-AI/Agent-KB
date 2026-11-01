@@ -125,6 +125,105 @@ def test_doctor_index_fresh_uses_carrier_name(fake_layout, monkeypatch):
     assert by_name["index fresh"][0] == "PASS", by_name["index fresh"]
 
 
+def test_doctor_index_fresh_uses_persisted_label(fake_layout, monkeypatch):
+    """index fresh 的 repo 标签必须从 index.jsonl 自取, 不从载体目录名反推。
+
+    真实业务仓的 kb 载体是 docs/, 但生成时写进 repo 字段的是**仓名**(kb init/CI
+    口径), 不是 "docs"。上一轮把口径从"业务仓根名"改成"载体目录名", 仍是从可变
+    挂载点反推固化值 → 换一种布局继续恒 WARN, 而 doctor 是唯一能一次覆盖全仓的
+    检查面, 恒假阳性等于没有检查(通用层索引过期数月无人发现)。
+    """
+    from kb.index import build_indexes
+    biz, ak = fake_layout
+    (biz / "docs" / "kb" / "pitfall" / "backend" / "a.md").write_text(
+        make_entry(id="kb-20261101-b1b1", status="accepted", confidence="verified"),
+        encoding="utf-8")
+    build_indexes(biz / "docs", repo_name="biz-repo")   # 固化标签 = 仓名 ≠ 载体名 docs
+    from kb import bootstrap
+    monkeypatch.setattr(bootstrap, "_mod_ok", lambda *a, **k: True)
+    checks = doctor(biz / "docs", agent_kb=ak)
+    by_name = {n: (lvl, msg) for lvl, n, msg in checks}
+    assert by_name["index fresh"][0] == "PASS", by_name["index fresh"]
+
+
+def test_doctor_warns_stale_submodule_pointer(fake_layout, monkeypatch):
+    """submodule 指针停在旧提交 = 通用层一直在服务过期语料, doctor 必须报出来。
+
+    `.gitmodules` 配 branch = master 只是声明, 没人 fetch 就没人知道落后(2026-11-01
+    实测三仓指针停在数月前, 通用层 sections 字段整层缺失)。这里只读本地引用:
+    同级主仓 HEAD 的对象在 submodule 内可解析时, 离线即可算出落后数。
+    """
+    from kb import bootstrap
+    biz, ak = fake_layout
+    (biz / ".gitmodules").write_text(
+        '[submodule ".agent-kb"]\n\tpath = .agent-kb\n\turl = https://x/agent.git\n'
+        "\tbranch = master\n", encoding="utf-8")
+    (biz / ".agent-kb" / "kb").mkdir(parents=True)      # 非空 = 已 checkout
+    (biz / ".agent-kb" / ".git").write_text("gitdir: x\n", encoding="utf-8")
+    monkeypatch.setattr(bootstrap, "_mod_ok", lambda *a, **k: True)
+    (biz / ".venv" / "Scripts").mkdir(parents=True)      # 门禁 venv 齐备, 只考察指针项
+    (biz / ".venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+    refs = {"HEAD": "aaa", "origin/master": None}
+
+    def fake_git_out(args):
+        if args[:3] == ["-C", str(ak), "rev-parse"]:
+            return "bbb"                                 # 同级主仓 HEAD
+        if args[-1] == "HEAD":
+            return refs["HEAD"]
+        if args[-1].startswith("bbb"):
+            return ""                                    # cat-file -e: 对象可见(空输出=成功)
+        if args[-1].startswith("HEAD.."):
+            return "37"
+        if args[-1] == "origin/master":
+            return refs["origin/master"]
+        return None
+
+    monkeypatch.setattr(bootstrap, "_git_out", fake_git_out)
+    checks = doctor(biz / "docs", agent_kb=ak)
+    by_name = {n: (lvl, msg) for lvl, n, msg in checks}
+    assert by_name["submodule pointer"][0] == "WARN"
+    assert "37" in by_name["submodule pointer"][1]
+    assert doctor_exit_code(checks) == 0                 # 只 WARN 不 FAIL
+
+
+def test_doctor_submodule_pointer_up_to_date_passes(fake_layout, monkeypatch):
+    """origin/<branch> 与指针齐平时判"不落后"。旧写法先过滤掉相等的参照, 结果
+    参照集为空 → 误报"无从判定", 恰好把最需要确认的正常态说成不可知。"""
+    from kb import bootstrap
+    biz, ak = fake_layout
+    (biz / ".gitmodules").write_text(
+        '[submodule ".agent-kb"]\n\tpath = .agent-kb\n\tbranch = master\n', encoding="utf-8")
+    (biz / ".agent-kb" / "kb").mkdir(parents=True)
+    monkeypatch.setattr(bootstrap, "_mod_ok", lambda *a, **k: True)
+    (biz / ".venv" / "Scripts").mkdir(parents=True)
+    (biz / ".venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+
+    def fake_git_out(args):
+        if args[:3] == ["-C", str(ak), "rev-parse"]:
+            return None                                  # 主仓不可比
+        if args[-1] in ("HEAD", "origin/master", "ccc"):
+            return "ccc" if args[-1] != "HEAD" else "ccc"
+        if args[-1].startswith("HEAD.."):
+            return "0"
+        return None
+
+    monkeypatch.setattr(bootstrap, "_git_out", fake_git_out)
+    checks = doctor(biz / "docs", agent_kb=ak)
+    by_name = {n: (lvl, msg) for lvl, n, msg in checks}
+    assert by_name["submodule pointer"] == ("PASS", "不落后"), by_name["submodule pointer"]
+
+
+def test_submodule_branch_parses_gitmodules(tmp_path):
+    from kb.bootstrap import _submodule_branch
+    gm = tmp_path / ".gitmodules"
+    gm.write_text('[submodule ".agent-kb"]\n\tpath = .agent-kb\n\tbranch = master\n',
+                  encoding="utf-8")
+    assert _submodule_branch(gm) == "master"
+    gm.write_text('[submodule "other"]\n\tpath = other\n\tbranch = dev\n'
+                  '[submodule ".agent-kb"]\n\tpath = .agent-kb\n', encoding="utf-8")
+    assert _submodule_branch(gm) is None                 # 别的 submodule 的 branch 不得串味
+
+
 def test_doctor_abs_path_mcp_command_warns(fake_layout):
     biz, ak = fake_layout
     (biz / ".mcp.json").write_text(json.dumps(

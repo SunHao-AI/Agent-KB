@@ -176,9 +176,16 @@ def _reindex(repo) -> None:
     (draft 池现算可见)"变为"应进 live 池"——不重建则检索与查重**双双隐身**: 红线1
     承诺的"agent 自审 accepted 无需等人工"闭环断裂, 且下一个任务感知不到它的存在,
     会把同一条知识重复沉淀。与 export_entry 搬移后重建双方索引(第十四轮)同一先例。
-    repo_name 口径与 cli index 一致(resolve().name.lower())。"""
-    from kb.index import build_indexes  # 局部导入: index 侧不反向依赖 gate
-    build_indexes(Path(repo), repo_name=Path(repo).resolve().name.lower())
+    repo_name 口径与 cli index 一致(resolve_repo_name: 已有索引自取, 无索引才
+    回落目录名)。写路径若从目录名反推, 会把生成时固化的标签改掉(业务仓 docs
+    载体 → "docs" 而非仓名), 每写一条就与已提交索引产生一次无意义 diff, 并让
+    `index --check` 重新变 stale。"""
+    from kb.index import (  # 局部导入: index 侧不反向依赖 gate
+        build_indexes,
+        resolve_repo_name,
+    )
+    repo = Path(repo)
+    build_indexes(repo, repo_name=resolve_repo_name(repo))
 
 
 def update_draft(repo, id: str, *, title: str | None = None, body: str | None = None,
@@ -341,9 +348,11 @@ def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
     src.unlink()
     # 搬移后重建双方索引: 旧实现两仓 index 均滞留——源仓检索命中已删条目(断链),
     # 目标仓检索看不到新条目直到有人手动 kb index(第十四轮走查)
-    from kb.index import build_indexes  # 局部导入: index 侧不反向依赖 gate
-    build_indexes(Path(project_repo),
-                  repo_name=Path(project_repo).resolve().name.lower())
-    build_indexes(Path(agent_kb_repo),
-                  repo_name=Path(agent_kb_repo).resolve().name.lower())
+    from kb.index import (  # 局部导入: index 侧不反向依赖 gate
+        build_indexes,
+        resolve_repo_name,
+    )
+    for lib in (project_repo, agent_kb_repo):
+        lib = Path(lib)
+        build_indexes(lib, repo_name=resolve_repo_name(lib))
     return dst

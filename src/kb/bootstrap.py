@@ -47,6 +47,63 @@ def _git_root(p: Path) -> Path | None:
     return None
 
 
+def _git_out(args: list[str]) -> str | None:
+    try:
+        r = subprocess.run(["git", *args], check=False, capture_output=True,
+                           text=True, timeout=30)
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _submodule_branch(gitmodules: Path) -> str | None:
+    """.gitmodules 里 .agent-kb 的跟踪分支(缺省 None)。`branch = master` 只是声明,
+    真正决定语料新旧的是指针, 这里只取它作为远程跟踪引用的参照名。"""
+    in_sub = False
+    for ln in gitmodules.read_text(encoding="utf-8", errors="replace").splitlines():
+        s = ln.strip()
+        if s.startswith("[submodule"):
+            in_sub = ".agent-kb" in s
+        elif in_sub and s.startswith("branch"):
+            return s.split("=", 1)[1].strip() if "=" in s else None
+    return None
+
+
+def _submodule_lag(sub: Path, main_root: Path, branch: str | None) -> tuple[int | None, str]:
+    """通用层 submodule 落后程度 → (落后提交数, 参照说明); None = 无从判定。
+
+    指针停在旧提交 = 双层检索的通用层一直在服务过期语料, 但此前没有任何检查面
+    能发现(2026-11-01 实测: 三仓指针停在数月前的提交, sections 字段整层缺失, 召回
+    仅为最新索引的 44%)。`.gitmodules` 配了 `branch = master` 也不等于有人知道落后。
+
+    参照优先级(全程只读本地引用, **不 fetch**——doctor 不得有网络副作用):
+    ① 同级 Agent-KB 主仓 HEAD(同 URL, 对象通常已在本地, 离线可算);
+    ② submodule 内 `origin/<branch>` 远程跟踪引用(上次 fetch 的快照, 结论注明时效)。
+    """
+    head = _git_out(["-C", str(sub), "rev-parse", "HEAD"])
+    if not head:
+        return None, "无法解析 HEAD"
+    cands: list[tuple[str, str]] = []
+    if main_root.resolve() != sub.resolve():
+        main_head = _git_out(["-C", str(main_root), "rev-parse", "HEAD"])
+        if main_head and main_head != head and \
+                _git_out(["-C", str(sub), "cat-file", "-e", f"{main_head}^{{commit}}"]) is not None:
+            cands.append((main_head, f"主仓 HEAD {main_head[:7]}"))
+    if branch:
+        ref = _git_out(["-C", str(sub), "rev-parse", "--verify", f"origin/{branch}"])
+        if ref:
+            cands.append((ref, f"origin/{branch}"))
+    if not cands:
+        return None, "无本地参照(未 fetch 且主仓不可比)"
+    for sha, label in cands:
+        n = _git_out(["-C", str(sub), "rev-list", "--count", f"HEAD..{sha}"])
+        if n is not None and int(n) > 0:
+            return int(n), label
+    return 0, "本地参照已同步"
+
+
 def resolve_interpreter(root: Path) -> str | None:
     root = Path(root)
     for rel in INTERPRETERS:
@@ -191,7 +248,7 @@ def doctor(repo: Path, agent_kb: Path | None = None,
     即 docs/、Agent-KB 仓自身即仓根; 业务仓根(钩子/.venv/.mcp.json/.gitmodules
     所在)经 git toplevel 解析。
     """
-    from kb.index import check_indexes
+    from kb.index import check_indexes, resolve_repo_name
     from kb.lint import lint_repo
 
     checks: list[tuple[str, str, str]] = []
@@ -235,21 +292,41 @@ def doctor(repo: Path, agent_kb: Path | None = None,
                 lvl = "FAIL" if mod == "pytest" else "WARN"
                 add((lvl, f"current {mod}", f"当前解释器缺 {mod}"))
 
-    # submodule: 声明了 .agent-kb 但目录不存在/空 = 悬空指针
+    # submodule: 声明了 .agent-kb 但目录不存在/空 = 悬空指针;
+    # 已 checkout 时还要看指针是否停在旧提交(通用层语料过期)+ 其索引是否新鲜
     gm = biz / ".gitmodules"
     if gm.exists() and ".agent-kb" in gm.read_text(encoding="utf-8", errors="replace"):
         sub = biz / ".agent-kb"
-        if sub.is_dir() and any(sub.iterdir()):
-            add(("PASS", "submodule .agent-kb", "已 checkout"))
-        else:
+        if not (sub.is_dir() and any(sub.iterdir())):
             add(("WARN", "submodule .agent-kb", "悬空指针: git submodule update --init"))
+        else:
+            add(("PASS", "submodule .agent-kb", "已 checkout"))
+            lag, ref = _submodule_lag(sub, root, _submodule_branch(gm))
+            if lag:
+                add(("WARN", "submodule pointer",
+                     (f"落后 {ref} 共 {lag} 个提交: 通用层语料过期, "
+                      f"git submodule update --remote .agent-kb")))
+            elif lag is None:
+                add(("PASS", "submodule pointer", f"无从判定: {ref}"))
+            else:
+                add(("PASS", "submodule pointer", "不落后"))
+            # 通用层索引新鲜度: 指针新但索引 stale 同样让双层检索降级(sections 缺位)
+            if (sub / "kb").is_dir():
+                try:
+                    ok = check_indexes(sub, repo_name=resolve_repo_name(sub))
+                    add(("PASS" if ok else "WARN", "submodule index fresh",
+                         "up to date" if ok else
+                         f"stale: 在 Agent-KB 主仓跑 kb index --repo . --repo-name "
+                         f"{resolve_repo_name(sub)} 后提交"))
+                except (FileNotFoundError, OSError) as exc:
+                    add(("WARN", "submodule index fresh", f"索引不可读: {exc}"))
 
     # index 漂移(生成物与正文一致性); kb_base = kb 载体目录(--repo 入参本身)
-    # repo_name 必须与 `kb index` CLI 默认口径一致(载体目录名小写): 第二十七轮
-    # 走查实测旧实现用业务仓根名, docs/kb 结构下与 index.jsonl 现值恒不等 →
-    # index fresh 恒 WARN, 且按 WARN 建议的 kb index 重建(载体名口径)永远消不掉
-    # 误报。主仓 kb 恰好载体=仓根同名, 自测全绿掩盖了漂移。
-    repo_name = kb_base.resolve().name.lower()
+    # repo 标签必须从 index.jsonl 自取: 它是 `kb index` 生成时写进记录的固化值
+    # (docs 载体→仓名、.agent-kb 载体→agent-kb), 与挂载目录名不同源。第二十七轮
+    # 把口径从"业务仓根名"改成"载体目录名", 仍是从可变量反推 → 换一种布局继续
+    # 恒 WARN, 且按建议重建也消不掉。与 CLI 共用 resolve_repo_name, 三处分叉收口。
+    repo_name = resolve_repo_name(kb_base)
     try:
         ok = check_indexes(kb_base, repo_name=repo_name)
         add(("PASS" if ok else "WARN", "index fresh",

@@ -13,7 +13,7 @@ from kb.gate import DuplicateCandidate, GateViolation, create_draft, export_entr
 from kb.gate import review as gate_review
 from kb.gate import set_scope as gate_set_scope
 from kb.entry import dump_entry, parse_entry
-from kb.index import build_indexes, check_indexes
+from kb.index import build_indexes, check_indexes, resolve_repo_name
 from kb.layers import get_layered, related_layers, search_layers_report
 from kb.lint import lint_repo
 from kb.new_entry import create_entry
@@ -288,9 +288,10 @@ def _dispatch(argv: list[str] | None = None) -> int:
             return 1
         return 0
     if args.cmd == "index":
-        # 目录显示名统一小写: 仓库显示名大小写(本地克隆 Agent-KB)不得进入 repo 字段,
-        # 否则与已提交 index 的规范名(agent-kb)不一致, `index --check` 恒 stale
-        repo_name = args.repo_name or repo.resolve().name.lower()
+        # repo 标签从被检索引自取, 不从载体目录名反推: 固化值与目录名不同源时
+        # (`.agent-kb` vs agent-kb、`docs` vs flysee-video-setting)`--check` 恒
+        # stale。索引不存在时(首次构建)才回落目录名小写, 显示名大小写不进字段。
+        repo_name = resolve_repo_name(repo, args.repo_name)
         if args.check:
             ok = check_indexes(repo, repo_name=repo_name)
             print("index up to date" if ok else "index stale")

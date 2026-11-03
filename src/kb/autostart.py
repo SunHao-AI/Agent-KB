@@ -17,12 +17,20 @@ UNIT_NAME = "kb-serve.service"
 
 
 def serve_command(repo: Path, port: int, bind: str,
-                  default_caller: str | None) -> tuple[str, str, str]:
-    """(command, args, working_dir) — 用当前解释器直跑 kb.serve, 不依赖 PATH。"""
+                  default_caller: str | None,
+                  extra_repos: dict[str, Path] | None = None) -> tuple[str, str, str]:
+    """(command, args, working_dir) — 用当前解释器直跑 kb.serve, 不依赖 PATH。
+
+    extra_repos 必须一并渲染: 质量联邦(A5)靠 `--repos` 显式声明, 早先的
+    install() 不透传, 系统服务一重启就静默退回单库口径(面板少两行分库表却
+    无任何提示)。安装参数是用户显式给的, 装完必须等价于手敲同一条命令。
+    """
     args = ["-m", "kb.serve", "--repo", str(repo), "--port", str(port),
             "--bind", bind]
     if default_caller:
         args += ["--default-caller", default_caller]
+    for name, path in (extra_repos or {}).items():
+        args += ["--repos", f"{name}={path}"]
     return (sys.executable,
             " ".join(f'"{a}"' if " " in str(a) else str(a) for a in args),
             str(repo))
@@ -74,8 +82,9 @@ def _psq(s: str) -> str:
 
 def install_windows(repo: Path, port: int, bind: str,
                     default_caller: str | None,
-                    tmp_dir: Path | None = None) -> str:
-    cmd, args, wd = serve_command(repo, port, bind, default_caller)
+                    tmp_dir: Path | None = None,
+                    extra_repos: dict[str, Path] | None = None) -> str:
+    cmd, args, wd = serve_command(repo, port, bind, default_caller, extra_repos)
     # cmdlet 原生参数路径(非 -Xml): 受管环境下 -Xml 注册会被策略拒(0x80070005)。
     # 触发器必须 -User 绑定当前用户: 不带 = "任意用户登录"语义, 需管理员权限(实测被拒)。
     ps = ("$a=New-ScheduledTaskAction -Execute '{cmd}' -Argument '{args}' -WorkingDirectory '{wd}'; "
@@ -111,8 +120,9 @@ def uninstall_windows() -> str:
 # ---------------- systemd 用户级 unit ----------------
 
 def install_systemd(repo: Path, port: int, bind: str,
-                    default_caller: str | None) -> str:
-    cmd, args, wd = serve_command(repo, port, bind, default_caller)
+                    default_caller: str | None,
+                    extra_repos: dict[str, Path] | None = None) -> str:
+    cmd, args, wd = serve_command(repo, port, bind, default_caller, extra_repos)
     unit = Path.home() / ".config" / "systemd" / "user" / UNIT_NAME
     unit.parent.mkdir(parents=True, exist_ok=True)
     unit.write_text(render_systemd_unit(cmd, args, wd), encoding="utf-8")
@@ -136,10 +146,12 @@ def uninstall_systemd() -> str:
 
 
 def install(repo: Path, port: int, bind: str,
-            default_caller: str | None) -> str:
+            default_caller: str | None,
+            extra_repos: dict[str, Path] | None = None) -> str:
     if platform.system() == "Windows":
-        return install_windows(repo, port, bind, default_caller)
-    return install_systemd(repo, port, bind, default_caller)
+        return install_windows(repo, port, bind, default_caller,
+                               extra_repos=extra_repos)
+    return install_systemd(repo, port, bind, default_caller, extra_repos)
 
 
 def uninstall() -> str:

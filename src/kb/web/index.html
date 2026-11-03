@@ -4,16 +4,37 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent-KB 观测面板</title>
+<script>
+/* D3 主题: 在首帧绘制前落 data-theme, 避免 light 偏好下先闪一屏深色。
+   三态 auto/dark/light 持久在 localStorage; auto = 跟随 prefers-color-scheme。 */
+(function(){try{var m=localStorage.getItem('kb-theme')||'auto';
+document.documentElement.dataset.theme=m==='auto'?(matchMedia('(prefers-color-scheme:light)').matches?'light':'dark'):m;}catch(e){}})();
+</script>
 <style>
-  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--bd:#2d3646;--tx:#d7dee8;
+  :root{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--bd:#2d3646;--tx:#d7dee8;
         --mu:#8b98a9;--ok:#42D6A4;--warn:#F0CA57;--bad:#F28A76;--ext:#F34A87;--link:#6cb8ff;
+        /* D3: 深色硬编码色值全部收敛为变量, light 主题只改这一处(见下 [data-theme=light]) */
+        --bdh:#3a4658;--onside:#275848;--badbd:#5a2d26;--kpibd:#39534a;
+        --track:#0b1017;--fill2:#2ea87f;--zerofill:#b25646;--dwfill:#b9963f;
+        --bgbanner:#1a2130;--fihover:#222b3c;--fihoverbd:#33415a;--skel:#242e40;
+        --ph:#5c6878;--rowh:#1b2331;--h3:#eaf1f8;--trendoff:#2b3648;
+        --hdsoft:rgba(13,17,23,.85);--hdtr:rgba(13,17,23,0);
         --rpw:min(1440px,80vw,calc(100vw - 336px))}
+  /* D3 light: 用户动机是把面板截图贴进白底周报。仅由 JS 落 data-theme
+     (head 内联脚本先定, 无闪白/闪黑), auto 走 prefers-color-scheme。 */
+  :root[data-theme=light]{color-scheme:light;--bg:#f5f7fa;--panel:#fff;--panel2:#eaeef4;--bd:#d2dae4;--tx:#1e2732;
+        --mu:#5c6a7c;--ok:#0e9c73;--warn:#b3831c;--bad:#cb4f3b;--ext:#d6336c;--link:#0b62c4;
+        --bdh:#b7c2d0;--onside:#7fcbb2;--badbd:#e3b3a8;--kpibd:#a6d8c5;
+        --track:#e1e7ef;--fill2:#0b7d5e;--zerofill:#a83c2a;--dwfill:#8a6a17;
+        --bgbanner:#fdf6e0;--fihover:#e4eaf2;--fihoverbd:#c6d1df;--skel:#dbe2ec;
+        --ph:#9aa5b4;--rowh:#eef2f8;--h3:#101820;--trendoff:#cfd8e3;
+        --hdsoft:rgba(245,247,250,.85);--hdtr:rgba(245,247,250,0)}
   *{box-sizing:border-box;margin:0;padding:0}
   body{background:var(--bg);color:var(--tx);font:14px/1.65 "PingFang SC","Microsoft YaHei",system-ui,sans-serif;padding:24px 20px 80px}
   main{max-width:1080px;margin:0 auto}
-  html{scrollbar-width:thin;scrollbar-color:#2d3646 transparent}
+  html{scrollbar-width:thin;scrollbar-color:var(--bd) transparent}
   header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:-6px 0 12px;padding:6px 0 10px;
-        position:sticky;top:0;z-index:5;background:linear-gradient(180deg,var(--bg) 70%,rgba(13,17,23,.85) 92%,rgba(13,17,23,0));backdrop-filter:blur(6px)}
+        position:sticky;top:0;z-index:5;background:linear-gradient(180deg,var(--bg) 70%,var(--hdsoft) 92%,var(--hdtr));backdrop-filter:blur(6px)}
   h1{font-size:19px;margin-right:auto}
   .brand{display:flex;align-items:center;gap:12px;margin-right:auto;min-width:0}
   .brand svg{width:27px;height:27px;flex:none}
@@ -23,27 +44,57 @@
   .seg button{background:none;border:1px solid transparent;color:var(--mu);padding:5px 13px;font-size:12px;
         cursor:pointer;border-radius:6px;font-family:inherit;white-space:nowrap;
         transition:color .15s,border-color .15s,background .15s}
-  .seg button:hover{border-color:#3a4658;color:var(--tx)}
-  .seg button.on{background:var(--panel2);color:var(--ok);border-color:#275848}
+  .seg button:hover{border-color:var(--bdh);color:var(--tx)}
+  .seg button.on{background:var(--panel2);color:var(--ok);border-color:var(--onside)}
   .conn{font-family:Consolas,monospace;font-size:11px;border:1px solid var(--bd);color:var(--ok);
         padding:4px 12px;border-radius:14px;letter-spacing:1px;flex:none}
-  .conn.bad{color:var(--bad);border-color:#5a2d26;animation:pulse 1.4s infinite}
+  .conn.bad{color:var(--bad);border-color:var(--badbd);animation:pulse 1.4s infinite}
   @keyframes pulse{50%{opacity:.45}}
   button:focus-visible,input:focus-visible,.feed-item:focus-visible,.drill:focus-visible,.matrix-link:focus-visible{outline:2px solid var(--ext);outline-offset:-2px}
+  #kpi.stale{border-color:var(--bad);cursor:pointer}   /* A1: 自动刷新失败→红边可点重试 */
   .card{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:16px 18px;margin:14px 0}
   .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
   .kpi{background:var(--panel2);border:1px solid var(--bd);border-radius:10px;padding:13px;transition:border-color .18s}
-  .kpi:hover{border-color:#39534a}
+  /* B3: 质量五卡可点开条目清单(button 元素, 原生键盘可达; §59 守护的是自定义 div/tr) */
+  button.kpi{display:block;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
+  button.kpi:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+  button.kpi .v{color:var(--ac)}
+  /* 质量下钻清单弹层(B3): 数字点开对应条目, 与卡上计数同源(serve 端同一份 rows) */
+  #qe{position:fixed;inset:0;background:rgba(4,6,9,.78);display:none;z-index:10;align-items:center;justify-content:center}
+  #qe.open{display:flex}
+  #qeBox{width:min(880px,94vw);max-height:88vh;background:var(--panel);border:1px solid var(--bd);
+    border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.6)}
+  #qeBar{display:flex;align-items:center;gap:12px;padding:9px 14px;border-bottom:1px solid var(--bd);font-size:13px}
+  #qeBar span{flex:1;color:var(--tx)}
+  #qeBar button{background:none;border:1px solid var(--bd);color:var(--mu);border-radius:6px;
+    padding:3px 10px;cursor:pointer;font-size:12px}
+  #qeBar button:hover{color:var(--tx);border-color:var(--tx)}
+  /* Q18 虚拟滚动: qeBody 是滚动容器(flex 撑满剩余高度), 表头吸顶、行高固定 26px,
+     只渲染可视区±缓冲行(上下垫片行占位)。500+ 行整表渲染时点击/重绘要数秒(回归
+     实测), 窗口化后 DOM 恒为几十行。table-layout:fixed + 表头显式列宽: 窗口切换
+     时列宽不抖(auto 布局按已渲染行算, 滚动会跳)。 */
+  #qeBody{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto;padding:0 14px}
+  #qeBody table{width:100%;font-size:12.5px;table-layout:fixed;border-collapse:collapse}
+  /* 行高算术(虚拟滚动的滚动位置换算)要求数据行等高: 内容全部单行(nowrap +
+     省略号)+ 固定行高/内边距。具体像素不赌 CSS——paintQeWindow 首帧实测
+     tr.offsetHeight, 样式以后怎么改都不会让滚动位置漂。 */
+  #qeBody td,#qeBody th{padding:4px 8px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:16px;box-sizing:border-box}
+  #qeBody td button{height:16px;padding:0 6px;font-size:11px;line-height:14px;vertical-align:top}
+  #qeBody thead th{position:sticky;top:0;background:var(--panel);z-index:1}
+  #qeFoot{padding:6px 14px 10px;font-size:11.5px;color:var(--mu)}
+  #qeBody .pth{color:var(--mu);font-family:Consolas,monospace;font-size:11.5px;white-space:nowrap}
+  .kpi:hover{border-color:var(--kpibd)}
   .kpi .v{font-size:24px;font-weight:700;color:var(--ok);font-family:Consolas,monospace;font-variant-numeric:tabular-nums}
   .kpi .l{font-size:12px;color:var(--mu)}
   .kpi .s{font-size:11.5px;color:var(--mu)}
   .bar{display:grid;grid-template-columns:minmax(120px,220px) 1fr 96px;align-items:center;gap:8px;font-size:12.5px;margin:5px 0}
   .bar>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .track{background:#0b1017;border-radius:4px;height:13px;overflow:hidden}
-  .fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--ok),#2ea87f);
+  .track{background:var(--track);border-radius:4px;height:13px;overflow:hidden}
+  .fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--ok),var(--fill2));
         transform-origin:left center;animation:barIn .5s cubic-bezier(.22,.8,.3,1)}
   @keyframes barIn{from{transform:scaleX(.04)}to{transform:scaleX(1)}}
-  .fill.zero{background:linear-gradient(90deg,var(--bad),#b25646)}
+  .fill.zero{background:linear-gradient(90deg,var(--bad),var(--zerofill))}
   .feed-item{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:7px 9px;
              border-radius:6px;margin:5px 0;background:var(--panel2)}
   .feed-item.new{animation:fi .5s}
@@ -52,7 +103,7 @@
   .w{background:var(--warn);box-shadow:0 0 6px var(--warn)}
   .mono{font-family:Consolas,monospace;color:var(--mu);margin-left:auto;font-size:11px;white-space:nowrap}
   .mono .dur{display:inline-block;min-width:5.5ch;text-align:right}   /* 耗时定宽: 跨行右缘与时间列对齐 */
-  .banner{border-left:3px solid var(--warn);background:#1a2130;padding:9px 13px;border-radius:0 8px 8px 0;margin:10px 0;font-size:13px;animation:bIn .3s cubic-bezier(.22,.8,.3,1)}
+  .banner{border-left:3px solid var(--warn);background:var(--bgbanner);padding:9px 13px;border-radius:0 8px 8px 0;margin:10px 0;font-size:13px;animation:bIn .3s cubic-bezier(.22,.8,.3,1)}
   @keyframes bIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
   .banner.bad{border-color:var(--bad)} .banner.ok{border-color:var(--ok)}
   .est{color:var(--ext);cursor:help}
@@ -62,26 +113,26 @@
   th{background:var(--panel2);white-space:nowrap}
   .stale td{color:var(--bad)}
   .feed-item{cursor:pointer;border:1px solid transparent;transition:background .16s,border-color .16s,transform .16s}
-  .feed-item:hover{background:#222b3c;border-color:#33415a;transform:translateX(2px)}
+  .feed-item:hover{background:var(--fihover);border-color:var(--fihoverbd);transform:translateX(2px)}
   .feed-item[data-rd]{opacity:.82}
   .feed-item[data-rd]:hover{opacity:1}
   .feed-item.hide{display:none}
   .feed-skel{height:31px;border-radius:6px;margin:5px 0;
-        background:linear-gradient(90deg,var(--panel2) 25%,#242e40 50%,var(--panel2) 75%);
+        background:linear-gradient(90deg,var(--panel2) 25%,var(--skel) 50%,var(--panel2) 75%);
         background-size:200% 100%;animation:skel 1.1s ease-in-out infinite}
   @keyframes skel{to{background-position:-200% 0}}
   .fbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
   .fbar input{flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--bd);color:var(--tx);
         border-radius:7px;padding:6px 11px;font:inherit;font-size:12.5px}
-  .fbar input::placeholder{color:#5c6878}
+  .fbar input::placeholder{color:var(--ph)}
   .fbar .seg button{padding:4px 11px;font-size:11.5px}
   .cnt{font-size:11px;color:var(--mu);font-family:Consolas,monospace;margin-left:auto}
   #feed{scroll-margin-top:64px}   /* sticky header 让位: 分页/追因 scrollIntoView 起点不被遮 */
   #fpage{display:flex;gap:5px;align-items:center;margin-top:9px;flex-wrap:wrap}
   #fpage button{background:var(--panel2);border:1px solid var(--bd);color:var(--mu);min-width:26px;
         border-radius:6px;padding:2px 8px;font:12px Consolas,monospace;cursor:pointer}
-  #fpage button:hover:not(:disabled){color:var(--tx);border-color:#3a4658}
-  #fpage button.on{color:var(--ok);border-color:#275848}
+  #fpage button:hover:not(:disabled){color:var(--tx);border-color:var(--bdh)}
+  #fpage button.on{color:var(--ok);border-color:var(--onside)}
   #fpage button:disabled{opacity:.35;cursor:default}
   #fpage .gap{color:var(--mu);font-size:11px}
   #fpage .pgn{font-size:11px;color:var(--mu);margin-left:6px;font-family:Consolas,monospace}
@@ -91,11 +142,11 @@
   .colhd{font-size:11px;color:var(--mu);letter-spacing:1px;margin:6px 0 2px;font-family:Consolas,monospace}
   .drill{background:none;border:0;color:var(--link);font:inherit;font-size:11.5px;cursor:pointer;padding:0;text-decoration:underline dotted}
   .bar.drillable{cursor:pointer;border-radius:5px}                 /* C2: 零命中整行可点 */
-  .bar.drillable:hover{background:#1b2331}
+  .bar.drillable:hover{background:var(--rowh)}
   .bar.drillable:focus-visible{outline:2px solid var(--ext);outline-offset:1px}
   .matrix-link{cursor:pointer}
-  .matrix-link:hover td{background:#1b2331}
-  h3{font-size:14px;margin-bottom:8px;color:#eaf1f8;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .matrix-link:hover td{background:var(--rowh)}
+  h3{font-size:14px;margin-bottom:8px;color:var(--h3);display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
   h3 .tip{color:var(--mu);font-weight:400;font-size:11.5px}
   #modal{position:fixed;inset:0;background:rgba(5,8,12,.88);display:none;z-index:9}
   #modal.open{display:flex;align-items:center;justify-content:center;flex-direction:column}
@@ -150,6 +201,15 @@
     /* 窄屏: .mono 元信息 nowrap+不可收缩会撑破行(实测 387>329→body 横滚 20px), 改可换行右对齐 */
     .feed-item{flex-wrap:wrap}
     .feed-item .mono{white-space:normal;text-align:right;max-width:100%}}
+  /* D1: 矩阵 7 列在 701-1000px 区间必然溢出主栏且无滚动容器(整页横滚) — 表格自带滚动 */
+  #matrixWrap{overflow-x:auto}
+  #matrixWrap table{min-width:640px}
+  /* D2: 读屏专用文本(表格 caption 等), 视觉隐藏 */
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  .xbtn{background:none;border:1px solid var(--bd);color:var(--mu);border-radius:6px;
+        padding:2px 9px;font:inherit;font-size:11px;cursor:pointer}
+  .xbtn:hover{color:var(--tx);border-color:var(--bdh)}
+  .xbtn.on{color:var(--ok);border-color:var(--onside);background:var(--panel2)}
 </style>
 </head>
 <body>
@@ -158,7 +218,7 @@
   <div class="brand">
     <svg viewBox="0 0 24 24" fill="none" stroke="#f34a87" stroke-width="1.3" stroke-linecap="round" aria-hidden="true">
       <path d="M12 8.5v7M12 8.5 5 4m7 4.5L19 4M12 15.5 5.5 20m6.5-4.5L18.5 20M3 12h18M5.5 8.5 18.5 15.5M18.5 8.5 5.5 15.5"/>
-      <circle cx="12" cy="12" r="3.1" fill="#0d1117"/>
+      <circle cx="12" cy="12" r="3.1" style="fill:var(--bg)"/>
     </svg>
     <h1>Agent-KB 观测面板<span class="sub">EVERY SEARCH, ONE WEB</span></h1>
   </div>
@@ -166,18 +226,32 @@
     <button class="on" id="vSingle">单项目</button><button id="vFed">多项目联邦</button>
   </div>
   <div class="seg" role="group" aria-label="时间窗口">
-    <button class="on" data-w="7">7天</button><button data-w="30">30天</button><button data-w="0">全部</button>
+    <button class="on" data-w="7">7天</button><button data-w="30">30天</button><button data-w="0">全部</button><button data-w="pw">上周</button>
   </div>
+  <button class="xbtn" id="thm" title="主题: 自动(跟随系统) / 浅色(截图贴白底周报) / 深色 · 选择记住在本浏览器"></button>
   <span class="conn" id="conn">连接中…</span>
 </header>
 <div id="banners"></div>
-<div id="kpi" class="card"><div class="kpi-row" id="kpis"></div></div>
+<div id="kpi" class="card" aria-live="off"><div class="kpi-row" id="kpis"></div><div id="synNote"></div></div>
+<div class="card" id="qualityCard"><h3>条目质量 <span class="tip" id="qScope">库本身的健康度(与检索面独立)</span>
+  <button class="xbtn" data-ex="quality" title="导出分库质量矩阵 CSV(索引口径, 与窗口/项目无关, 服务端会拒绝带窗口参数)">质量 CSV</button></h3>
+  <div class="kpi-row" id="qRow"></div><div id="qRepos"></div></div>
 <div class="card" id="boards"><h3>热门被消费条目 / 零命中榜
-  <span class="tip">条目标题悬停看 id · 零命中行可一键去检索流追因</span></h3>
+  <span class="tip">条目标题悬停看 id · 零命中行可一键去检索流追因</span>
+  <button class="xbtn" data-ex="zero" title="导出窗口内零命中榜 CSV(与面板同口径)">零命中 CSV</button>
+  <button class="xbtn" data-ex="consumed" title="导出窗口内热门被消费榜 CSV">热门 CSV</button></h3>
   <div class="boards2"><div><div class="colhd">▲ 热门被消费 TOP10</div><div id="hotBars"></div></div>
-  <div><div class="colhd">▼ 零命中(知识缺口)</div><div id="zeroBars"></div></div></div></div>
+  <div><div class="colhd">▼ 零命中(知识缺口)</div><div id="zeroBars"></div></div></div>
+  <div class="colhd" style="margin-top:10px">⊘ 高返回零消费 TOP10 <span class="tip" id="dwTip">消费率低的归因: 反复被检索返回却从未读过全文的条目(≥3 次) · 指向摘要性价比, 不是删除依据</span>
+    <button class="xbtn" data-ex="dead" title="导出窗口内高返回零消费榜 CSV">零消费 CSV</button></div>
+  <div id="dwBars"></div></div>
+<div class="card" id="trendCard"><h3>逐日趋势 <span class="tip">检索量(柱, 命中段着色)与耗时中位数 · 与窗口/项目同口径</span>
+  <button class="xbtn" data-ex="trend" title="导出逐日序列 CSV">趋势 CSV</button></h3>
+  <div id="trendFocus" style="display:none;font-size:11.5px;color:var(--warn);padding:2px 0 4px"></div>
+  <div id="trend" style="overflow-x:auto"></div></div>
 <div class="card" id="matrixCard" style="display:none"><h3>项目矩阵
-  <span class="tip">点击项目行 → 下钻到该项目单项目视图</span></h3><table id="matrix"></table></div>
+  <span class="tip">点击项目行 → 下钻到该项目单项目视图</span></h3>
+  <div id="matrixWrap"><table id="matrix"></table></div></div>
 <div class="card"><h3>实时命中流 <span class="tip">点击条目弹出整页回放浮层(自动重播·循环) · Enter/空格 同样可回放 · 浮层开着点另一条目=就地换回放</span></h3>
   <div class="fbar">
     <input id="fq" type="search" placeholder="过滤 query / 命中 id / 项目…" aria-label="过滤检索流" autocomplete="off">
@@ -185,9 +259,11 @@
       <button class="on" data-f="all">全部</button><button data-f="hit">命中</button>
       <button data-f="zero">零命中</button><button data-f="read">已读</button>
     </div>
+    <button class="xbtn" id="fAllProj" title="检索流快照口径: 关=本项目 · 开=跨全部项目(零命中榜跨项目聚合, 别的项目的失败只有跨项目口径才看得到)"
+      aria-pressed="false" style="display:none">跨项目</button>
     <span class="cnt" id="fcnt"></span>
   </div>
-  <div id="feed"></div><div id="fpage" hidden></div></div>
+  <div id="feed"></div><button id="fmore" class="xbtn" hidden style="margin-top:8px">加载更多</button><div id="fpage" hidden></div></div>
 </main>
 <div id="modal"><div class="head" id="modalHead"></div><svg id="spider" viewBox="0 0 960 480"></svg>
   <div id="spiderHint" style="color:var(--mu);font-size:12px;margin-top:8px">点击任意处关闭</div></div>
@@ -198,21 +274,53 @@
     <button id="rpPop" title="在新标签页整页打开">⤢ 新标签</button>
     <button id="rpClose" title="关闭回放(Esc)">✕ 关闭</button></div>
   <div id="rpStage"><iframe id="rpFrame" title="蜘蛛回放" src="about:blank"></iframe></div></div></div>
+<div id="qe" role="dialog" aria-modal="true" aria-labelledby="qeTitle"><div id="qeBox">
+  <div id="qeBar"><span id="qeTitle">条目清单</span>
+    <input id="qeFilter" placeholder="按 id/标题/标签/路径过滤" style="flex:0 0 220px;background:var(--panel2);border:1px solid var(--bd);color:var(--tx);border-radius:6px;padding:3px 8px;font-size:12px">
+    <span class="seg" role="group" aria-label="使用度筛选" id="qeUseSeg" style="flex:0 0 auto">
+      <button class="on" data-u="all">全部</button><button data-u="used">被检索过</button><button data-u="unused">零使用</button></span>
+    <button id="qeExport" title="导出当前(过滤后)清单为 CSV, 含使用度列">CSV</button>
+    <button id="qeClose" title="关闭(Esc)">✕ 关闭</button></div>
+  <div id="qeSkip" style="padding:0 14px;color:var(--bad);font-size:11.5px"></div>
+  <div id="qeBody"></div>
+  <div id="qeFoot"></div></div></div>
 <script>
 const qs=new URLSearchParams(location.search);
+// E1: token 不再常驻请求 URL——`kb web` 打开的初始 URL 带一次 ?token=…, 面板加载时
+// 立即换 HttpOnly 会话 cookie(/api/session), 再把 URL 洗掉: 浏览器历史/Referer/
+// 分享链接不再留明文。cookie 丢失(重启 serve/清缓存)时 qs.get('token') 已为空,
+// 走既有"需要访问令牌"横幅引导, 用户重跑 kb web 即可。
+const tk0=qs.get('token')||'';
+if(tk0){qs.delete('token');
+  history.replaceState(null,'',location.pathname+'?'+qs+location.hash);}
 let caller=qs.get('caller')||'';           // '' = 单项目(由 serve default_caller 决定)
 let view='single', win=7, es=null;
+// Q13: 趋势柱点选聚焦日(focusDay)。KPI/榜单/检索流/下钻聚焦到那一天, 趋势图本身
+// 仍画整窗(图里要看得见"那一天"在整窗中的位置)。'' = 未聚焦。
+let focusDay=/^\d{4}-\d{2}-\d{2}$/.test(qs.get('d')||'')?qs.get('d'):'';
+// R6: "上周"= 上一自然周(周一到周日)固定区间, 周报口径。与 win 数字并列的独立态,
+// 优先级最高(比 focusDay 更宽的区间聚焦); URL 用 pw=1 持久。
+let prevWeek=qs.get('pw')==='1';
 if(caller==='*'){view='fed';caller='';}    // URL 状态恢复(§12): caller=* → 联邦视图
 // 注意 +null===0: 参数缺失时必须先判 null, 否则 ?w 缺省被误读成"全部"(win=0)
 const wq=qs.get('w');
 if(wq!==null&&[7,30,0].includes(+wq))win=+wq;
+// A2: 过滤态(关键词/状态)同样从 URL 恢复, 与视图/窗口一起构成可分享的完整状态
+const fq0=qs.get('q'), ff0=qs.get('f');
 // 状态→URL(state-in-URL): 刷新/分享链接复现视图; push=下钻入栈(浏览器返回键=回退视图)
 function syncUrl(push){
   const p=new URLSearchParams(location.search);
   if(view==='fed')p.set('caller','*');
   else if(caller)p.set('caller',caller); else p.delete('caller');
   p.set('w',String(win));
-  history[push?'pushState':'replaceState']({view,caller,win},'',
+  // A2: 检索流过滤态与视图/窗口同一份状态, 一并入 URL(追因下钻可分享/刷新复现)
+  if(fState.q)p.set('q',fState.q); else p.delete('q');
+  if(fState.f!=='all')p.set('f',fState.f); else p.delete('f');
+  if(feedAllProj&&view==='single')p.set('ap','1'); else p.delete('ap');
+  if(focusDay)p.set('d',focusDay); else p.delete('d');   // Q13 聚焦日可分享/刷新复现
+  if(prevWeek)p.set('pw','1'); else p.delete('pw');      // R6 上一自然周
+  if(fState.page>1)p.set('p',String(fState.page)); else p.delete('p');   // R4 分页入 URL
+  history[push?'pushState':'replaceState']({view,caller,win,focusDay},'',
     location.pathname+'?'+p+location.hash);
 }
 const feedBuf={};                          // trace_id → 原始事件(动画回放数据源)
@@ -220,34 +328,423 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=n=>n==null?'—':(n>=1e4?(n/1e4).toFixed(1)+'万':n);
 
+// D3 主题三态: auto(跟随系统) → light → dark 循环。选 auto 时删 localStorage,
+// 并让 prefers-color-scheme 变化实时生效(系统切浅色, 面板跟着切)。
+const THM={auto:'◐ 自动',light:'☀ 浅色',dark:'☾ 深色'};
+let thmMode=(()=>{try{return localStorage.getItem('kb-theme')||'auto'}catch(e){return 'auto'}})();
+function applyTheme(){
+  const eff=thmMode==='auto'?(matchMedia('(prefers-color-scheme:light)').matches?'light':'dark'):thmMode;
+  document.documentElement.dataset.theme=eff;
+  const b=$('thm');
+  b.textContent=THM[thmMode];
+  b.title=`主题: ${thmMode==='auto'?'自动(跟随系统当前=浅色偏好)':'固定'+THM[thmMode]} · 点击切换 · 截图贴白底周报选浅色`;
+}
+$('thm').onclick=()=>{thmMode={auto:'light',light:'dark',dark:'auto'}[thmMode];
+  try{thmMode==='auto'?localStorage.removeItem('kb-theme'):localStorage.setItem('kb-theme',thmMode);}
+  catch(e){/* 隐私模式等存储不可用: 本次会话内仍可切换 */}
+  applyTheme();};
+matchMedia('(prefers-color-scheme:light)').addEventListener('change',()=>{if(thmMode==='auto')applyTheme();});
+applyTheme();
+
 // §37: 窗口起日必须用**本地日**——事件 ts/stale 判定/CLI --since 全取本地日粒度,
 // 而 toISOString() 是 UTC 日: +08 区每天 00:00-07:59 起日会多退一天(窗口多圈一天)。
 function sinceDate(days){if(!days)return '';const d=new Date(Date.now()-days*864e5);
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+// Q13: 聚焦日存在时, KPI/榜单/检索流/下钻都收到那一天(since=until=d); 趋势图例外,
+// 它始终画整窗——否则点完柱只剩一天, 图本身就消失了, 看不出这天在整窗里的位置。
+// R6: prevWeek(上一自然周)优先于 focusDay, 是周报固定区间(周一到周日, 闭区间)。
+function prevWeekRange(){
+  const now=new Date();const dow=(now.getDay()+6)%7;   // 周一=0 … 周日=6
+  const monday=new Date(now.getFullYear(),now.getMonth(),now.getDate()-dow-7);
+  const sunday=new Date(monday.getFullYear(),monday.getMonth(),monday.getDate()+6);
+  const f=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return [f(monday),f(sunday)];
+}
+function winQ(){
+  if(prevWeek){const [s,e]=prevWeekRange();return `since=${s}&until=${e}`;}
+  return focusDay?`since=${focusDay}&until=${focusDay}`:`since=${sinceDate(win)}`;
+}
 // 时间统一展示: trace ts 为写入机(Asia/Shanghai)本地时间串(无时区后缀), 直通格式化
 // 为 yyyy/MM/dd HH:mm:ss(补齐到秒); 查看者在其他时区也显示上海钟点, 不做本地化换算。
 const fmtTs=s=>{const m=String(s||'').match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}:\d{2})(:\d{2})?/);
   return m?`${m[1]}/${m[2]}/${m[3]} ${m[4]}${m[5]||':00'}`:'—';};
-// 统一注入 token: 任何 /api/* 请求(fetch/SSE)必须走这里, 漏注入=token 态静默 401(实测踩坑)
-function apiUrl(p){return p+(p.includes('?')?'&':'?')+'token='+encodeURIComponent(qs.get('token')||'');}
+// token 只在 /api/session 交换这一次进 URL(见上); 其余任何 /api/* 请求(含 SSE)不再
+// 带 token, 凭会话 cookie 过鉴权。无 token 启动(直接访问根路径)时连交换都不需要——
+// serve 未设 token 时 cookie 免检。
+function apiUrl(p){return p;}
+// R5: fetch 超时——本地 serve 挂起概率低, 但原文/清单加载若挂起会永停"加载中"。
+// 与 S2 的 seq 守卫互补: seq 防旧响应覆盖, 超时防请求永挂。
+async function fetchT(url,ms=15000){
+  const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);
+  try{return await fetch(url,{signal:c.signal});}
+  finally{clearTimeout(t);}
+}
+const fetchErr=e=>e&&e.name==='AbortError'?'加载超时':String(e&&e.message||e);
 function callerParam(){return view==='fed'?'caller=*':(caller?`caller=${encodeURIComponent(caller)}`:'');}
+// P0-1 剔噪自查开关: URL 加 ?raw=1 回到"含合成语料"的原始口径(判据是否误伤真实仓
+// 时可对照), 全站四个数据口统一带上这个参数, 避免同屏两口径。
+const RAW=qs.get('raw')==='1';
+// 带 raw 参数 = 原始口径, 此后所有数据口都要显式带上 &raw=1(见各 load* 的拼参)
+const RAWQ=RAW?'&raw=1':'';
 
+// 质量面只描述本 serve root 的库, 与 caller/window 无关, 加载一次即可
+let qLoaded=false;
+let qStale=false;   // Q16: 质量面加载失败标记(与 KPI 红边同思路), 点击重试
+async function loadQuality(){
+  if(qLoaded)return;
+  try{
+    const r=await fetch(apiUrl('/api/quality'));
+    if(r.status!=200)throw new Error('HTTP '+r.status);
+    const d=await r.json(); qLoaded=true; qStale=false;
+    const many=(d.repos||[]).length>1;
+    qFed=many;   // 卡面数字=合计与否, 决定下钻清单是否 repo=all(见 openQualityEntries)
+    $('qScope').textContent=`库: ${d.repo} · 共 ${d.total} 条${d.index_fresh===false?' · ⚠ 索引过期(跑 kb index)':''}`
+      +(many?` · 联邦 ${d.repos.length} 库(数字为合计)`:'');
+    $('qRow').innerHTML=[
+      ['draft', `<span title="status=draft 未终审">待审 draft</span>`, d.draft_backlog, `占比 ${d.total?(100*d.draft_backlog/d.total).toFixed(0):0}%`],
+      ['speculative', `<span title="confidence=speculative, 无实测证据, 采信前须自行验证">speculative</span>`, d.speculative, `占比 ${d.total?(100*d.speculative/d.total).toFixed(0):0}%`],
+      ['needs_scope', `<span title="带 needs-scope-review 标签, 待人工终审 scope 归属">scope 待定</span>`, d.needs_scope, '迁移存量终审'],
+      ['due', `<span title="时效到期待复核(accepted 按 updated+周期兜底)">到期复核</span>`, d.due_review??'—', 'kb stat --due-review'],
+      ['no_tags', `<span title="tags 为空: 检索面只靠 keywords, 追加'新发现'不补 tag 会搜不到(红线 #3b)">无 tags</span>`, d.no_tags, '影响去重可靠性'],
+    ].map(([k,l,v,s])=>`<button class="kpi" data-kind="${k}"${v==='—'?' disabled':''}
+      title="点开这批条目的清单(与卡上数字同一份数据)"><div class="v">${v}</div><div class="l">${l}</div><div class="s">${s}</div></button>`).join('');
+    $('qRow').querySelectorAll('button.kpi[data-kind]').forEach(b=>{
+      b.onclick=()=>openQualityEntries(b.dataset.kind);});
+    // A5: 质量联邦 = 仅 serve 显式 --repos 声明的库(凭 trace 猜不到业务仓路径,
+    // 不猜)。未配置的 caller 如实列"未覆盖", 不用本库数字冒充全局。
+    const rp=$('qRepos'); const rs=d.repos||[];
+    const unc=d.uncovered||[], err=Object.entries(d.errors||{});
+    qUncov=new Set(unc.map(s=>String(s).toLowerCase()));   // Q5: 矩阵行标"无质量面"用
+    markMatrixUncov();
+    if(rs.length<2&&!unc.length&&!err.length){rp.innerHTML='';return;}
+    let h='<div class="colhd" style="margin-top:10px">分库 · serve --repos 显式配置</div><table><tr><th>库</th><th>条目</th><th>draft</th><th>spec.</th><th>scope待定</th><th>到期复核</th><th>索引</th></tr>';
+    for(const x of rs)h+=`<tr${x.repo===d.repo?' style="font-weight:600"':''}><td>${esc(x.repo)}${x.repo===d.repo?' ·本serve':''}</td><td>${x.total}</td><td>${x.draft_backlog}</td><td>${x.speculative}</td><td>${x.needs_scope}</td><td>${x.due_review??'—'}</td><td>${x.index_fresh===false?'⚠ 过期':'ok'}</td></tr>`;
+    rp.innerHTML=h+'</table>'
+      +(unc.length?`<div class="s" style="margin-top:6px;font-size:11.5px;color:var(--mu)">未覆盖(traces 有用过, 但未配 --repos): ${unc.map(esc).join(' · ')}</div>`:'')
+      +(err.length?`<div class="s" style="margin-top:6px;font-size:11.5px;color:var(--bad)">读取失败: ${err.map(([k,v])=>esc(k)+'('+esc(v)+')').join(' · ')}</div>`:'');
+  }catch(e){
+    // Q16: 此前静默吞异常——质量面挂了与"库里真没有 draft"在 UI 上都是空, 又是一处
+    // 假空态(本轮反复在修的那类)。红边 + 文案 + 点击重试, 与 KPI 卡诚实降级一致。
+    qStale=true;qLoaded=false;
+    $('qScope').innerHTML=`<span style="color:var(--bad)">质量面加载失败(${esc(String(e.message||e))}) · 点此重试</span>`;
+  }
+}
+$('qScope').onclick=()=>{if(qStale){qStale=false;loadQuality();}};
+
+// B3: 质量卡数字下钻 —— 点开的清单与卡上数字同源(serve 端同一份 rows 缓存)。
+// 口径必须跟**卡面数字**走, 不跟视图走: /api/quality 配了 --repos 就一直是联邦合计
+// (与单项目/联邦视图无关), 所以清单也要 repo=all 跨库拼。2026-11-02 回归实测: 曾按
+// view==='fed' 判断, 单项目视图"卡上 26 / 点开 0"——正是本次要修的错位。
+const QKIND={draft:'待审 draft',speculative:'speculative',needs_scope:'scope 待定',
+  due:'到期复核',no_tags:'无 tags'};
+let qFed=false;   // 卡面数字是否为联邦合计(loadQuality 赋值)
+let qeKind=null;  // 当前弹层打开的分类(null=未开); Q2 供 bumpKpi 判断是否需静默重取
+let qeRows=[];    // 当前清单全量行(过滤在本地做, 不再打服务端)
+let qeMany=false; // 是否跨库(决定"库"列)
+let qeTrigger=null;  // Q6: 打开弹层的卡片按钮, 关闭后回焦
+async function openQualityEntries(kind){
+  qeKind=kind;$('qeFilter').value='';
+  qeUse='all';$('qeUseSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.u==='all'));
+  qeViewMode='list';qeDirty=false;qeEntryId='';qeTrail=[];
+  qeTrigger=document.activeElement;
+  renderQualityEntries(kind,false);
+  // Q6: 焦点封闭——开层后焦点进弹层(过滤框, 顺手可打字), 背景 main 置 inert:
+  // Tab 不再漏到遮罩底下。回放浮层同款(mainInert); 回放也开着时 inert 归它管,
+  // 关闭时互不越权。
+  mainInert(true);
+  $('qeFilter').focus();
+}
+// soft=true: 事件流触发的静默重取(保留滚动、不闪"加载中")。使用度每次落盘事件都在
+// 变, 弹层若只在点开时取一次, 挂着看就会与卡上数字、与实时使用度对不上(Q2)。
+let qeRSeq=0;   // S2: 软刷新/切换分类的请求竞态守卫——旧响应晚到不得覆盖新数据
+async function renderQualityEntries(kind,soft){
+  const my=++qeRSeq;
+  const cp=callerParam();
+  const url=apiUrl(`/api/quality/entries?kind=${kind}${cp?'&'+cp:''}`
+    +`&${winQ()}${qFed?'&repo=all':''}${RAWQ}`);
+  if(!soft){$('qeTitle').textContent=`${QKIND[kind]||kind} · 加载中…`;
+    $('qeBody').innerHTML='<div class="s">加载中…</div>';$('qe').classList.add('open');}
+  try{
+    const r=await fetchT(url); const d=await r.json();
+    if(my!==qeRSeq)return;             // S2: 期间又发了更新的请求, 丢弃本响应
+    if(r.status!=200){$('qeTitle').textContent=`${QKIND[kind]||kind} · 加载失败`;
+      $('qeBody').innerHTML=`<div class="s" style="color:var(--bad)">${esc(d.error||('HTTP '+r.status))}</div>`;return;}
+    qeRows=d.rows||[]; qeMany=!!(kind&&qeRows.some(x=>x.repo));
+    $('qeBody').dataset.total=d.total||0;
+    $('qeSkip').textContent=Object.keys(d.skipped||{}).length
+      ?`跳过读取失败的库: ${Object.entries(d.skipped).map(([k,v])=>k+'('+v+')').join(' · ')}`:'';
+    if(soft&&qeViewMode==='entry'){qeDirty=true;
+      $('qeBack').title='返回清单(数据已在后台更新)';return;}   // 阅读态: 只换数据, 不打断正文
+    drawQeRows(!!soft);                 // 静默刷新按锚定行保位, 首开/切分类回顶部
+    $('qeTitle').textContent=`${QKIND[kind]||kind} · ${d.total} 条${d.repo==='all'?'(联邦合计)':''}`;
+  }catch(e){
+    if(my!==qeRSeq)return;               // S2: 旧请求的异常也不得覆盖新态
+    $('qeTitle').textContent=`${QKIND[kind]||kind} · ${esc(fetchErr(e))}`;
+    $('qeBody').innerHTML=`<div class="s" style="color:var(--bad)">${esc(fetchErr(e))}</div>`;}
+}
+// Q7: 清单本地即时过滤(数据已全量给到, 200+ 行不给筛等于没给全量)。命中 id/标题/
+// 标签/路径/库任一即保留; 大小写不敏感。计数行如实显示"匹配 m / 共 n"。
+// S5: 使用度谓词筛选(chips)——子串匹配答不了"无 tags 且天天被检索的那几条",
+// 排除 0/0 长尾、或反过来只看零使用, 才够做优先审/可清理的决策。
+let qeUse='all';
+function qeFiltered(){
+  let rows=qeRows;
+  if(qeUse==='used')rows=rows.filter(x=>(x.hits||0)>0);
+  else if(qeUse==='unused')rows=rows.filter(x=>!(x.hits||0)&&!(x.reads||0));
+  const kw=($('qeFilter').value||'').trim().toLowerCase();
+  return kw?rows.filter(x=>((x.id+' '+(x.title||'')+' '+(x.tags||[]).join(' ')
+    +' '+(x.path||'')+' '+(x.repo||'')).toLowerCase().includes(kw))):rows;
+}
+// Q18 虚拟滚动: 清单是"全量给到 + 本地过滤"的, 行数可达数百(实测 546/228)。整表
+// 渲染时每次过滤/刷新都要重建几百行 DOM, 点击与输入卡到手感明显。窗口化后 DOM
+// 恒为可视区±缓冲(约 40 行), 上下垫片行撑出总高, 滚动条比例与真实条数一致。
+// 行高/表头高是估算初值; paintQeWindow 首帧实测真实渲染高度校准——滚动位置换算
+// 对 CSS 像素值硬算, 样式一挪位就漂, 实测一次后自适应。
+let QE_ROW=26, QE_HEAD=26, qeCalib=false;
+let qeView=[];      // 过滤后的行 = 渲染窗口的事实源(全量仍在 qeRows, 导出用)
+let qeWin=[-1,-1];  // 上次绘制的 [first,last), 滚动时窗口未变则整体跳过
+// R1: 弹层视图态。entry=正在读某条原文——软刷新(bumpKpi 触发)只许更新后台数据,
+// 不得重绘打断阅读; qeDirty 记下"数据已变", 回清单时自然呈现新数据与新计数。
+let qeViewMode='list', qeDirty=false, qeEntryId='';
+function qeRowHtml(x){
+  return `<tr><td class="pth">${esc(x.id)}</td>`
+    +`<td title="${esc((x.tags||[]).join(', '))}">${esc(x.title||'(无标题)')}</td>`
+    +`<td>${esc(x.status||'—')}</td><td>${esc(x.confidence||'—')}</td>`
+    +`<td class="pth">${esc(x.updated||'—')}</td>`
+    +`<td title="被返回 ${x.hits||0} 次 · 读全文 ${x.reads||0} 次${x.last_used?' · 最近 '+esc(x.last_used.slice(0,10)):''}"`
+    +` style="color:${(x.reads||0)?'var(--ok)':((x.hits||0)?'var(--warn)':'var(--mu)')}">${x.hits||0}/${x.reads||0}</td>`
+    +(qeMany?`<td>${esc(x.repo||'')}</td>`:'')
+    +(qeKind==='due'?`<td class="pth">${esc(x.review_by||'—')}</td>`:'')
+    +`<td><button class="qeOpen" data-id="${esc(x.id)}" data-repo="${esc(x.repo||'')}"`
+    +` title="查看原文">原文</button></td>`
+    +`<td class="pth" title="${esc(x.path)}">${esc(x.path||'—')}</td></tr>`;
+}
+function drawQeRows(keepScroll){
+  const body=$('qeBody');
+  const kw=($('qeFilter').value||'').trim().toLowerCase();
+  // R1 锚定行保位: 排序键含使用度, 事件一来整表会重排——死守 scrollTop 像素等于
+  // 让用户"跳"到另一条上。记住当前视口顶部行(锚)的 id, 重绘后滚回同一条;
+  // 锚消失(如 draft 被审走)才退回原像素位。
+  let anchor=null;
+  if(keepScroll){
+    anchor=qeView[Math.round((body.scrollTop-QE_HEAD)/QE_ROW)]?.id||null;
+  }
+  const keep=keepScroll?body.scrollTop:0;
+  qeView=qeFiltered();
+  const total=+$('qeBody').dataset.total||0;
+  const foot=$('qeFoot');
+  if(!qeView.length){
+    $('qeBody').innerHTML='<div class="s" style="padding:10px 0">没有匹配的条目</div>';
+    foot.innerHTML=kw&&total?`匹配 0 / 共 ${total} 条`:'';
+    qeWin=[-1,-1];return;
+  }
+  // table-layout:fixed 下显式列宽不参与"按内容计算", 窗口切换时列宽才不抖
+  // (auto 布局按当前已渲染行定宽, 滚动会看到列宽跳动)。标题列不给宽度吃满剩余。
+  const cols=[[150,'id'],[null,'标题'],[70,'状态'],[80,'置信'],[86,'更新'],
+    [60,'<th title="窗口内使用度: 被检索返回 / 被读全文">使用</th>']];
+  let head='';
+  for(const [w,t] of cols)head+=w?`<th style="width:${w}px">${t}</th>`:`<th>${t}</th>`;
+  if(qeMany)head+='<th style="width:110px">库</th>';
+  if(qeKind==='due')head+='<th style="width:80px">复核截止</th>';
+  head+='<th style="width:52px"></th><th style="width:230px">路径</th>';
+  $('qeBody').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody id="qeTb"></tbody></table>`;
+  qeWin=[-1,-1];                        // tbody 是全新的: 不重置窗口态会误判"窗口未变"而空画
+  foot.innerHTML=(kw?`匹配 ${qeView.length} / 共 ${total} 条 · `:'')
+    +`按"被返回/读全文"倒序 · 数字高=优先处理(已按当前窗口/项目口径统计)`
+    +(qeView.length>50?' · 清单窗口化渲染, 滚动即续取':'');
+  paintQeWindow();
+  // R1: 锚定行优先(重排后回到同一条), 锚不在新清单里才退回原像素位; 恢复必须在
+  // 画完垫片之后——之前内容高度只有窗口那几十行, 先设会被钳回 0。
+  let target=keep;
+  if(anchor){
+    const i=qeView.findIndex(x=>x.id===anchor);
+    if(i>=0)target=QE_HEAD+i*QE_ROW;
+  }
+  body.scrollTop=Math.max(0,Math.min(target,body.scrollHeight-body.clientHeight));
+  paintQeWindow();
+}
+// 只画可视区: 上下各留 6 行缓冲, 滚动时窗口未跨越新行则一次 DOM 都不碰。
+// 垫片行必须带一个空 td(纯 <tr style=height> 在无 cell 时不保证撑高), colspan
+// 超列数由浏览器钳到列数; padding/border 归零免得在列表中间画出横线。
+function paintQeWindow(){
+  const body=$('qeBody'),tb=$('qeTb');
+  if(!tb)return;                        // 原文视图/空态下没有 tbody, 滚动事件直接忽略
+  const n=qeView.length;
+  const first=Math.max(0,Math.floor((body.scrollTop-QE_HEAD)/QE_ROW)-6);
+  const last=Math.min(n,first+Math.ceil((body.clientHeight||420)/QE_ROW)+12);
+  if(first===qeWin[0]&&last===qeWin[1])return;
+  qeWin=[first,last];
+  const sp=h=>`<tr style="height:${h}px"><td colspan="99" style="padding:0;border:0"></td></tr>`;
+  tb.innerHTML=(first?sp(first*QE_ROW):'')
+    +qeView.slice(first,last).map(qeRowHtml).join('')
+    +(last<n?sp((n-last)*QE_ROW):'');
+  if(!qeCalib){                         // 首帧实测真实行高/表头高校准一次(防抖: 只校准一轮)
+    qeCalib=true;
+    const hh=$('qeBody').querySelector('thead tr')?.offsetHeight||QE_HEAD;
+    const rh=[...tb.rows].find(r=>!r.firstElementChild?.hasAttribute('colspan'))
+      ?.offsetHeight;
+    if((rh&&Math.abs(rh-QE_ROW)>0.5)||Math.abs(hh-QE_HEAD)>0.5){
+      QE_ROW=rh||QE_ROW;QE_HEAD=hh;
+      qeWin=[-1,-1];paintQeWindow();    // 按实测值重画一遍(垫片高度才准)
+    }
+  }
+}
+let qePaintQ=0;
+$('qeBody').addEventListener('scroll',()=>{   // rAF 合帧: 连续滚轮只画最后一帧
+  if(qePaintQ)return;
+  qePaintQ=requestAnimationFrame(()=>{qePaintQ=0;paintQeWindow();});
+});
+// 原文/回清单按钮走事件委托(挂 qeBox: 原文按钮在 qeBody, 回清单在 qeTitle):
+// 清单可达数百行, 逐行挂监听器在每次过滤重绘后都要重建; 委托只挂一次。
+$('qeBox').addEventListener('click',e=>{
+  const b=e.target.closest('button.qeOpen');
+  if(b)openEntrySource(b.dataset.id,b.dataset.repo,'list');
+  else if(e.target.closest('#qeBack'))backToQeList();
+  else if(e.target.closest('#qePrev'))backToQePrev();
+  else{const j=e.target.closest('.qeJump');
+    if(j&&j.dataset.id!==qeEntryId)openEntrySource(j.dataset.id,'','jump');}   // R8 跨库跳读
+});
+// S3: qeJump 键盘可达(§59)——Enter/空格触发跳读, 与点击同路径; 委托挂在 qeBox,
+// 只响应焦点落在 span 本身时的事件(防内部嵌套重复触发)。
+$('qeBox').addEventListener('keydown',e=>{
+  if(e.key!=='Enter'&&e.key!==' ')return;
+  const j=e.target.closest('.qeJump');
+  if(j&&e.target===j){e.preventDefault();if(j.dataset.id!==qeEntryId)openEntrySource(j.dataset.id,'','jump');}
+});
+function backToQeList(){
+  qeViewMode='list';qeEntryId='';qeTrail=[];   // 回清单 = 走读结束, 清栈
+  $('qeTitle').textContent=`${QKIND[qeKind]||qeKind} · ${$('qeBody').dataset.total} 条${qeMany?'(联邦合计)':''}`;
+  drawQeRows();   // 阅读期间若有软刷新(qeDirty), 这里自然呈现新数据(计数已同步更新)
+}
+function backToQePrev(){
+  const prev=qeTrail.pop();                    // S4: 弹栈回上一篇
+  if(prev)openEntrySource(prev,'','back');
+  else backToQeList();
+}
+$('qeFilter').oninput=()=>drawQeRows();   // 显式无参: 直接绑会把 Event 对象当 keepScroll
+$('qeUseSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  qeUse=b.dataset.u;$('qeUseSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.u===qeUse));
+  drawQeRows();});
+// Q14: 清单导出走本地行——过滤后看到什么导什么(含 hits/reads 使用度), 不必绕
+// /api/export 再算一遍(那是另一条取数路径, 迟早和弹层对不上)。
+$('qeExport').onclick=()=>{
+  const rows=qeFiltered();
+  if(!rows.length){banner('bad','当前清单为空, 无可导出');return;}
+  dl(csvOf(rows),`kb-entries-${qeKind}${qeMany?'-联邦合计':''}${winTag()}${RAW?'-raw':''}-${new Date().toISOString().slice(0,10)}.csv`);
+};
+// Q8: 点"原文"看条目正文。观测的下一步必然是"看看这条到底啥情况", 现在能在面板内
+// 直接看, 不必复制路径去编辑器找。/api/entry 经索引 id 反查路径, 不接受任意路径。
+// S2: qeSeq 竞态守卫——走读连点 A→B, A 的响应晚到会覆盖 B(标题 B 正文 A, 又一处
+// 数字与内容对不上); 每次发请求自增序号, 响应回来时序号已变即丢弃。
+// S4: qeTrail 走读回程栈——A→B→C 跳读后可"返回上一篇"退栈, 而非只能跳回清单。
+let qeSeq=0, qeTrail=[];
+async function openEntrySource(id,repo,mode){   // mode: list=从清单点 · jump=正文内跳读 · back=返回上一篇
+  if(mode==='jump'&&qeEntryId&&qeViewMode==='entry'&&qeEntryId!==id)qeTrail.push(qeEntryId);
+  else if(mode==='list')qeTrail=[];   // 走读起点: 清空回程栈
+  // 'back' 不动栈(调用方已 pop), 才能连续退回更早几篇
+  const my=++qeSeq;
+  const rp=repo?`&repo=${encodeURIComponent(repo)}`:'';   // 服务端按配名或目录标签都能解析
+  qeViewMode='entry';qeEntryId=id;
+  $('qeTitle').textContent='加载中…';$('qeBody').innerHTML='<div class="s">加载原文…</div>';
+  try{
+    const r=await fetchT(apiUrl(`/api/entry?id=${encodeURIComponent(id)}${rp}`));
+    const d=await r.json();
+    if(my!==qeSeq)return;        // S2: 期间又点了别的, 丢弃本响应
+    if(r.status!=200){$('qeTitle').textContent=`${id} · 加载失败`;
+      $('qeBody').innerHTML=`<div class="s" style="color:var(--bad)">${esc(d.error||('HTTP '+r.status))}</div>`;return;}
+    $('qeTitle').innerHTML=(qeTrail.length
+      ?`<button id="qePrev" style="background:none;border:1px solid var(--bd);color:var(--mu);border-radius:6px;padding:2px 8px;cursor:pointer;margin-right:8px">← 返回上一篇</button>`:'')
+      +`<button id="qeBack" style="background:none;border:1px solid var(--bd);color:var(--mu);border-radius:6px;padding:2px 8px;cursor:pointer;margin-right:8px">← 回清单</button>${esc(id)}`;
+    // R8: 正文/front-matter 里的 kb-id(related、引用他条)变可点 —— 顺出一条
+    // "知识走读"路径(看到 A 引用 B 直接跳 B)。不带 repo: 服务端跨库找(related
+    // 大概率不在当前库)。esc 后 id 串形态不变, 替换安全; 自链接无害。
+    // S3: span 补 tabindex+role=link 以对齐 §59(裸 onclick 无键盘可达), 键盘在
+    // qeBox 事件委托里处理。
+    const mdHtml=esc(d.markdown).replace(/kb-\d{8}-[0-9a-f]{4}\b/g,
+      m=>`<span class="qeJump" data-id="${m}" role="link" tabindex="0" title="跳到该条目(跨库)" style="color:var(--link);text-decoration:underline;cursor:pointer">${m}</span>`);
+    $('qeBody').innerHTML=`<pre style="white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.55;font-family:Consolas,monospace;color:var(--tx)">${mdHtml}</pre>`;
+  }catch(e){if(my!==qeSeq)return;   // 竞态: 旧请求的异常也不得覆盖新态
+    $('qeTitle').textContent=`${id} · ${esc(fetchErr(e))}`;
+    $('qeBody').innerHTML=`<div class="s" style="color:var(--bad)">${esc(fetchErr(e))}</div>`;}
+}
+function closeQualityEntries(){
+  $('qe').classList.remove('open');qeKind=null;
+  // Q6: 解除背景 inert 时不能踩回放浮层的态(它 center 模式也持有 inert)
+  const rpCenter=$('rp').classList.contains('open')&&$('rp').classList.contains('rp-center');
+  mainInert(rpCenter);
+  if(qeTrigger&&document.contains(qeTrigger))qeTrigger.focus();   // 回焦触发卡
+  qeTrigger=null;
+}
+$('qeClose').onclick=closeQualityEntries;
+$('qe').onclick=e=>{if(e.target===$('qe'))closeQualityEntries();};
+
+// A1: KPI/榜单此前只在 render()(切视图/窗口)时拉一次——SSE 只喂检索流, 面板挂着
+// 一整天命中率/零命中榜都不动。以"落盘事件到达"为触发去抖刷新: 1.2s 内的突发事件
+// 合并成一次 loadStats(服务端按账本签名缓存, 空闲期零额外请求)。
+// 自动刷新失败不能无声冻结数字: KPI 卡红边 + 点击重试(诚实降级, 与降级横幅同理)。
+let kpiTimer=0,kpiStale=false;
+const seenWarn=new Set();   // 自动刷新后同一 warn 每轮都会到达, 只提示一次
+function bumpKpi(){if(kpiTimer)return;
+  kpiTimer=setTimeout(()=>{kpiTimer=0;
+    // N1: 矩阵/质量卡与 KPI 同源联动——此前只刷 KPI, 同屏矩阵数字与质量计数
+    // 一整天不动, "会跳的 KPI 旁摆着冻结的矩阵"比全不刷更具误导性。
+    // 质量卡此前 qLoaded 一置永不再拉: 重置后随事件重查(serve 端按索引签名
+    // 缓存, 索引没动就是零成本命中)。
+    loadStats();
+    if(view==='fed')loadMatrix();
+    qLoaded=false;loadQuality();
+    if(qeKind)renderQualityEntries(qeKind,true);   // Q2: 弹层开着就静默跟着刷使用度
+  },1200);}
+$('kpi').onclick=()=>{if(kpiStale){kpiStale=false;loadStats();}};
 async function loadStats(){
-  const q=`${callerParam()}${callerParam()?'&':''}since=${sinceDate(win)}`;
+  const q=`${callerParam()}${callerParam()?'&':''}${winQ()}${RAWQ}`;
+  try{
   const r=await fetch(apiUrl(`/api/stats?${q}`)); if(r.status==401)return banner('bad','需要访问令牌: 用 <code>kb web</code> 打开(自动携带)或在 URL 加 <code>?token=…</code>');
   const d=await r.json(); conn(true);
   const k=d.kpi; const cold=k.cold_start;
+  // 剔噪口径已上移到 UI: 命中率分母已剔除"未扫库的空事件"(not_executed),
+  // 单列出来如实标注——剔噪是改口径不是抹事件, 用户能看到被剔的条数。
+  const ne=k.not_executed_count||0;
   $('kpis').innerHTML=[
-    [`<span title="口径: 命中数>0 的检索事件占比, 逐次计">${cold?'样本不足':'命中率'}</span>`,
+    [`<span title="口径: 命中数>0 的检索事件 ÷ 真正执行过的检索事件, 逐次计。已剔除未扫库的空事件${ne?`(本窗剔 ${ne} 条)`:''}">${cold?'样本不足':'命中率'}</span>`,
       cold?`${k.searches} 次检索`:(k.hit_rate==null?'—':(k.hit_rate*100).toFixed(1)+'%'),
-      cold?'数据<7天, 仅绝对计数':`共 ${k.searches} 次检索`],
+      cold?'数据<7天, 仅绝对计数':`共 ${k.searches} 次检索${ne?` · 剔空事件 ${ne}`:''}`],
     [`<span class="est" title="估算口径: 被消费全文字符 − 摘要返回摊额; 非精确承诺">估算节省 token ⓘ</span>`,
       '≈'+fmt(k.saved_chars_est), `未计入 ${k.saved_unknown_count} 次(老数据无字符数)`],
-    ['返回→消费率', k.consume_rate==null?'—':(k.consume_rate*100).toFixed(1)+'%',
+    [`<span title="口径: 被 kb_get 读全文的条目数 ÷ 检索返回条目总数。低值=检索到摘要后多未读全文, 需配合零命中榜判断是摘要够用还是摘要不足以判相关性">返回→消费率 ⓘ</span>`,
+      k.consume_rate==null?'—':(k.consume_rate*100).toFixed(1)+'%',
       `${k.consumed_total} 读 / ${k.returned_total} 返回`],
-    ['知识库自身开销', fmt(k.overhead_chars)+' 字','检索返回字符累计'],
+    [`<span title="口径: 全部 search 事件 returned_chars 之和, 即检索面累计吐给调用方的字符量(知识库自身的输出开销)">知识库自身开销 ⓘ</span>`,
+      fmt(k.overhead_chars)+' 字','检索返回字符累计'],
+    [`<span title="口径: search 事件 duration_ms 的 P95(第95百分位); 样本 n=${d.latency.n||0}">P95 耗时 ⓘ</span>`,
+      d.latency.p95_ms==null?'—':d.latency.p95_ms+'ms',
+      `P50 ${d.latency.p50_ms??'—'}ms · 均值 ${d.latency.avg_ms??'—'}ms · n=${d.latency.n}`],
   ].map(([l,v,s])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div><div class="s">${s}</div></div>`).join('');
-  const top=d.top_consumed.slice(0,10), zh=d.zero_hits.slice(0,5);
+  // P0-1: 合成语料(测试污染)已在 serve 读侧剔除。剔噪是改口径不是抹事件——
+  // 必须让人看到剔了多少、剔的谁, 并留 ?raw=1 回到原始口径自查判据有没有误伤。
+  // 计数用服务端给的**同 caller+窗口**口径(与卡面 KPI 严格可对账), 全账本数进
+  // title; 切口径链接必须保留 caller/w 等现有参数(否则切一次口径悄悄换个视图)。
+  const ns=d.synthetic_count||0, ntot=d.synthetic_total||0;
+  const rawHref=()=>{const p=new URLSearchParams(location.search);
+    if(RAW)p.delete('raw');else p.set('raw','1');
+    return location.pathname+'?'+p+location.hash;};
+  // Q4: 剔噪审计明细两口径都给(服务端恒按原始账本算)。raw=1 的用途就是自查误伤,
+  // 所以原始口径态把它摊开成逐 caller 的判据清单(why=max_scanned 让人一眼看出
+  // tiny-scan 有没有冤枉真实小库); 剔噪态只给汇总行, 明细进 title。
+  const det=(d.synthetic_detail||[]);
+  const detTxt=det.map(x=>`${x.caller} (${x.why}, ${x.events}条, max_scan=${x.max_scanned})`).join(' · ');
+  // Q17: 冷启动(KPI 已写着"样本不足/数据<7天")与新用户首屏同时甩出"已剔除 157 条
+  // 合成事件", 两句互相拆台。冷启动态退让成一行极简标注, caller 明细进 title,
+  // 想看细节仍走"看原始口径"。
+  const noteMain=detTxt||(d.synthetic_callers||[]).join(', ');
+  $('synNote').innerHTML=RAW
+    ?`<div class="s" style="margin-top:8px;font-size:11.5px;color:var(--warn)">⚠ 原始口径(raw=1): 含测试合成事件, 榜单/比率仅供对照 · <a href="${esc(rawHref())}">回到剔噪口径</a>`
+      +(det.length?`<div style="margin-top:4px;color:var(--mu)">若下面某行看着像真实仓(tiny-scan 且 max_scan 接近 2), 就是判据误伤, 需回 CLI 调判据: ${esc(detTxt)}</div>`:'')
+      +`</div>`
+    :(ns?`<div class="s" style="margin-top:8px;font-size:11.5px;color:var(--mu)" title="全账本累计剔除 ${ntot} 条${detTxt?'：'+detTxt:''}">已剔除测试合成事件 ${ns} 条${cold?'':`(${esc(noteMain)})`} · <a href="${esc(rawHref())}">看原始口径</a></div>`:'');
+  // A4: 零命中榜用满服务端给的 10 条(此前 slice(0,5)): TOP5 恰好全"已消化"时,
+  // 榜单一片绿反而把第 6-10 名的真缺口藏起来——正是 FR-3.5 补库回路要抓的东西。
+  const top=d.top_consumed.slice(0,10), zh=d.zero_hits.slice(0,10);
   const mx=Math.max(1,...top.map(t=>t.count));
   // C4: 悬停 title 对齐检索流口径——完整标题 · id
   $('hotBars').innerHTML=top.map(t=>
@@ -264,19 +761,58 @@ async function loadStats(){
     // M-1: 仅焦点在行本身时响应; 内部"追因→"按钮聚焦时走其原生 click, 防 Enter 双触发
     r.onkeydown=e=>{if(e.target!==r)return;
       if(e.key==='Enter'||e.key===' '){e.preventDefault();drillTo(r.dataset.zq);}};});
-  (d.warns||[]).forEach(w=>banner('',`trace 文件告警: ${esc(w)}`));
+  // A6: 高返回零消费——消费率是个总百分比, 低在哪些条目上此前无从下手。
+  // 条形用 warn 色(不是 bad): 零消费≠条目有害, 摘要可能就够 agent 决策。
+  const dw=d.dead_weight||[];
+  const mdw=Math.max(1,...dw.map(t=>t.returned));
+  $('dwBars').innerHTML=dw.map(t=>
+    `<div class="bar"><span title="${esc(t.title?t.title+' · '+t.id:t.id)}">${esc(t.title||t.id)}</span><div class="track"><div class="fill" style="width:${100*t.returned/mdw}%;background:linear-gradient(90deg,var(--warn),var(--dwfill))"></div></div><span>${t.returned} 次未读</span></div>`
+  ).join('')||'<div style="color:var(--mu);font-size:12px;padding:8px 0">窗口内没有"≥3 次返回却零消费"的条目</div>';
+  (d.warns||[]).forEach(w=>{if(!seenWarn.has(w)){seenWarn.add(w);banner('',`trace 文件告警: ${esc(w)}`);}});
+  kpiStale=false;$('kpi').classList.remove('stale');
+  }catch(e){   // A1: 自动刷新失败不能无声冻结数字——红边标记 + 点击重试
+    kpiStale=true;$('kpi').classList.add('stale');
+    $('kpi').title='指标刷新失败: '+(e&&e.message||e)+' — 点击重试';}
 }
-// 追因落空兜底: 零命中榜聚合整个窗口; feed 现已一次拉 500 条, 直接过滤即可命中
+// 追因落空兜底(旧注释断言"榜上的失败必在快照内"不成立): 榜单跨全部 caller 聚合,
+// 而单项目视图 feed 只含本项目记录——别的项目的零命中点"追因"必然为空(2026-11-02
+// 实测)。修法: 检索流加"跨项目"口径开关(caller=all: 不过滤 caller 但仍是单项目
+// 视图, 展示行自带项目列), 追因时自动打开; 再点一下回到本项目口径。
+let feedAllProj=qs.get('ap')==='1';
+function syncProjBtn(){const b=$('fAllProj');
+  b.classList.toggle('on',feedAllProj);b.setAttribute('aria-pressed',String(feedAllProj));}
+$('fAllProj').onclick=()=>{feedAllProj=!feedAllProj;syncProjBtn();loadFeed();syncUrlSoon();};
 function drillTo(q){
-  $('fq').value=q;fState.q=q;fState.f='zero';syncFseg();applyFilter();
+  $('fq').value=q;fState.q=q;fState.f='zero';syncFseg();
+  if(view==='single'&&!feedAllProj){feedAllProj=true;syncProjBtn();}
+  loadFeed();syncUrlSoon();
   $('feed').scrollIntoView({behavior:'smooth',block:'center'});
 }
 async function loadMatrix(){
   // 统计列随窗口(同屏 KPI 同口径, §29); 活跃性/掉线检测由服务端保持全量语义
-  const r=await fetch(apiUrl(`/api/callers?since=${sinceDate(win)}`));if(r.status==401)return;const rows=await r.json();
+  const r=await fetch(apiUrl(`/api/callers?${winQ()}${RAWQ}`));if(r.status==401)return;const rows=await r.json();
+  renderMatrix(rows);markMatrixUncov();
+}
+// Q5: traces 出现过但没配 --repos 的 caller 没有质量面可下钻, 此前只在折叠的
+// 质量卡里列一行——矩阵看客根本注意不到, 会把检索面当全貌。矩阵行直接挂角标。
+let qUncov=new Set();
+function markMatrixUncov(){
+  $('matrix').querySelectorAll('tr.matrix-link').forEach(tr=>{
+    const c=(tr.dataset.caller||'').toLowerCase();
+    const td=tr.cells[0];if(!td)return;
+    const had=td.querySelector('span.uncov');
+    if(qUncov.has(c)&&!had)td.insertAdjacentHTML('beforeend',
+      ` <span class="uncov" style="color:var(--warn);font-size:11px" title="traces 里有它的检索记录, 但没配 --repos: 没有条目质量面可下钻。矩阵只反映检索面, 别把它当全貌">无质量面</span>`);
+    if(!qUncov.has(c)&&had)had.remove();
+  });
+}
+function renderMatrix(rows){
+  const badge=c=>qUncov.has(String(c).toLowerCase())
+    ?` <span class="uncov" style="color:var(--warn);font-size:11px" title="traces 里有它的检索记录, 但没配 --repos: 没有条目质量面可下钻。矩阵只反映检索面, 别把它当全貌">无质量面</span>`
+    :'';
   // FR-5.2 按源堆叠: 项目层绿/通用层橙/外接源粉(PRD 指定 #F34A87), 与蜘蛛四色同源
   const SRC=[['project','项目层','#42D6A4'],['stack','通用层','#F28A76']];
-  $('matrix').innerHTML='<tr><th>项目</th><th>检索数</th><th>命中率</th><th>按源堆叠</th><th>外接源</th><th>最近活跃</th><th>状态</th></tr>'+
+  $('matrix').innerHTML='<caption class="sr-only">项目矩阵: 各项目在窗口内的检索数、命中率、来源构成、活跃与掉线状态; 点击行下钻</caption><tr><th scope="col">项目</th><th scope="col">检索数</th><th scope="col">命中率</th><th scope="col">按源堆叠</th><th scope="col">外接源</th><th scope="col">最近活跃</th><th scope="col">状态</th></tr>'+
    rows.map(x=>{
     const bs=x.by_source||{};const total=Object.values(bs).reduce((a,b)=>a+b,0)||1;
     const srcs=[...SRC,...Object.keys(bs).filter(k=>k.startsWith('ext:')).map(k=>[k,k.slice(4),
@@ -290,9 +826,9 @@ async function loadMatrix(){
     const health=(x.ext||[]).map(e=>`<span title="${esc(e.error||'ok')}" style="color:${e.ok?'var(--ok,#42D6A4)':'var(--bad)'}">●${esc(e.source)}</span>`).join(' ')||'—';
     // §59(D-50): 行级 onclick 交互必须同步 tabindex+role+键盘处理——此前矩阵行是
     // 全屏唯一"仅鼠标可操作"的交互(同页零命中榜行/检索流条目均有), 键盘 Tab 直接跳过。
-    return `<tr class="${x.stale?'stale':''} matrix-link" data-caller="${esc(x.caller)}" tabindex="0" role="button" aria-label="下钻到项目 ${esc(x.caller)} 单项目视图" title="点击下钻到 ${esc(x.caller)} 单项目视图"><td>${esc(x.caller)}</td><td>${x.searches}</td>
+    return `<tr class="${x.stale?'stale':''} matrix-link" data-caller="${esc(x.caller)}" tabindex="0" role="button" aria-label="下钻到项目 ${esc(x.caller)} 单项目视图" title="点击下钻到 ${esc(x.caller)} 单项目视图"><td>${esc(x.caller)}${badge(x.caller)}</td><td>${x.searches}</td>
     <td>${x.hit_rate==null?'—':(x.hit_rate*100).toFixed(1)+'%'}</td>
-    <td><div style="display:flex;height:10px;min-width:90px;border-radius:3px;overflow:hidden;background:#ffffff14">${bar}</div></td>
+    <td><div style="display:flex;height:10px;min-width:90px;border-radius:3px;overflow:hidden;background:var(--track)">${bar}</div></td>
     <td>${health}</td><td>${fmtTs(x.last_ts)}</td>
     <td>${x.stale?'⚠ trace 掉线(>14d)':'活跃'}</td></tr>`;}).join('');
   $('matrix').querySelectorAll('.matrix-link').forEach(tr=>{
@@ -305,7 +841,10 @@ async function loadMatrix(){
 // ---- 检索流: 数组真源 + 过滤 + 客户端分页(50/页) ----
 // feedArr 新→旧; SSE search 事件 unshift, get(已读)事件并入对应 trace 的 read。
 const PAGE=50;
-const fState={q:'',f:'all',page:1,n:0};
+const FVALID=['all','hit','zero','read'];
+const fState={q:fq0||'',f:FVALID.includes(ff0)?ff0:'all',page:1,n:0};
+let feedTotal=0;   // 窗口内真实总数(含被 limit 截断部分); feedArr.length 只是已载入部分
+$('fq').value=fState.q;   // A2: 从 URL 恢复的过滤态要落到输入框与状态按钮(否则"看着无过滤, 数据却被滤")
 let feedArr=[];
 const hitTitle=(raw,id)=>{const t=(raw.details&&raw.details[id]&&raw.details[id].title)||'';
   return t.replace(/^source:\/\/\S+\/\s*/,'').trim();};
@@ -315,7 +854,9 @@ const feedLabel=(raw,id)=>{const t=hitTitle(raw,id);
 function feedMatch(ev){
   if(fState.f==='hit')return (ev.returned||[]).length>0;
   if(fState.f==='zero')return !(ev.returned||[]).length;
-  if(fState.f==='read')return (ev.read||[]).length>0;
+  // "已读" = 返回过且被读: 零命中事件也可能因 latest_search_id 回退挂上 get,
+  // 只判 read 非空会把零命中行混进"已读"(2026-11-02 走查实测 34 行里混 1 条)。
+  if(fState.f==='read')return (ev.returned||[]).length>0 && (ev.read||[]).length>0;
   return true;}
 function feedHay(ev){return String(ev.query||'')+' '+(ev.returned||[]).join(' ')
   +' '+(ev.returned||[]).map(id=>hitTitle(ev,id)).join(' ')+' '+(ev.caller_repo||'');}
@@ -345,7 +886,17 @@ function renderFeed(){
   if(fState.page>pages)fState.page=pages;
   list.slice((fState.page-1)*PAGE,fState.page*PAGE)
     .forEach(ev=>f.appendChild(itemDom(ev,!!ev._new)));
-  $('fcnt').textContent=feedArr.length?`${list.length}/${feedArr.length}`:'';
+  // 计数如实分层: 过滤后 / 已载入, 截断时再补"窗口共 N"(A2 前的老问题: 7 天与全时
+  // 都被 500 截断, 切窗口计数纹丝不动 → 窗口口径改动在 UI 上不可见)
+  const trunc=feedTotal>feedArr.length?` · 窗口共 ${feedTotal}`:'';
+  $('fcnt').textContent=feedArr.length?`${list.length}/${feedArr.length}${trunc}`:'';
+  // S1: 还有更早的没载入 → 显式"加载更多"(游标追加), 不再让 500 条封顶"看一半"。
+  // 过滤/分页仍对已载入部分; 加载更多后整段重排分页。
+  const more=$('fmore');
+  if(feedTotal>feedArr.length){
+    more.hidden=false;
+    more.textContent=`加载更多(已载入 ${feedArr.length} / 共 ${feedTotal})`;
+  } else more.hidden=true;
   const pg=$('fpage');
   if(pages>1){pg.hidden=false;
     // 页码窗口≤5(当前页尽量居中), 首尾+滑动省略号
@@ -359,30 +910,44 @@ function renderFeed(){
     pg.innerHTML=h;}
   else pg.hidden=true;
   if(!list.length){const e=document.createElement('div');e.className='empty';
-    // §22: 零数据空态区分"下钻项目没有"与"全局还没有"(feed 不受窗口过滤, 窗口不列入文案)
+    // §22: 零数据空态区分"下钻项目没有"与"全局还没有"; A2 后 feed 快照随窗口过滤,
+    // 空态须报出当前窗口, 用户才知道该切窗口而不是以为"从没发生过"
+    const wtxt=win?`当前窗口(近 ${win} 天)`: '全部历史';
     e.innerHTML=feedArr.length
-      ?`没有匹配的条目 — 试试更短的关键词或切回<b>全部</b>。${feedArr.length>=500?'<br>(仅载入最近 500 条, 更早记录请缩小时间窗口)':''}`
-      :(caller?`项目 <b>${esc(caller)}</b> 还没有检索记录。<br>返回<b>多项目联邦</b>看全局; 或在业务仓跑一次 <b>kb search</b>, ≤2s 内会实时出现在这里。`
-               :'还没有检索记录。<br>在业务仓跑一次 <b>kb search</b>(或让 Agent 走 MCP 检索), ≤2s 内会实时出现在这里。');
+      ?`没有匹配的条目 — 试试更短的关键词或切回<b>全部</b>。${feedTotal>feedArr.length?`<br>(本窗口共 ${feedTotal} 条, 仅载入最近 ${feedArr.length} 条 — 榜上更早的零命中可能未被载入${win?', 可切<b>全部</b>窗口再看':''})`:''}`
+      :(caller?`项目 <b>${esc(caller)}</b> 在${wtxt}内还没有检索记录。<br>返回<b>多项目联邦</b>看全局、切更大时间窗口, 或在业务仓跑一次 <b>kb search</b>, ≤2s 内会实时出现在这里。`
+               :`${wtxt}内还没有检索记录。<br>可切更大时间窗口, 或在业务仓跑一次 <b>kb search</b>(或让 Agent 走 MCP 检索), ≤2s 内会实时出现在这里。`);
     f.appendChild(e);}
 }
 function onEvent(ev,isGet){           // SSE 入口: 并入真源; 仅第 1 页重渲染(不打断阅读旧页)
+  bumpKpi();                          // A1: 有事件落盘 → KPI/榜单去抖重算(命中数/零命中榜会变)
+  // Q13: 聚焦日模式下"新事件必在窗口内"不成立(新事件永远落在今天, 聚焦日多半不是
+  // 今天)——按事件 ts 的本地日前缀过滤, 与快照口径一致。ts 前 10 位即写入机本地日。
+  if(focusDay&&String(ev.ts||'').slice(0,10)!==focusDay)return;
   if(isGet){const t=feedArr.find(x=>x.trace_id===ev.trace_id);
     if(t){t.read=t.read||[];if(ev.id&&!t.read.includes(ev.id))t.read.push(ev.id);
       if(fState.page===1)renderFeed();}
     return;}
-  ev._new=1;feedArr.unshift(ev);feedBuf[ev.trace_id]=ev;
+  ev._new=1;feedArr.unshift(ev);feedBuf[ev.trace_id]=ev;feedTotal++;   // 新事件必在当前窗口内
   if(fState.page===1)renderFeed();
-  else $('fcnt').textContent=`${fState.n+1}/${feedArr.length}`;
+  else $('fcnt').textContent=`${fState.n+1}/${feedArr.length}`
+       + (feedTotal>feedArr.length?` · 窗口共 ${feedTotal}`:'');
 }
+let esCaller=null;   // N4: SSE 过滤只依赖 caller——此前 render() 无条件重连,
+                     // 切时间窗口白白断一次(控制台每次留 ERR_ABORTED 噪声)
+let esDown=false;    // C2: 断连期间落盘的事件服务端不补推(无 Last-Event-ID 语义),
+                     // 重连后 feed 会静默缺一段——重连成功即重拉快照回填
 function stream(){
-  if(es)es.close();
   const c=view==='fed'?'*':caller;
+  if(es&&esCaller===c)return;          // caller 未变(如仅切窗口): 保持现有连接
+  esCaller=c;
+  if(es)es.close();
   es=new EventSource(apiUrl(`/api/stream?caller=${encodeURIComponent(c||'')}`));
   es.addEventListener('search',e=>onEvent(JSON.parse(e.data)));
   es.addEventListener('get',e=>onEvent(JSON.parse(e.data),true));
-  es.onopen=()=>{conn(true);};   // 重连成功即恢复指示器(否则断连后永久显"重试中"误导)
-  es.onerror=()=>{conn(false);};
+  es.onopen=()=>{conn(true);
+    if(esDown){esDown=false;loadFeed();}};   // 断后复连: 回填断连窗口内漏掉的事件
+  es.onerror=()=>{conn(false);esDown=true;};
 }
 // C3: 请求期间画 3 行骨架条(CSS 动画), 数据到达后 renderFeed 整体替换
 function feedSkeleton(){const f=$('feed');f.innerHTML='';
@@ -391,29 +956,46 @@ function feedSkeleton(){const f=$('feed');f.innerHTML='';
 // I-1: 骨架条必须在 401/网络异常/解析失败路径清掉, 否则无限动画比空白更误导
 function feedFail(msg){$('feed').innerHTML=
   `<div style="color:var(--mu);font-size:12px;padding:8px 0">${msg}</div>`;}
-async function loadFeed(){          // 一次拉足(百条级), 分页纯前端; 追因无需再扩查
-  feedSkeleton();
+async function loadFeed(append){          // 一次拉足(百条级), 分页纯前端; 追因无需再扩查
+  if(!append)feedSkeleton();
+  const offset=append?feedArr.length:0;    // S1: 加载更多=按已载入条数游标追加
   let rows;
+  // A2: 快照跟随时间窗口(与同屏 KPI 同口径)。SSE 只推写入即时的事件, 天然在窗口内,
+  // 故增量无需二次过滤; 窗口切换由 render()→loadFeed() 重新拉取。
+  const cp=(view==='single'&&feedAllProj)?'caller=all':callerParam();
+  const wq2=winQ();
   try{
-    const r=await fetch(apiUrl(`/api/feed?${callerParam()}${callerParam()?'&':''}limit=500`));
+    const r=await fetch(apiUrl(`/api/feed?${cp}${cp?'&':''}${wq2}&limit=500&offset=${offset}${RAWQ}`));
     if(r.status==401){   // token 缺失/中途失效: 换静态提示, 401 横幅仍由 loadStats 统一出
       feedFail('需要访问令牌: 用 <code>kb web</code> 打开(自动携带)或在 URL 加 <code>?token=…</code>');
       return;}
     rows=await r.json();
+    // 窗口内真实总数走 X-Total-Count: body 被 limit 截断后长度≠总数, 面板得靠它
+    // 区分"窗口里就这么多"与"还有更早的没载入"(2026-11-02 实测两者都显 500)
+    const t=parseInt(r.headers.get('X-Total-Count'));
+    feedTotal=Number.isFinite(t)?t:rows.length;
   }catch(e){feedFail('检索流加载失败: '+esc(String(e&&e.message||e)));return;}
-  feedArr=rows;feedArr.forEach(x=>feedBuf[x.trace_id]=x);   // API 已是新→旧, 直存(API 序变须同步改这里)
-  fState.page=1;renderFeed();
+  feedArr=append?feedArr.concat(rows):rows;
+  feedArr.forEach(x=>feedBuf[x.trace_id]=x);   // API 已是新→旧, 直存(API 序变须同步改这里)
+  fState.page=append?fState.page:1;renderFeed();
 }
-function applyFilter(){fState.page=1;renderFeed();}   // 过滤条件变化: 回到第 1 页重切
+// 过滤条件变化: 回到第 1 页重切, 并把过滤态写回 URL(replace, 不炸历史记录栈)
+// 连续输入防抖 300ms: 逐字符 replaceState 会被 Safari 限流抛错, 也无必要
+let urlTimer=0;
+function syncUrlSoon(){clearTimeout(urlTimer);urlTimer=setTimeout(()=>syncUrl(),300);}
+function applyFilter(){fState.page=1;renderFeed();syncUrlSoon();}
 $('fq').oninput=e=>{fState.q=e.target.value;applyFilter();};
 $('fseg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
   fState.f=b.dataset.f;syncFseg();applyFilter();});
 $('fpage').addEventListener('click',e=>{const b=e.target.closest('button[data-p]');if(!b||b.disabled)return;
   fState.page=+b.dataset.p;renderFeed();
   $('feed').scrollIntoView({behavior:'smooth',block:'start'});});
+$('fmore').onclick=()=>loadFeed(true);   // S1: 游标追加, 加载更多更早的事件
 function syncFseg(){$('fseg').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.f===fState.f));}
-function banner(cls,html){const b=document.createElement('div');b.className='banner '+cls;b.innerHTML=html;
-  $('banners').prepend(b);setTimeout(()=>b.remove(),12000);}
+function banner(cls,html,sticky){const b=document.createElement('div');b.className='banner '+cls;b.innerHTML=html;
+  // sticky: 常驻状态提示(spider 降级等), 不进 12s 自动清理队列——瞬时告警会自愈,
+  // 状态提示不会, 让它消失等于把降级藏起来(2026-11-02 走查实测 12s 后横幅即不可见)。
+  $('banners').prepend(b);if(!sticky)setTimeout(()=>b.remove(),12000);}
 // ---- 蜘蛛回放动画(FR-2.3 P1 视觉层): 原生 SVG, trace 数据现算, 不依赖外件 ----
 function normSearch(ev){            // SSE 原始事件 与 feed 快照 → 统一动画数据
   const returned=ev.returned||[];let details=ev.details||null;
@@ -588,6 +1170,55 @@ function playSpider(ev){              // SVG 弹层回放: 桥不就绪/失败�
   if(reduced)frame(endT+.1);else spiderRaf=requestAnimationFrame(()=>frame((performance.now()-t0)/1000));
   $('modal').classList.add('open');
 }
+async function loadTrend(){
+  // B1 趋势: 逐日检索量(命中段着色) + 耗时中位数, 与窗口/项目同口径。
+  // 面板此前全是窗口聚合快照——"命中率变好变坏"这类问题快照答不了。
+  const box=$('trend');
+  try{
+    const r=await fetch(apiUrl(`/api/trend?${callerParam()}${callerParam()?'&':''}since=${sinceDate(win)}${RAWQ}`));
+    if(r.status!=200)return;
+    const d=await r.json();
+    const days=(d.days||[]).slice(-30);
+    if(days.length<2){box.innerHTML=
+      '<div style="color:var(--mu);font-size:12px;padding:6px 0">窗口内数据不足 2 天, 趋势暂不绘制</div>';return;}
+    const mx=Math.max(1,...days.map(x=>x.searches));
+    const med=days.map(x=>x.median_ms).filter(v=>v!=null);
+    const p95s=days.map(x=>x.p95_ms).filter(v=>v!=null);
+    const mxm=Math.max(1,...med,...p95s);   // R7: 中位与 P95 共用一把标尺才能同读
+    // Q13: 柱可点=把整块面板聚焦到那一天(KPI/榜单/检索流/下钻同收), 再点同柱取消。
+    // 图本身仍画整窗, 聚焦柱描边高亮——不然点完只剩一天, 趋势失去意义。
+    // R7: 顶部 16px 标尺区画两条横线 —— 蓝=中位、橙=P95。此前只有中位数,
+    // "某天毛刺"恰恰是 P95 恶化而中位数纹丝不动的形态, 会被完全抹平。
+    box.innerHTML='<div style="display:flex;align-items:flex-end;gap:3px;min-height:112px;padding:6px 0">'
+      +days.map(x=>{
+        const h=Math.max(2,Math.round(64*x.searches/mx));
+        const hf=x.searches?Math.round(h*x.hits/x.searches):0;
+        const on=x.day===focusDay;
+        const mk=`<div style="position:relative;width:100%;height:16px">`
+          +(x.median_ms!=null?`<div title="中位耗时 ${x.median_ms}ms" style="position:absolute;left:0;right:0;bottom:${(13*x.median_ms/mxm).toFixed(1)}px;height:2px;background:var(--link);border-radius:1px"></div>`:'')
+          +(x.p95_ms!=null?`<div title="P95 耗时 ${x.p95_ms}ms" style="position:absolute;left:0;right:0;bottom:${(13*x.p95_ms/mxm).toFixed(1)}px;height:2px;background:var(--warn);border-radius:1px"></div>`:'')
+          +`</div>`;
+        return `<div class="tday" data-day="${x.day}" role="button" tabindex="0"
+          aria-pressed="${on}" style="flex:1;min-width:12px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;padding:2px 1px;border-radius:4px;outline:none${on?';background:var(--panel2);box-shadow:inset 0 0 0 1px var(--ac)':''}"
+          title="${x.day} · ${x.searches} 次检索 · 命中 ${x.hits}${x.median_ms==null?'':` · 中位 ${x.median_ms}ms`}${x.p95_ms==null?'':` · P95 ${x.p95_ms}ms`}${on?' · 已聚焦, 点击取消':' · 点击聚焦这一天'}">
+          ${mk}<div style="width:100%;height:${h}px;display:flex;flex-direction:column;justify-content:flex-end">
+          <div style="width:100%;height:${h-hf}px;background:var(--trendoff)"></div>
+          <div style="width:100%;height:${hf}px;background:var(--ok)"></div></div>
+          <div style="font:9px Consolas,monospace;color:${on?'var(--ac)':'var(--mu)'}">${x.day.slice(5)}</div></div>`;})
+      .join('')+'</div>'
+      +(p95s.length?'<div class="s" style="font-size:11px;color:var(--mu)">顶部标尺: <span style="color:var(--link)">━</span> 中位耗时 · <span style="color:var(--warn)">━</span> P95 耗时(共用标尺, 悬停柱看精确值)</div>':'');
+    box.querySelectorAll('.tday').forEach(el=>{
+      const go=()=>{focusDay=(focusDay===el.dataset.day?'':el.dataset.day);render(true);};
+      el.onclick=go;
+      el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}};});
+    const tf=$('trendFocus');
+    if(focusDay){tf.style.display='';
+      tf.innerHTML=`已聚焦 <b>${esc(focusDay)}</b>(KPI/榜单/检索流/质量下钻只统计这一天, 趋势图仍为整窗)`
+        +` · <a href="#" id="tfClr">清除聚焦</a>`;
+      $('tfClr').onclick=e=>{e.preventDefault();focusDay='';render(true);};}
+    else tf.style.display='none';
+  }catch(e){/* 趋势失败不整卡报错, 保留上次曲线 */}
+}
 function conn(ok){$('conn').textContent=ok?'● 已连接':'● 断连(重试中)';
   $('conn').classList.toggle('bad',!ok);}
 // C1: 窗口按钮 tooltip 显示实际起始日期(复用 sinceDate), 每次 render 随窗口刷新
@@ -596,14 +1227,63 @@ function render(push){
   $('vSingle').classList.toggle('on',view==='single');
   $('vFed').classList.toggle('on',view==='fed');
   $('matrixCard').style.display=view==='fed'?'block':'none';
+  // 跨项目开关只在单项目视图有意义(联邦本就全 caller); URL 恢复的态同步按钮
+  $('fAllProj').style.display=view==='single'?'':'none';
+  if(view!=='single')feedAllProj=false;
+  syncProjBtn();
+  syncFseg();   // A2: URL 恢复的过滤按钮态与 fState 对齐
   document.querySelectorAll('[data-w]').forEach(c=>{
-    c.classList.toggle('on',+c.dataset.w===win);c.title=winTitle(+c.dataset.w);});
+    const on=c.dataset.w==='pw'?prevWeek:(+c.dataset.w===win);
+    c.classList.toggle('on',on);
+    c.title=c.dataset.w==='pw'?'上一自然周(周一到周日, 周报口径)':winTitle(+c.dataset.w);});
   syncUrl(push);
-  loadStats(); loadFeed(); stream(); if(view==='fed')loadMatrix();
+  loadStats(); loadQuality(); loadFeed(); loadTrend(); stream(); if(view==='fed')loadMatrix();
+}
+document.querySelectorAll('[data-ex]').forEach(b=>b.onclick=()=>exportCsv(b.dataset.ex));
+// csvOf/dl 供两处: 榜单导出(打 /api/export)与弹层清单导出(本地行, 所见即所导)。
+function csvOf(rows){
+  const cols=[...new Set(rows.flatMap(o=>Object.keys(o)))].filter(c=>c!=='layers');
+  const cell=v=>{let s=v==null?'':String(typeof v==='object'?JSON.stringify(v):v);
+    // R2 公式注入: 零命中榜的 query 来自 agent 输入, 以 = + - @ 开头的值在 Excel
+    // 里会被当公式执行(=HYPERLINK 钓鱼是经典手法), 前缀补 ' 强制按文本处理。
+    if(/^[=+\-@\t\r]/.test(s))s="'"+s;
+    return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+  return '\ufeff'+[cols.join(','),
+    ...rows.map(o=>cols.map(c=>cell(o[c])).join(','))].join('\n');
+}
+function dl(csv,name){const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download=name;a.click();URL.revokeObjectURL(a.href);}
+function winTag(){return prevWeek?'-上一自然周'
+  :(focusDay?`-${focusDay}单日`
+  :(win?`-${sinceDate(win)}起${win}天`:'-全量'));}
+async function exportCsv(kind){
+  // B4 导出: 面板显示什么就导出什么(同 /api 实现出口), 浏览器端拼 CSV(BOM 供
+  // Excel 认 utf-8)。周报场景此前只能截图。
+  // Q3: quality 是索引口径, 服务端会拒绝带 caller/since(参数被静默丢弃=假口径导出,
+  // §58 同族), 这里也不能拼。trend 同理: 聚焦日下图表仍画整窗, 导出跟图不跟聚焦。
+  const idxScoped=kind==='quality';
+  const wq=kind==='trend'?`since=${sinceDate(win)}`:winQ();
+  const q=idxScoped?`kind=${kind}${RAWQ}`
+    :`${callerParam()}${callerParam()?'&':''}${wq}&kind=${kind}${RAWQ}`;
+  try{
+    const r=await fetch(apiUrl('/api/export?'+q));
+    if(r.status!=200){const e=await r.json().catch(()=>({}));
+      banner('bad',`导出失败: ${esc(e.error||('HTTP '+r.status))}`);return;}
+    const data=await r.json();
+    const rows=Array.isArray(data)?data:[data];
+    // Q9: 文件名带数据窗口——一周后桌面三个同名 CSV 分不清各是哪个窗口导的。
+    // trend 跟图(整窗), 其余跟聚焦态(winTag)。
+    const tag=kind==='trend'?(win?`-${sinceDate(win)}起${win}天`:'-全量'):winTag();
+    dl(csvOf(rows),`kb-${kind}${tag}${RAW?'-raw':''}-${new Date().toISOString().slice(0,10)}.csv`);
+  }catch(e){banner('bad','导出失败: '+esc(String(e&&e.message||e)));}
 }
 $('vSingle').onclick=()=>{view='single';render();};
 $('vFed').onclick=()=>{view='fed';render();};
-document.querySelectorAll('[data-w]').forEach(c=>c.onclick=()=>{win=+c.dataset.w;render();});
+document.querySelectorAll('[data-w]').forEach(c=>c.onclick=()=>{
+  if(c.dataset.w==='pw'){prevWeek=true;focusDay='';}          // R6: 上一自然周
+  else{win=+c.dataset.w;focusDay='';prevWeek=false;}          // 切窗口=退出聚焦/上周(Q13)
+  render(true);});
 function openFeed(it){const tid=it&&(it.dataset.tid||'');const raw=it&&it.raw||feedBuf[tid];
   if(raw&&raw.kind!=='get'){spiderReady?openReplay(raw):playSpider(raw);}}
 $('feed').addEventListener('click',e=>openFeed(e.target.closest('.feed-item')));
@@ -722,8 +1402,9 @@ addEventListener('message',e=>{if(e.source!==$('rpFrame').contentWindow)return;
 // 关闭走面板头 ✕ 或 Esc, 遮罩区域的点击透到下层页面(检索流保持可点)。
 $('modal').onclick=e=>{if(e.target===$('modal')||e.target===$('modalHead'))closeSpider(),$('modal').classList.remove('open');};
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;
-  if($('modal').classList.contains('open'))closeSpider(),$('modal').classList.remove('open');
-  else if($('rp').classList.contains('open'))rpClose();});   // Esc: 先关 SVG 弹层, 再关回放浮层
+  if($('qe').classList.contains('open'))closeQualityEntries();   // B3 清单弹层最优先
+  else if($('modal').classList.contains('open'))closeSpider(),$('modal').classList.remove('open');
+  else if($('rp').classList.contains('open'))rpClose();});   // Esc: 清单 → SVG 弹层 → 回放浮层
 // 回放浮层开着且焦点不在输入框/iframe 内: ←/→ 步进上一条/下一条(焦点在 iframe 里时
 // 按键属于回放页, 父页收不到——与 Esc 同理, 按钮始终是兜底入口)。
 document.addEventListener('keydown',e=>{
@@ -740,15 +1421,26 @@ document.addEventListener('keydown',e=>{
 (async()=>{try{const h=await fetch(apiUrl('/api/health'));const d=await h.json();
   spiderReady=!!d.spider_ready;   // 桥就绪→点条目弹回放浮层; 不就绪→SVG 弹层降级
   if(!d.exists)banner('','<b>traces/ 目录不存在</b> — 观测尚未开启: 业务仓 .mcp.json 加 <code>"env":{"KB_TRACE":"1"}</code> 或重跑 <code>kb init</code>。检索本身不受影响。');
+  // spider 桥未就绪时回放降级为内置 SVG, 但浮层标题仍写"SPIDER REPLAY"——
+  // 首屏不标注, 用户无法分辨看到的是真伪回放(2026-11-02 走查实测此混淆)。
+  if(d.exists && !spiderReady)banner('','回放为<b>内置 SVG 降级版</b>(未检测到 spider 桥): 点条目弹的是内置动画, 非整页 session 回放。装 Node + 克隆 spider-home 后重启 serve 即升级。',true);
   if(qs.get('degraded'))banner('bad',`已配置团队观测服务端 <code>${esc(qs.get('serve_url')||'')}</code> 但不可达, 当前为<b>本机降级视图</b>(数据仅本机, 非团队全量)`);
 }catch(e){conn(false);}
 history.replaceState({view,caller,win},'',location.href);   // 固化初始态, 保证首条 popstate 有 state
-render();})();
-// 浏览器前进/后退: 从 state 恢复视图三元组(history 只带 state 不带 URL 参数差异时以 URL 为准)
+(async()=>{if(tk0){   // E1: 数据请求发出前完成 ticket→cookie 交换(必须串行, 并发会 401)
+  try{await fetch('/api/session?ticket='+encodeURIComponent(tk0));}catch(e){}
+}})().then(render);})();
+// 浏览器前进/后退: 从 URL 恢复完整状态(视图/窗口/过滤态)
 addEventListener('popstate',e=>{const p=new URLSearchParams(location.search);
   view=p.get('caller')==='*'?'fed':'single';
   caller=p.get('caller')&&p.get('caller')!=='*'?p.get('caller'):'';
   if([7,30,0].includes(+p.get('w')))win=+p.get('w');
+  prevWeek=p.get('pw')==='1';                          // R6 恢复上一自然周
+  focusDay=/^\d{4}-\d{2}-\d{2}$/.test(p.get('d')||'')?p.get('d'):'';
+  fState.q=p.get('q')||'';
+  const f=p.get('f');fState.f=FVALID.includes(f)?f:'all';
+  const pg=parseInt(p.get('p'));if(pg>1)fState.page=pg;   // R4 恢复分页
+  $('fq').value=fState.q;syncFseg();
   render();});
 </script>
 </body>

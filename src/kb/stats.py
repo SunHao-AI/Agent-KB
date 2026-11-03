@@ -16,6 +16,7 @@ kb serve 的 REST/SSE 全部经本模块出数; 客户端与 CLI 只做展示不
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 # _ts_key 单一事源在 trace.ts_key(第十九轮 §37 上移); 曾在此留有一份逐行相同
 # 的本地 def 遮蔽了导入(ruff F811 抓获, 第二十九轮清理)——两份"同源"实现
@@ -26,6 +27,93 @@ from .trace import ts_key as _ts_key
 def _within(ev: dict, since: str | None, until: str | None) -> bool:
     day = str(ev.get("ts", ""))[:10]
     return not ((since and day < since) or (until and day > until))
+
+
+def not_executed(ev: dict) -> bool:
+    """该 search 事件是否"检索根本没扫过库"—— 不计入命中率/零命中榜的分子分母。
+
+    2026-11-02 实测的假信号有两类形态, 共同点是没有任何条目被真正扫描过:
+    - `layers` 缺失/为空: MCP 的 limit<=0 分支(直接返回提示, 不扫库)与客户端
+      异常路径上报;
+    - 所有层 `scanned: 0`: 空仓/合成语料(历史 traces 里 105 条「vite」零命中
+      全是这种, 同期「vite」真实命中 231 次, 榜首完全是噪声)。
+
+    这类事件不是"库里没有答案", 而是"没问过库"。把它们算进零命中榜会直接指错
+    方向——FR-3.5 的补库回路会照着一个已有 231 次命中的词去补条目。命中态事件
+    (returned 非空)必然扫过库, 判定上优先放行, 避免把 schema 老数据误剔。
+    """
+    if ev.get("returned"):
+        return False
+    layers = ev.get("layers") or []
+    if not layers:
+        return True
+    return not any(int(ly.get("scanned") or 0) for ly in layers)
+
+
+def effective(searches: list[dict]) -> list[dict]:
+    """真正执行过的 search(见 not_executed); 榜单/KPI 的统一入户口。"""
+    return [s for s in searches if not not_executed(s)]
+
+
+# ---- 合成语料(测试污染)剔噪 --------------------------------------------------
+
+# pytest 用例名派生的 tmp_path 目录名: test_xxx 被 pytest 截断到 30 字符再拼序号
+# (实测 `test_cli_index_then_search_jso0` / `test_cli_missing_repo_path_err0`)。
+_TEST_CALLER = re.compile(r"^test_.+_\d\d?$")
+# 合成夹具的层规模上限: conftest.make_entry 建的仓只有 1-2 条条目。
+_SYNTH_MAX_SCAN = 2
+
+
+def synthetic_callers(searches: list[dict]) -> set[str]:
+    """判定哪些 caller 的检索事件**全部**来自测试合成语料(逐条判会误伤真实仓)。
+
+    2026-11-02 取证: traces/ 里 1311 条事件中 330 条(25%)来自 pytest——写侧红线
+    (trace.trace_enabled: 测试进程只准写 pytest 临时目录)是本轮才补上的, 而
+    traces/ 已按每日定时任务提交进 git, 历史污染无法靠"以后不写"清掉。留着的代价
+    不是"数字略脏": 高返回零消费榜两条并列榜首(各 61 次)是 conftest 合成夹具
+    `kb-20261012-aaaa`/`kb-20261014-f2f2`, 照它去"净化摘要"是纯白做功。
+
+    判据两条, 任一命中即整 caller 剔(不做逐条, 合成 caller 里没有真实事件混着):
+    1. caller 名是 pytest tmp_path 形态(铁证, 真实仓名不会长这样);
+    2. 该 caller **所有** search 的 max(layers.scanned) ≤ 2 —— 合成夹具只有 1-2 条
+       条目, 真实仓(本仓 202 / 业务仓 100~220 条)不可能长期停在 2 以下。
+       **故意用"全部"而非"存在"**: 刚接入、只有 1-2 条条目的真实仓一旦出现过一次
+       大扫描(=库里长过), 就永不被误剔。
+
+    已知误判面(可接受, 面板如实标注剔了多少): 真实仓在只有 ≤2 条条目期间的所有
+    检索会被当合成剔掉——那段数据本也无观测价值(样本 <3 时 cold_start 已拒绝出比率)。
+    `/api/stats?raw=1` 可回到含噪声原始口径自查。
+    """
+    seen: dict[str, int] = {}
+    out: set[str] = set()
+    for s in searches:
+        c = s.get("caller_repo")
+        if not isinstance(c, str) or not c:
+            continue
+        if _TEST_CALLER.match(c):
+            out.add(c)
+            continue
+        ls = s.get("layers") or []
+        mx = max((int(ly.get("scanned") or 0) for ly in ls if isinstance(ly, dict)),
+                 default=0)
+        seen[c] = max(seen.get(c, 0), mx)
+    out |= {c for c, mx in seen.items() if mx <= _SYNTH_MAX_SCAN}
+    return out
+
+
+def denoise(searches: list[dict], gets: list[dict]) -> tuple[list, list, int, set]:
+    """剔掉合成语料事件, 返回 (searches, gets, 被剔条数, 被剔 caller 集合)。
+
+    get 按同一 caller 集合一起剔: 只剔 search 会让"消费率"分母被剔而分子不剔。
+    计数含 gets(面板口径: "剔除 N 条测试事件")。
+    """
+    bad = synthetic_callers(searches)
+    if not bad:
+        return searches, gets, 0, bad
+    cs = [s for s in searches if s.get("caller_repo") not in bad]
+    cg = [g for g in gets if g.get("caller_repo") not in bad]
+    return cs, cg, (len(searches) - len(cs)) + (len(gets) - len(cg)), bad
+
 
 
 def _later(a: str, b: str) -> str:
@@ -86,10 +174,82 @@ def _consumed_ids(searches: list[dict], gets: list[dict]) -> set[str]:
     return out
 
 
+def usage_by_id(searches: list[dict], gets: list[dict]) -> dict[str, dict]:
+    """id → 使用数据(hits=被 returned 次数, reads=消费读全文次数, last=最近被读/返回 ts)。
+
+    口径与 top_consumed/dead_weight 完全一致: reads 用 _consumed_ids 同判定(被返回
+    且同 trace_id 有 ok 的 get), 只是从"取 top N"改成"按 id 全量聚合", 供 B3 质量清单
+    每行反查使用度(draft 天天被命中=优先审, 从没被检索=可缓)。hits 计所有 returned
+    出现次数(含未消费), reads 只计消费读。
+    """
+    consumed = _consumed_ids(searches, gets)
+    hits: dict[str, int] = {}
+    last: dict[str, str] = {}
+    for s in searches:
+        ts = str(s.get("ts", ""))
+        for i in s.get("returned", []):
+            if not isinstance(i, str):
+                continue
+            hits[i] = hits.get(i, 0) + 1
+            if _ts_key(ts)[0]:
+                last[i] = _later(last.get(i, ""), ts)
+    # reads 与 top_consumed.count 同一判定: g.ok 且 id 在全局消费集合内
+    reads: dict[str, int] = {}
+    for g in gets:
+        gid = g.get("id")
+        if g.get("ok") and isinstance(gid, str) and gid in consumed:
+            reads[gid] = reads.get(gid, 0) + 1
+    out: dict[str, dict] = {}
+    for i in set(hits) | set(reads):
+        out[i] = {"hits": hits.get(i, 0), "reads": reads.get(i, 0),
+                  "last": last.get(i, "")}
+    return out
+
+
+def denoise_detail(searches: list[dict], gets: list[dict]) -> list[dict]:
+    """每个被判合成 caller 的审计明细(供 raw=1 原始口径自证判据有没有误伤)。
+
+    raw=1 的唯一用途就是"看剔噪误伤没误伤", 但原始口径下 denoise 不生效、计数恒 0,
+    用户只能拿两态 KPI 相减反推。这里按判据逐 caller 给出 events / max_scanned /
+    why, 其中 tiny-scan 判据正是可能误伤真实小库的那条, 必须显式可见。
+    """
+    bad = synthetic_callers(searches)
+    if not bad:
+        return []
+    seen: dict[str, int] = {}
+    for s in searches:
+        c = s.get("caller_repo")
+        if c in bad:
+            ls = s.get("layers") or []
+            mx = max((int(ly.get("scanned") or 0) for ly in ls if isinstance(ly, dict)),
+                     default=0)
+            seen[c] = max(seen.get(c, 0), mx)
+    out = []
+    for c in sorted(bad):
+        n = (sum(1 for s in searches if s.get("caller_repo") == c)
+             + sum(1 for g in gets if g.get("caller_repo") == c))
+        mx = seen.get(c, 0)
+        named = bool(_TEST_CALLER.match(c))
+        why = []
+        if named:
+            why.append("pytest-tmp-name")
+        if mx <= _SYNTH_MAX_SCAN:
+            why.append("tiny-scan")
+        out.append({"caller": c, "events": n, "max_scanned": mx,
+                    "why": "+".join(why) or "tiny-scan"})
+    return out
+
+
 def aggregate(searches: list[dict], gets: list[dict], *,
               since: str | None = None, until: str | None = None) -> dict:
-    """FR-1.2 KPI 聚合。事件按 ts 日粒度过滤[since, until]闭区间, None 不限。"""
-    S = [s for s in searches if _within(s, since, until)]
+    """FR-1.2 KPI 聚合。事件按 ts 日粒度过滤[since, until]闭区间, None 不限。
+
+    未真正执行的 search(not_executed)不进命中率分母, 其条数单列
+    `not_executed_count` 供面板如实标注——剔噪是改口径, 不是抹事件。
+    """
+    W = [s for s in searches if _within(s, since, until)]
+    S = effective(W)
+    skipped = len(W) - len(S)
     G = [g for g in gets if _within(g, since, until)]
     n = len(S)
     hit = [s for s in S if s.get("returned")]
@@ -126,6 +286,7 @@ def aggregate(searches: list[dict], gets: list[dict], *,
     return {
         "window": {"since": since, "until": until},
         "searches": n,
+        "not_executed_count": skipped,  # 未扫库的空事件(见 not_executed), 已从分母剔除
         "hit_rate": round(len(hit) / n, 4) if n else None,
         "returned_total": returned_total,
         "consumed_total": len(consumed),
@@ -138,6 +299,25 @@ def aggregate(searches: list[dict], gets: list[dict], *,
         # 冷启动门槛(PRD 开放问题3): 连续数据 <7 天不出命中率趋势, 只出绝对计数
         "cold_start": len({str(s.get("ts", ""))[:10] for s in S}) < 7,
     }
+
+
+def latency(searches: list[dict], *, since: str | None = None,
+            until: str | None = None) -> dict:
+    """耗时聚合(P50/P95/均值/最慢): 事件级 duration_ms 此前只在逐行流水里显示,
+    检索整体变慢只能肉眼看列表, 无任何聚合口径。缺 duration_ms 的事件不计
+    (老 schema 事件不冒充 0ms)。"""
+    d = sorted(int(s["duration_ms"]) for s in searches
+               if _within(s, since, until) and isinstance(s.get("duration_ms"), (int, float)))
+    if not d:
+        return {"n": 0, "p50_ms": None, "p95_ms": None,
+                "avg_ms": None, "max_ms": None}
+
+    def pctl(x: float) -> int:
+        import math
+        return d[min(len(d) - 1, math.ceil(x / 100 * len(d)) - 1)]
+
+    return {"n": len(d), "p50_ms": pctl(50), "p95_ms": pctl(95),
+            "avg_ms": round(sum(d) / len(d)), "max_ms": d[-1]}
 
 
 def top_queries(searches: list[dict], *, limit: int = 10) -> list[dict]:
@@ -174,6 +354,43 @@ def top_consumed(searches: list[dict], gets: list[dict], *,
     return rows[:limit] if limit > 0 else []  # limit 契约同 top_queries(§58 同族)
 
 
+def dead_weight(searches: list[dict], gets: list[dict], *, limit: int = 10,
+                min_returned: int = 3) -> list[dict]:
+    """A6 高返回零消费榜: 窗口内被 returned 次数高、却从未被同 trace 读全文的条目。
+
+    消费率是单个百分比, 低在哪些条目上看不出来 —— 本榜回答"该砍谁"。口径与
+    `_consumed_ids` 完全一致(被返回 且 同 trace_id 有 ok 的 get 才算消费), 只是
+    取补集: 出现在 returned 里但不在消费集合内的条目, 按返回次数倒序。
+    min_returned 过滤只被返回过 1-2 次的长尾(噪声), 避免榜单被偶发命中刷屏。
+
+    解读边界: "零消费"不等于"条目没用"——摘要可能就够 agent 决策了(这本身是
+    kb 的设计目的: 摘要判相关性, 全文按需读)。榜单指向的是**摘要性价比**问题
+    (摘要写了却没人想读全文), 不是删除依据。
+    """
+    titles: dict[str, str] = {}
+    for s in searches:
+        for ly in s.get("layers", []):
+            for m in ly.get("matched", []):
+                if m.get("id") and m.get("title"):
+                    titles[m["id"]] = m["title"]
+    consumed = _consumed_ids(searches, gets)
+    cnt: dict[str, int] = {}
+    last: dict[str, str] = {}
+    for s in searches:
+        for i in s.get("returned", []):
+            if not isinstance(i, str) or i in consumed:
+                continue
+            cnt[i] = cnt.get(i, 0) + 1
+            ts = str(s.get("ts", ""))
+            if _ts_key(ts)[0]:
+                last[i] = _later(last.get(i, ""), ts)
+    rows = [{"id": i, "title": titles.get(i, ""), "returned": c,
+             "last_ts": last.get(i, "")}
+            for i, c in cnt.items() if c >= min_returned]
+    rows.sort(key=lambda r: -r["returned"])
+    return rows[:limit] if limit > 0 else []
+
+
 def zero_hit_board(searches: list[dict], *, limit: int = 10) -> list[dict]:
     """零命中榜 + 已消化判定: 同 caller 在**该次失败之后**(ts 不早于失败)出现命中,
     且命中词覆盖原 query(或其 suggest 词)。
@@ -182,7 +399,11 @@ def zero_hit_board(searches: list[dict], *, limit: int = 10) -> list[dict]:
     降级/删除/改名后检索不到)仍被标已消化 → 待消化榜漏掉恰恰最该补的词。
     suggest 挂在**失败事件**上(build_search_event 零命中时透传), 旧实现从命中事件
     读 s.get("suggest") 恒为 None, suggest 消化路径从未生效。
+
+    入参先过 effective(): 未扫库的空事件不是"库里没有答案", 上榜会把 FR-3.5 的
+    补库回路指向错词(历史 traces 榜首「vite」×105 全是这类噪声, 同窗真实命中 231)。
     """
+    searches = effective(searches)
     hits_by_caller: dict[str, list[tuple[str, set[str]]]] = {}
     for s in searches:
         if not s.get("returned"):
@@ -219,19 +440,29 @@ def zero_hit_board(searches: list[dict], *, limit: int = 10) -> list[dict]:
 
 
 def feed_events(searches: list[dict], gets: list[dict], *, caller: str | None = None,
-                limit: int = 50) -> list[dict]:
+                limit: int = 50, since: str | None = None,
+                until: str | None = None, offset: int = 0) -> list[dict]:
     """实时流的初始快照: 最近 N 条 search(含其关联 get 的已读标注)。
 
     details: 每个返回条目 → {repo: 来源层, hit_fields} —— 蜘蛛动画按来源层配色
     (项目层绿 / 通用层橙), read 命中的再叠加"已读"黄覆盖层。
+
+    since/until(2026-11-02 A2): 与同屏 KPI 同窗口口径(_within 日粒度)。此前
+    feed 固定拉全时最近 500 条, 切窗口时 KPI 变、列表不变, 同屏两口径——
+    KPI 说"近 7 天 12 次检索", 列表却混排着 20 天前的行, 用户无从分辨。
+    SSE 增量只推写入即时的事件(必在窗口内), 无需在客户端二次过滤。
     """
-    S = [s for s in searches if not caller or s.get("caller_repo") == caller]
+    S = [s for s in searches
+         if (not caller or s.get("caller_repo") == caller) and _within(s, since, until)]
     got_by_tid = _gets_by_trace(gets)
     out = []
     # limit 契约(§58 同族第四处, 第四十二轮): 负数切片 `[:-2]` 是"去尾"不是
     # "取前 -2", 语义翻转为"要最少给最多"; ≤0 一律零名额(read_traces 同款)。
+    # offset 游标(S1): 面板"加载更多"追加——排序后切片 [start:start+limit], 与
+    # 单次 limit 同序同源, 翻页不会漏/重。
     order = sorted(S, key=lambda e: _ts_key(e.get("ts")), reverse=True)
-    for s in (order[:limit] if limit > 0 else []):
+    start = offset if offset > 0 else 0
+    for s in (order[start:start + limit] if limit > 0 else []):
         tid = s.get("trace_id")
         returned = s.get("returned", [])
         ret_set = set(returned)
@@ -269,10 +500,12 @@ def callers(searches: list[dict], *, since: str | None = None,
     src = by_source(win)
     ext_health = _ext_health_latest(searches)  # 全量: 健康度与活跃性同理不随窗口
     byc_win = aggregate(win, []).get("by_caller", {})
-    # 行集 = 全量出现过的 caller(窗口外才活跃的项目必须留在矩阵里显 stale,
-    # 否则 7 天窗口会把"掉线项目"整行抹掉, 掉线检测反而失效)
+    # 行集 = 有效事件里出现过的 caller(窗口外才活跃的项目必须留在矩阵里显 stale,
+    # 否则 7 天窗口会把"掉线项目"整行抹掉, 掉线检测反而失效)。
+    # 过 effective(): 未扫库的空事件不算"这个项目活跃过"——历史 traces 里 pytest
+    # 合成 caller(test_cli_*、proj、docs)正是靠这类空事件混进了矩阵行。
     all_callers: dict[str, str] = {}
-    for s in searches:
+    for s in effective(searches):
         c = s.get("caller_repo") or "?"
         all_callers[c] = _later(all_callers.get(c, ""), str(s.get("ts", "")))
     rows = []

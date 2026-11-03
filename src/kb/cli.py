@@ -71,6 +71,9 @@ def _dispatch(argv: list[str] | None = None) -> int:
     for flag in ("type", "domain", "tag", "scope", "status", "confidence", "query"):
         p_s.add_argument(f"--{flag}", default=None)
     p_s.add_argument("--limit", type=int, default=20)
+    # trace 归因用: 与 index 的 --repo-name 同语义, 缺省从索引 repo 字段自取
+    p_s.add_argument("--repo-name", default=None,
+                     help="trace 的 caller 名(默认取索引 repo 字段, 再回落目录名)")
     g = p_s.add_mutually_exclusive_group()
     g.add_argument("--trace", dest="trace_on", action="store_true", default=None,
                    help="本次强制记录检索 trace")
@@ -125,6 +128,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--token", default=None)
     p_serve.add_argument("--default-caller", default=None,
                          help="单项目视图默认项目名(小写目录名)")
+    p_serve.add_argument("--repos", action="append", metavar="NAME=PATH", default=None,
+                         help="额外纳入质量面的库(PATH 指向其 kb 根, 可重复)")
     p_serve.add_argument("--install-autostart", action="store_true",
                          help="注册系统服务常驻(Windows 计划任务/systemd 用户 unit, 幂等)")
     p_serve.add_argument("--uninstall-autostart", action="store_true",
@@ -307,9 +312,15 @@ def _dispatch(argv: list[str] | None = None) -> int:
             scope=args.scope, status=args.status, confidence=args.confidence,
             query=args.query, limit=args.limit)
         if kbtrace.trace_enabled(cli_flag=args.trace_on):
+            # caller_repo 与索引 repo 字段同源(resolve_repo_name: 显式 --repo-name →
+            # index.jsonl 自取 → 目录名兜底)。旧实现取 `--repo` 载体目录名, 而业务仓
+            # 一律 `--repo docs` 检索项目层, 于是 573 次真实检索全记在幽灵项目 `docs`
+            # 名下(2026-11-02 联邦矩阵实测: 两个业务仓各 6 次, 检索数 0/命中率 — )。
+            # 与 index/doctor/pre-push-gate 三处同一口径, 分叉收口。
             ev = kbtrace.build_search_event(
                 trace_id=kbtrace.new_trace_id(), source="cli",
-                caller_repo=repo.resolve().name.lower(), query=args.query,
+                caller_repo=resolve_repo_name(repo, args.repo_name).lower(),
+                query=args.query,
                 filters={"type": args.type, "domain": args.domain, "tag": args.tag,
                          "scope": args.scope, "status": args.status,
                          "confidence": args.confidence},
@@ -364,9 +375,22 @@ def _dispatch(argv: list[str] | None = None) -> int:
             print(json.dumps(stat(repo), ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "serve":
-        from kb.serve import run as serve_run
+        from kb.serve import parse_repos as serve_parse_repos, run as serve_run
+        try:
+            extra = serve_parse_repos(args.repos)
+        except ValueError as exc:
+            print(f"kb serve: {exc}", file=sys.stderr)
+            return 2
         if args.install_autostart or args.uninstall_autostart:
             from kb import autostart
+            # 安装/卸载都校验 --repos 路径: 常驻服务装在不存在/不是 kb 根的目录上,
+            # 装完只会让面板分库表出一行"读取失败"且再无人重装——报错比装出坏服务好。
+            bad = [f"{n}={p}" for n, p in extra.items()
+                   if not (p / "kb").is_dir()]
+            if bad:
+                print("kb serve autostart: --repos 路径下没有 kb/ 目录(不是 kb 根): "
+                      + ", ".join(bad), file=sys.stderr)
+                return 2
             try:
                 if args.uninstall_autostart:
                     print(autostart.uninstall())
@@ -374,7 +398,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
                     print(autostart.install(
                         Path(args.repo).resolve() if args.repo
                         else Path(__file__).resolve().parents[2],
-                        args.port, args.bind, args.default_caller))
+                        args.port, args.bind, args.default_caller,
+                        {n: p.resolve() for n, p in extra.items()}))
             except (RuntimeError, OSError, ValueError) as exc:
                 # ValueError: 安装参数被渲染守门拒绝(如 systemd 字段含换行, §72 同族)
                 print(f"kb serve autostart: {exc}", file=sys.stderr)
@@ -383,7 +408,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
         try:
             serve_run(Path(args.repo) if args.repo else None, port=args.port,
                       bind=args.bind, token=args.token,
-                      default_caller=args.default_caller)
+                      default_caller=args.default_caller, extra_repos=extra)
         except ValueError as exc:  # 红线: 非本机绑定无 token → 拒绝启动
             print(f"kb serve: {exc}", file=sys.stderr)
             return 2

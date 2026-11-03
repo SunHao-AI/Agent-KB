@@ -24,6 +24,19 @@ def test_serve_command_quoted_path_and_caller(tmp_path):
     assert args2.endswith("--default-caller web")  # 无空格不加引号
 
 
+def test_serve_command_carries_repos(tmp_path):
+    """P0-3: --repos 必须透传进常驻任务定义。早先 install() 不透传, 系统服务
+    一重启就静默退回单库质量口径(面板少分库行且无提示), 与用户手敲的命令不等价。"""
+    biz = tmp_path / "biz repo" / "docs"          # 含空格: 必须整体加引号防拆参
+    _, args, _ = autostart.serve_command(tmp_path, 4320, "127.0.0.1", None,
+                                         {"biz": biz, "web": tmp_path / "web"})
+    assert f'--repos "biz={biz}"' in args
+    assert args.endswith(f"--repos web={tmp_path / 'web'}")
+    # 空 extra_repos 不该多出参数(保持旧任务定义逐字不变)
+    _, plain, _ = autostart.serve_command(tmp_path, 4320, "127.0.0.1", None)
+    assert "--repos" not in plain
+
+
 def test_install_windows_escapes_single_quotes(monkeypatch, tmp_path):
     """§72(第五十五轮): install_windows 把 repo 路径/default_caller 裸插
     PowerShell 单引号串, 含单引号即断串——路径含 ' 安装必炸, --default-caller

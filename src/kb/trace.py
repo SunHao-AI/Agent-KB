@@ -29,8 +29,42 @@ def traces_dir(root: Path | None = None) -> Path:
     return (Path(root) if root else kb_root()) / "traces"
 
 
+def _in_pytest_session() -> bool:
+    """当前是否处于 pytest 测试执行期(该变量只在测试执行期存在, 真实进程恒假)。"""
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
+def _pytest_tmp_root() -> str:
+    """pytest 临时根(tmp_path 的父目录); 未导出时返回 ""。"""
+    return os.environ.get("PYTEST_DEBUG_TEMPROOT", "").replace("\\", "/").rstrip("/")
+
+
+def _under(path: Path, base: str) -> bool:
+    s = str(path).replace("\\", "/")
+    if base and (s == base or s.startswith(base + "/")):
+        return True
+    return "pytest-of-" in s          # basetemp 固定命名, 兜住 DEBUG_TEMPROOT 缺省
+
+
 def trace_enabled(root: Path | None = None, cli_flag: bool | None = None) -> bool:
-    """优先级: CLI 显式 > KB_TRACE 环境变量 > 仓根 .kb-trace 标记 > 默认关闭。"""
+    """优先级: 测试隔离 > CLI 显式 > KB_TRACE 环境变量 > 仓根 .kb-trace 标记 > 默认关闭。
+
+    测试隔离红线: pytest 会话内, 埋点只准写落在 pytest 临时目录下的根。
+    仓根 `.kb-trace` 标记让埋点默认常开, 而 `append_event(ev)` 不带 root 时按
+    **真实仓根**落盘 —— 未 monkeypatch `kb_root` 的用例(如 test_cli 的检索用例)
+    于是把合成语料写进了 git 里的观测账本。2026-11-02 实测: traces/ 里 105 条
+    「vite」零命中全部来自 pytest(35 条 caller=`test_cli_missing_repo_path_err*`
+    /`scanned:0`, 70 条 caller=`docs`/`layers:[]`), 命中率、零命中榜、消化率三个
+    头号指标被同一污染源打歪。
+
+    判据是"落盘目标在不在临时目录内", 不是"是不是测试进程": 埋点自身的测试会
+    monkeypatch `kb_root` 到 tmp_path, 那是必须保留的覆盖面, 照常按下面的优先级
+    走; 真实账本(仓内 traces/)在临时目录之外, 测试进程永远写不到。
+    """
+    if _in_pytest_session():
+        target = Path(root) if root else kb_root()
+        if not _under(target, _pytest_tmp_root()):
+            return False             # 测试写真实账本: 一律拒绝
     if cli_flag is not None:
         return cli_flag
     env = os.environ.get(_ENV)

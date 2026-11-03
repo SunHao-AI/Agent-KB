@@ -988,7 +988,7 @@ $('fq').oninput=e=>{fState.q=e.target.value;applyFilter();};
 $('fseg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
   fState.f=b.dataset.f;syncFseg();applyFilter();});
 $('fpage').addEventListener('click',e=>{const b=e.target.closest('button[data-p]');if(!b||b.disabled)return;
-  fState.page=+b.dataset.p;renderFeed();
+  fState.page=+b.dataset.p;renderFeed();syncUrlSoon();   // R4: 翻页入 URL(与 applyFilter 同款)
   $('feed').scrollIntoView({behavior:'smooth',block:'start'});});
 $('fmore').onclick=()=>loadFeed(true);   // S1: 游标追加, 加载更多更早的事件
 function syncFseg(){$('fseg').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.f===fState.f));}
@@ -1233,7 +1233,7 @@ function render(push){
   syncProjBtn();
   syncFseg();   // A2: URL 恢复的过滤按钮态与 fState 对齐
   document.querySelectorAll('[data-w]').forEach(c=>{
-    const on=c.dataset.w==='pw'?prevWeek:(+c.dataset.w===win);
+    const on=c.dataset.w==='pw'?prevWeek:(!prevWeek&&+c.dataset.w===win);
     c.classList.toggle('on',on);
     c.title=c.dataset.w==='pw'?'上一自然周(周一到周日, 周报口径)':winTitle(+c.dataset.w);});
   syncUrl(push);

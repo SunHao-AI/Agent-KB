@@ -1011,7 +1011,9 @@ def _export_payload(srv: "ServeServer", q: dict) -> object:
         return stats.dead_weight(stats.in_window(s, since, until),
                                  stats.in_window(g, since, until), limit=1000)
     if kind == "feed":
-        rows, _ = _feed_payload(srv, {**q, "limit": "2000"})
+        # T3: 导出全量(窗口内所有事件), 不再硬编码 2000 截断——观测数据千条级,
+        # 2000 上限会在长窗口下静默截断且无任何声明。1e6 仅作极端异常兜底。
+        rows, _ = _feed_payload(srv, {**q, "limit": "1000000"})
         return rows
     if kind == "trend":
         return _trend_payload(srv, q)["days"]

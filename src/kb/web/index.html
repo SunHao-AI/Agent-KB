@@ -457,6 +457,11 @@ async function openQualityEntries(kind){
 // soft=true: 事件流触发的静默重取(保留滚动、不闪"加载中")。使用度每次落盘事件都在
 // 变, 弹层若只在点开时取一次, 挂着看就会与卡上数字、与实时使用度对不上(Q2)。
 let qeRSeq=0;   // S2: 软刷新/切换分类的请求竞态守卫——旧响应晚到不得覆盖新数据
+// T4: 软刷新使用度签名——条目集合/状态/使用度都没变时跳过重绘。请求照发以取最新
+// 使用度, 但 DOM 不动(高频事件下弹层不再频繁闪刷, 虚拟滚动重绘虽轻但仍是每轮全量
+// innerHTML + 锚定重算)。
+const qeUseSig=rows=>(rows||[]).map(x=>x.id+':'+(x.hits||0)+':'+(x.reads||0)+':'+(x.status||'')).join('|');
+
 async function renderQualityEntries(kind,soft){
   const my=++qeRSeq;
   const cp=callerParam();
@@ -469,6 +474,8 @@ async function renderQualityEntries(kind,soft){
     if(my!==qeRSeq)return;             // S2: 期间又发了更新的请求, 丢弃本响应
     if(r.status!=200){$('qeTitle').textContent=`${QKIND[kind]||kind} · 加载失败`;
       $('qeBody').innerHTML=`<div class="s" style="color:var(--bad)">${esc(d.error||('HTTP '+r.status))}</div>`;return;}
+    // T4: 软刷新下使用度/状态没变 → 直接返回(保留当前 DOM 与滚动, 不重绘)。
+    if(soft&&qeViewMode!=='entry'&&qeUseSig(d.rows)===qeUseSig(qeRows))return;
     qeRows=d.rows||[]; qeMany=!!(kind&&qeRows.some(x=>x.repo));
     $('qeBody').dataset.total=d.total||0;
     $('qeSkip').textContent=Object.keys(d.skipped||{}).length
@@ -663,6 +670,10 @@ async function openEntrySource(id,repo,mode){   // mode: list=从清单点 · ju
     const mdHtml=esc(d.markdown).replace(/kb-\d{8}-[0-9a-f]{4}\b/g,
       m=>`<span class="qeJump" data-id="${m}" role="link" tabindex="0" title="跳到该条目(跨库)" style="color:var(--link);text-decoration:underline;cursor:pointer">${m}</span>`);
     $('qeBody').innerHTML=`<pre style="white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.55;font-family:Consolas,monospace;color:var(--tx)">${mdHtml}</pre>`;
+    // T5: 点"原文"后原 qeOpen 按钮已随 innerHTML 消失, 键盘用户焦点丢失——移到
+    // "返回上一篇/回清单"按钮(弹层内第一个可交互元素), 提供明确落点。仅跳读时
+    // 动焦点, 避免首次打开弹层(焦点本在过滤框)被抢。
+    if(qeTrail.length||qeEntryId)($('qePrev')||$('qeBack'))?.focus();
   }catch(e){if(my!==qeSeq)return;   // 竞态: 旧请求的异常也不得覆盖新态
     $('qeTitle').textContent=`${id} · ${esc(fetchErr(e))}`;
     $('qeBody').innerHTML=`<div class="s" style="color:var(--bad)">${esc(fetchErr(e))}</div>`;}
@@ -920,10 +931,15 @@ function renderFeed(){
     f.appendChild(e);}
 }
 function onEvent(ev,isGet){           // SSE 入口: 并入真源; 仅第 1 页重渲染(不打断阅读旧页)
+  // Q13/R6: 聚焦日/上周区间下"新事件必在窗口内"不成立(新事件永远落在今天)——按 ts
+  // 本地日前缀过滤, 与快照口径一致。ts 前 10 位即写入机本地日。T1: prevWeek 是
+  // 上一自然周闭区间, 用字符串序判(YYYY-MM-DD 字典序=日期序); focusDay 是单日。
+  const evDay=String(ev.ts||'').slice(0,10);
+  if(focusDay&&evDay!==focusDay)return;
+  if(prevWeek){const [s,e]=prevWeekRange();if(evDay<s||evDay>e)return;}
+  // T4: bumpKpi 移到过滤之后——窗口外的事件(如上周聚焦下的今天事件)不该触发
+  // 窗口内 KPI/榜单/质量软刷新, 否则每个被滤掉的事件都白跑一轮请求+重渲染。
   bumpKpi();                          // A1: 有事件落盘 → KPI/榜单去抖重算(命中数/零命中榜会变)
-  // Q13: 聚焦日模式下"新事件必在窗口内"不成立(新事件永远落在今天, 聚焦日多半不是
-  // 今天)——按事件 ts 的本地日前缀过滤, 与快照口径一致。ts 前 10 位即写入机本地日。
-  if(focusDay&&String(ev.ts||'').slice(0,10)!==focusDay)return;
   if(isGet){const t=feedArr.find(x=>x.trace_id===ev.trace_id);
     if(t){t.read=t.read||[];if(ev.id&&!t.read.includes(ev.id))t.read.push(ev.id);
       if(fState.page===1)renderFeed();}
@@ -1208,7 +1224,9 @@ async function loadTrend(){
       .join('')+'</div>'
       +(p95s.length?'<div class="s" style="font-size:11px;color:var(--mu)">顶部标尺: <span style="color:var(--link)">━</span> 中位耗时 · <span style="color:var(--warn)">━</span> P95 耗时(共用标尺, 悬停柱看精确值)</div>':'');
     box.querySelectorAll('.tday').forEach(el=>{
-      const go=()=>{focusDay=(focusDay===el.dataset.day?'':el.dataset.day);render(true);};
+      // T2: 聚焦日/上周/数字窗口三者互斥——点柱聚焦某天必须退出 prevWeek(否则
+      // winQ 里 prevWeek 优先, focusDay 被忽略, 点柱无效且高亮残留)。
+      const go=()=>{prevWeek=false;focusDay=(focusDay===el.dataset.day?'':el.dataset.day);render(true);};
       el.onclick=go;
       el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}};});
     const tf=$('trendFocus');
@@ -1436,7 +1454,9 @@ addEventListener('popstate',e=>{const p=new URLSearchParams(location.search);
   caller=p.get('caller')&&p.get('caller')!=='*'?p.get('caller'):'';
   if([7,30,0].includes(+p.get('w')))win=+p.get('w');
   prevWeek=p.get('pw')==='1';                          // R6 恢复上一自然周
-  focusDay=/^\d{4}-\d{2}-\d{2}$/.test(p.get('d')||'')?p.get('d'):'';
+  // T2: prevWeek 与 focusDay 互斥——URL 同时带 pw=1 与 d= 时 prevWeek 优先,
+  // focusDay 强制清空(否则趋势图残留高亮 + "已聚焦"提示误导)。
+  focusDay=!prevWeek&&/^\d{4}-\d{2}-\d{2}$/.test(p.get('d')||'')?p.get('d'):'';
   fState.q=p.get('q')||'';
   const f=p.get('f');fState.f=FVALID.includes(f)?f:'all';
   const pg=parseInt(p.get('p'));if(pg>1)fState.page=pg;   // R4 恢复分页

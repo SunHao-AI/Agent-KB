@@ -264,14 +264,37 @@ if [ -n "$(printf '%s\n' "$kb_tips" | sed '/^$/d')" ]; then
 fi
 
 # ---- 2. 全量 pytest 硬门禁 + 3. coverage 报告 (不设阈值) ----
-# 就地跑前先确认测试面与工作区一致 (pytest 收集 tests/, 受后端源码与配置影响)
-assert_test_face_clean '*.py' pyproject.toml pytest.ini setup.cfg tox.ini conftest.py
-echo "pre-push-gate: pytest 全量 (coverage 报告: ${COV_TARGET}, 无阈值) ..." >&2
-# shellcheck disable=SC2086
-"$VENV_PY" -m pytest -q $COV_ARGS || {
-    echo "pre-push-gate: FAIL - 测试未过, 禁止 push。修复后重试, 或 PREPUSH_SKIP=1 应急跳过。" >&2
-    exit 1
-}
+# 按改动范围跳过 (2026-11-03): 本次 push 不触碰后端代码/测试面时, 全量 pytest
+# 跑的是与 push 无关的旧代码, 结果不反映本次改动 → 跳过, 与第 1 段增量 lint
+# 只查 push 范围内 .py、第 3.5 段前端按 frontend/ 判定的哲学一致。纯 docs/、
+# *.md、纯前端 push 不再空耗十几分钟全量后端测试 (此前每次约 15 分钟)。
+py_touched=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$ZERO" ] && continue
+    if [ "$remote_sha" = "$ZERO" ]; then
+        base=$(git merge-base "$local_sha" origin/master 2>/dev/null) || base="$local_sha"
+    else
+        base=$(git merge-base "$remote_sha" "$local_sha" 2>/dev/null) || base="$remote_sha"
+    fi
+    if git diff --name-only "$base" "$local_sha" -- '*.py' pyproject.toml pytest.ini setup.cfg tox.ini conftest.py 2>/dev/null | sed '/^$/d' | grep -q .; then
+        py_touched=1
+    fi
+done <<EOF
+$refs
+EOF
+
+if [ -z "$py_touched" ]; then
+    echo "pre-push-gate: 本次 push 无后端代码/测试面变更, 跳过全量 pytest" >&2
+else
+    # 就地跑前先确认测试面与工作区一致 (pytest 收集 tests/, 受后端源码与配置影响)
+    assert_test_face_clean '*.py' pyproject.toml pytest.ini setup.cfg tox.ini conftest.py
+    echo "pre-push-gate: pytest 全量 (coverage 报告: ${COV_TARGET}, 无阈值) ..." >&2
+    # shellcheck disable=SC2086
+    "$VENV_PY" -m pytest -q $COV_ARGS || {
+        echo "pre-push-gate: FAIL - 测试未过, 禁止 push。修复后重试, 或 PREPUSH_SKIP=1 应急跳过。" >&2
+        exit 1
+    }
+fi
 
 # ---- 3.5 python 仓内的前端子项目 (混合仓): frontend/ 有 package.json 时纳入门禁 ----
 # 为什么单独一段: 仓型探测按 pyproject.toml 优先, 混合仓(后端 python + frontend/ 前端)

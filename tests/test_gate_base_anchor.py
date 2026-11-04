@@ -15,6 +15,7 @@
 sh.exe 或 git 缺失时整模块 skip（CI 与非 Windows 环境不假失败）。
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,6 +23,20 @@ from pathlib import Path
 import pytest
 
 GATE = Path(__file__).resolve().parents[1] / "scripts" / "pre-push-gate.sh"
+
+# 本文件会被 pre-push 门禁自己跑起来: git 在 hook 进程里 export 了 GIT_DIR /
+# GIT_WORK_TREE 等变量(实测门禁内 4 个用例全红, 直接跑全绿), 子进程若不清理这些
+# 变量, 临时仓里的 `git init/commit/push` 会被拽回到宿主仓, 建仓失败或污染宿主索引。
+_GIT_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+            "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+
+
+def _clean_env(path_prefix: str | None = None) -> dict:
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_ENV}
+    if path_prefix:
+        env["PATH"] = os.pathsep.join([path_prefix, env.get("PATH", "")])
+    return env
 
 
 def _sh() -> str:
@@ -41,7 +56,7 @@ def _sh() -> str:
 def _git(repo: Path, *args: str) -> str:
     out = subprocess.run(
         ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *args],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, check=True, env=_clean_env(),
     )
     return out.stdout.strip()
 
@@ -60,11 +75,9 @@ def _probe(repo: Path, ref_lines: str) -> tuple[str, str, int]:
     时不补会让脚本里的 `mkdir` 等 coreutils 全部 command not found(实测: 首个
     mkdir 静默失败 → 误入陈旧锁分支 → 接管失败 exit 1, 与门禁逻辑无关的假失败)。
     """
-    import os
-
     sh = _sh()
-    env = {**os.environ, "PATH": os.pathsep.join([os.path.dirname(sh), os.environ["PATH"]]),
-           "PREPUSH_GATE_PROBE": "base"}
+    env = _clean_env(os.path.dirname(sh))
+    env["PREPUSH_GATE_PROBE"] = "base"
     r = subprocess.run(
         [sh, str(GATE)], input=ref_lines, capture_output=True, text=True,
         cwd=str(repo), env=env,
@@ -145,8 +158,8 @@ def test_no_remote_falls_back_to_empty_tree_with_warn(tmp_path: Path):
     head = _commit(lone, "a.txt")
     out, err, rc = _probe(lone, _ref_line(lone, "main", ZERO))
     empty_tree = subprocess.run(
-        ["git", "-C", str(lone), "hash-object", "-t", "tree"],
-        capture_output=True, text=True, check=True).stdout.strip()
+        ["git", "-C", str(lone), "hash-object", "-t", "tree", "/dev/null"],
+        capture_output=True, text=True, check=True, env=_clean_env()).stdout.strip()
     assert rc == 0
     assert f"base={empty_tree}" in out, out
     assert f"base={head}" not in out

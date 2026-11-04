@@ -74,8 +74,11 @@ tips=$(printf '%s\n' "$refs" | awk '{print $2}' | grep -v "^${ZERO}$" | sort -u)
 # 照跑 = 新分支首推时增量 lint、mypy 棘轮、kb 门禁、前端门禁全部失明。
 # 现在: 锚点按 origin/HEAD → origin/main → origin/master → 任一 origin/* 逐级探测;
 # 全都探不到才退到**空树**(把全树当增量, 宁可全量判定也不放行), 并打 WARN 让退化可见。
-# 空树 hash 用 `git hash-object -t tree` 现取, 不硬编码字面量(跨 git 版本稳妥)。
-FULL_TREE=$(git hash-object -t tree </dev/null 2>/dev/null)
+# 空树 hash 用 `git hash-object -t tree /dev/null` 现取, 不硬编码字面量(跨 git 版本
+# 稳妥)。注意必须把 /dev/null 当**文件参数**, 不能走 `</dev/null` 的 stdin: stdin 读
+# 空内容时 `git hash-object` 什么都不输出且 rc=0(实测), 变量会成空串, 后续
+# `git diff "" <tip>` 又退化成静默跳过 = 把 I-9 的兜底又打穿了。
+FULL_TREE=$(git hash-object -t tree /dev/null 2>/dev/null)
 
 # 锚点在**父作用域**探测一次(不是 resolve_base 内部): 该函数总被 $(...) 子 shell
 # 调用, 内部赋值回不到父 shell, 探针会恒报 <none>、WARN 也会重复打印。

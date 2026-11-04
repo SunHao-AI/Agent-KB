@@ -67,6 +67,71 @@ refs=$(cat)
 ZERO="0000000000000000000000000000000000000000"
 tips=$(printf '%s\n' "$refs" | awk '{print $2}' | grep -v "^${ZERO}$" | sort -u)
 
+# ---- I-9 (2026-11-04): 增量 base 锚点统一解析 --------------------------------
+# 此前 lint / mypy / pytest / 前端 四段各抄一份"新分支锚 origin/master"的写法。
+# 仓里没有 origin/master 时(web 仓只有 origin/main + origin/develop)merge-base 失败
+# → base=local_sha → `git diff base..tip` 空 → 四段**静默整体跳过**, 只剩全量 pytest
+# 照跑 = 新分支首推时增量 lint、mypy 棘轮、kb 门禁、前端门禁全部失明。
+# 现在: 锚点按 origin/HEAD → origin/main → origin/master → 任一 origin/* 逐级探测;
+# 全都探不到才退到**空树**(把全树当增量, 宁可全量判定也不放行), 并打 WARN 让退化可见。
+# 空树 hash 用 `git hash-object -t tree` 现取, 不硬编码字面量(跨 git 版本稳妥)。
+FULL_TREE=$(git hash-object -t tree </dev/null 2>/dev/null)
+
+# 锚点在**父作用域**探测一次(不是 resolve_base 内部): 该函数总被 $(...) 子 shell
+# 调用, 内部赋值回不到父 shell, 探针会恒报 <none>、WARN 也会重复打印。
+GATE_ANCHOR=""
+for _cand in "$(git symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null)" \
+             refs/remotes/origin/main refs/remotes/origin/master; do
+    [ -n "$_cand" ] || continue
+    git rev-parse --verify "${_cand}^{commit}" >/dev/null 2>&1 || continue
+    GATE_ANCHOR="$_cand"
+    break
+done
+if [ -z "$GATE_ANCHOR" ]; then
+    # 无 origin/HEAD 且 main/master 都不存在: 取任一 origin/* 兜底。多分支时
+    # merge-base 落到最近公共祖先, 增量范围只会偏大(偏严), 不会漏判。
+    GATE_ANCHOR=$(git for-each-ref --format='%(refname)' refs/remotes/origin/ 2>/dev/null \
+                  | grep -v '/HEAD$' | head -1)
+fi
+if [ -z "$GATE_ANCHOR" ] \
+   && printf '%s\n' "$refs" | awk '{print $4}' | grep -q "^${ZERO}$"; then
+    # 仅当本次 push 含新分支首推(远端 sha 全 0)时锚点缺失才有实际影响, 才 warn
+    echo "pre-push-gate: WARN - 远端无可锚分支, 新分支首推的增量范围将退化为全树(偏严)" >&2
+fi
+
+# 输出: 本次增量 base 的 sha。
+resolve_base() {
+    rb_local="$1"; rb_remote="$2"
+    if [ -n "$rb_remote" ] && [ "$rb_remote" != "$ZERO" ]; then
+        # 常规推送: force-push 后旧 tip 可能已不可达, merge-base 兜底再退回旧 tip
+        rb_b=$(git merge-base "$rb_remote" "$rb_local" 2>/dev/null) || rb_b="$rb_remote"
+        printf '%s' "$rb_b"
+        return 0
+    fi
+    if [ -n "$GATE_ANCHOR" ]; then
+        rb_b=$(git merge-base "$rb_local" "$GATE_ANCHOR" 2>/dev/null) \
+            || rb_b=$(git rev-parse "$GATE_ANCHOR" 2>/dev/null) || rb_b="$FULL_TREE"
+    else
+        rb_b="$FULL_TREE"
+    fi
+    printf '%s' "$rb_b"
+}
+
+# 诊断出口: $env:PREPUSH_GATE_PROBE='base'; git push ...  → 只报每个被推 ref 的锚点
+# 与 base 就退出。用于人工核对"I-9 修完后我这个仓到底锚到哪", 也是 I-9 的测试面。
+if [ "${PREPUSH_GATE_PROBE:-}" = "base" ]; then
+    while read -r p_ref p_local p_rref p_remote; do
+        [ -n "$p_local" ] || continue
+        [ "$p_local" = "$ZERO" ] && continue
+        p_base=$(resolve_base "$p_local" "$p_remote")
+        printf 'probe: ref=%s remote_sha=%s anchor=%s base=%s\n' \
+            "$p_ref" "$p_remote" "${GATE_ANCHOR:-<none>}" "$p_base"
+    done <<PROBE
+$refs
+PROBE
+    exit 0
+fi
+
 # 测试面一致性: pytest/npm test 只能就地跑, 若工作区的测试相关文件与待推 tip 不一致,
 # 就地跑出来的结果不代表被推内容 → 拦下并给可操作处置, 不做"假绿"放行。
 # 只看测试面 (py/config 或 js 源), 前端 WIP、文档 WIP 不阻塞 push。
@@ -156,13 +221,7 @@ py_pairs=""
 kb_tips=""
 while read -r local_ref local_sha remote_ref remote_sha; do
     [ "$local_sha" = "$ZERO" ] && continue  # 删除远端 ref, 无新内容
-    if [ "$remote_sha" = "$ZERO" ]; then
-        # 新分支: 锚到 origin/master 的 merge-base; 锚不到则本次无增量可查
-        base=$(git merge-base "$local_sha" origin/master 2>/dev/null) || base="$local_sha"
-    else
-        # force-push 后旧 tip 可能已不可达: merge-base 兜底
-        base=$(git merge-base "$remote_sha" "$local_sha" 2>/dev/null) || base="$remote_sha"
-    fi
+    base=$(resolve_base "$local_sha" "$remote_sha")
     files=$(git diff --name-only "$base" "$local_sha" -- '*.py' 2>/dev/null) || continue
     for f in $files; do
         py_pairs="$py_pairs
@@ -342,11 +401,7 @@ fi
 py_touched=""
 while read -r local_ref local_sha remote_ref remote_sha; do
     [ "$local_sha" = "$ZERO" ] && continue
-    if [ "$remote_sha" = "$ZERO" ]; then
-        base=$(git merge-base "$local_sha" origin/master 2>/dev/null) || base="$local_sha"
-    else
-        base=$(git merge-base "$remote_sha" "$local_sha" 2>/dev/null) || base="$remote_sha"
-    fi
+    base=$(resolve_base "$local_sha" "$remote_sha")
     if git diff --name-only "$base" "$local_sha" -- '*.py' pyproject.toml pytest.ini setup.cfg tox.ini conftest.py 2>/dev/null | sed '/^$/d' | grep -q .; then
         py_touched=1
     fi
@@ -380,11 +435,7 @@ if [ -f frontend/package.json ]; then
     fe_touched=""
     while read -r local_ref local_sha remote_ref remote_sha; do
         [ "$local_sha" = "$ZERO" ] && continue
-        if [ "$remote_sha" = "$ZERO" ]; then
-            base=$(git merge-base "$local_sha" origin/master 2>/dev/null) || base="$local_sha"
-        else
-            base=$(git merge-base "$remote_sha" "$local_sha" 2>/dev/null) || base="$remote_sha"
-        fi
+        base=$(resolve_base "$local_sha" "$remote_sha")
         if git diff --name-only "$base" "$local_sha" -- frontend 2>/dev/null | sed '/^$/d' | grep -q .; then
             fe_touched=1
         fi

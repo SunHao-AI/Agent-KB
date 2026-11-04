@@ -9,6 +9,8 @@
 #   0. 环境自检 (venv 缺失 / 缺 pytest → 失败模式清单, 喂给 B1 kb doctor)
 #   1. 增量 lint 硬门禁: 仅查 push 范围内新增/修改的 .py, 规则收窄到 F + E9
 #      (真错误类)。各仓全量 lint 存量欠账已挂账 (roadmap §6), 不做全仓硬门禁。
+#   1.5 mypy 棘轮硬门禁 (仅配了 [tool.mypy] 的仓): 本次改到的 .py 必须零错,
+#      存量不要求 (roadmap I-4b: web 仓试点 2026-11-03, 2026-11-04 归零后上提)。
 #   2. 全量 pytest 硬门禁: 失败即拦截 push (A6 验收标准)
 #   3. coverage 报告: 只输出不设阈值 (无 --cov-fail-under)
 #   4. kb 库门禁: 本次 push 触碰 docs/kb(业务仓)或 kb/(Agent-KB)时, 对被推 tip
@@ -201,6 +203,75 @@ if [ -n "$changed" ]; then
     fi
 else
     echo "pre-push-gate: 本次 push 无 .py 变更, 跳过增量 lint" >&2
+fi
+
+# ---- 1.5 mypy 棘轮硬门禁 (roadmap I-4b, 2026-11-04 由 web 仓试点上提) ----
+# 只对**配了 [tool.mypy] 的仓**生效(grep pyproject 判定): 没配 mypy 的仓直接跳过,
+# 不会因为装了门禁就凭空多出一堵墙(实测 flysee 四仓仅 web 有此配置, media_server
+# 是 node 仓更早就走 npm 分支)。
+# 棘轮口径 = 只要求增量: 本次 push 改到的 .py 必须零错, 存量错误不要求(由各仓
+# 分批清理消化)。哲学照抄第 1 段: 判定对象=被推 tip(临时 worktree, 与 kb 段同
+# 构), 工具缺失只 WARN 不拦, 但真跑起来失败就硬拦。
+# 关键坑(kb-20261103-a127): git-dir 在本脚本上方是按 `--git-dir` 取的**相对**路径,
+# 而 worktree 的 .git 是文件不是目录 —— 相对 .git/xxx 当 --cache-dir 会让 mypy
+# INTERNAL ERROR 崩溃, 崩溃输出里没有 "file:line: error:" 行, 被 grep 式判定读成
+# 零错就是**假绿**。故此处另取 --absolute-git-dir, 且 rc>1 一律判 FAIL 不放行。
+if [ -n "$changed" ] && grep -q '^\[tool\.mypy\]' pyproject.toml 2>/dev/null; then
+    if "$VENV_PY" -m mypy --version >/dev/null 2>&1; then
+        MYPY_GITDIR=$(git rev-parse --absolute-git-dir)
+        mypy_wt="$MYPY_GITDIR/pre-push-gate.mypywt"
+        rm -rf "$mypy_wt" 2>/dev/null
+        mypy_tip=$(printf '%s\n' "$py_pairs" | sed '/^[ \t]*$/d' | awk -F'\t' '{print $1}' | tail -1)
+        if git worktree add --detach "$mypy_wt" "$mypy_tip" >/dev/null 2>&1; then
+            # cwd=worktree 根(路径与 git 输出口径一致), 配置与解释器都取自主仓绝对路径。
+            # 输出落文件而非命令替换: 保证 mypy_rc 是 mypy 自己的退出码, 不会被
+            # `cd && mypy` 里 cd 的失败码冒充(那会伪装成"有错但零 error 行"=假绿)。
+            mypy_out_f="$MYPY_GITDIR/pre-push-gate.mypyout"
+            ( cd "$mypy_wt" && "$ROOT/$VENV_PY" -m mypy "$COV_TARGET" \
+                --config-file "$ROOT/pyproject.toml" \
+                --cache-dir "$MYPY_GITDIR/pre-push-gate.mypycache" ) > "$mypy_out_f" 2>&1
+            mypy_rc=$?
+            git worktree remove --force "$mypy_wt" >/dev/null 2>&1
+            # Windows 反斜杠转 / 以匹配 git 路径口径
+            mypy_out=$(tr '\\' '/' < "$mypy_out_f"); rm -f "$mypy_out_f"
+            if [ "$mypy_rc" -gt 1 ]; then
+                echo "pre-push-gate: FAIL - mypy 异常退出 rc=$mypy_rc, 本次无法判定(不放行, 防假绿)。输出前 10 行:" >&2
+                printf '%s\n' "$mypy_out" | head -10 | sed 's/^/    /' >&2
+                echo "  修环境后重推, 或 PREPUSH_SKIP=1 应急跳过。" >&2
+                exit 1
+            fi
+            # 输出格式合法性: mypy 只在 0/1 时必然打点行结论(Success / Found N errors)。
+            # 两者都没有 = 根本没跑到 mypy(例如 cd 失败), 判不了就不放行。
+            if ! printf '%s\n' "$mypy_out" | grep -qE '^(Success: no issues found|Found [0-9]+ error)'; then
+                echo "pre-push-gate: FAIL - mypy 未给出可信结论(rc=$mypy_rc 但无 Success/Found 汇总行), 本次无法判定(不放行)。" >&2
+                printf '%s\n' "$mypy_out" | head -10 | sed 's/^/    /' >&2
+                exit 1
+            fi
+            if [ "$mypy_rc" -eq 0 ]; then
+                echo "pre-push-gate: mypy 棘轮 PASS ($COV_TARGET 全仓零错)" >&2
+            else
+                mypy_fail=0
+                for f in $changed; do
+                    hits=$(printf '%s\n' "$mypy_out" | grep -E "^${f}:[0-9]+: error:" || true)
+                    if [ -n "$hits" ]; then
+                        printf '%s\n' "$hits" | sed 's/^/    /' >&2
+                        mypy_fail=1
+                    fi
+                done
+                if [ "$mypy_fail" -ne 0 ]; then
+                    echo "pre-push-gate: FAIL - mypy 棘轮: 本次改动的 .py 必须零错(存量不要求)。" >&2
+                    echo "  修复后重推, 或 PREPUSH_SKIP=1 应急跳过。" >&2
+                    exit 1
+                fi
+                echo "pre-push-gate: mypy 棘轮 PASS (改动的 $(printf '%s\n' "$changed" | wc -l | tr -d ' ') 个 .py 零错)" >&2
+            fi
+        else
+            echo "pre-push-gate: WARN - mypy 临时 worktree 创建失败, mypy 棘轮跳过(不假绿)" >&2
+        fi
+    else
+        echo "pre-push-gate: WARN - 本仓配了 [tool.mypy] 但 venv 缺 mypy, 棘轮跳过。" >&2
+        echo "  装配: uv sync --extra dev" >&2
+    fi
 fi
 
 # ---- 4. kb 库硬门禁: 本次 push 触碰 docs/kb(业务仓)或 kb/(Agent-KB)时强制 ----

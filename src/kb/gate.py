@@ -188,15 +188,28 @@ def _reindex(repo) -> None:
     build_indexes(repo, repo_name=resolve_repo_name(repo))
 
 
-def update_draft(repo, id: str, *, title: str | None = None, body: str | None = None,
+# 编辑即降级重审(2026-11-05 自助化): 旧口径"仅 draft 可编辑"把人挤成瓶颈——补一次
+# tags(红线 #3b 强制要求)或加一段"新发现"都要先把条目降回 draft。放宽为
+# draft/proposed 全量可改、accepted 可改但自动退回 proposed, 终态仍不可写。
+_EDITABLE = ("draft", "proposed", "accepted")
+
+
+def update_entry(repo, id: str, *, title: str | None = None, body: str | None = None,
                  tags: list[str] | None = None, severity: str | None = None,
                  today: dt.date | None = None) -> Entry:
-    """人工 CLI: 仅 draft 可编辑正文/元数据."""
+    """编辑本项目条目正文/元数据。
+
+    draft/proposed 直接改; accepted 改完自动降级 proposed(结论已被改动, 必须重审),
+    并清掉 verified_by/verification/auto-reviewed——它们记录的是"当时通过终审的证据",
+    结论变了还留着会误导事后抽查。审计痕迹写进 fm["revision"]。
+    deprecated/superseded 是终态(与 _TRANSITIONS 一致), 拒绝编辑。
+    """
     _check_severity(severity)
     p = _find(repo, id)
     e = parse_entry(p)
-    if e.fm.get("status") != "draft":
-        raise GateViolation(f"{id}: only draft entries are editable, current status={e.fm.get('status')}")
+    status = e.fm.get("status", "")
+    if status not in _EDITABLE:
+        raise GateViolation(f"{id}: {status or 'unknown'} entries are not editable")
     fm = dict(e.fm)
     cur_body = e.body
     h1 = e.h1() or fm.get("title", "")
@@ -209,9 +222,16 @@ def update_draft(repo, id: str, *, title: str | None = None, body: str | None = 
         fm["tags"] = list(tags)
     if severity:
         fm["severity"] = severity
+    if status == "accepted":
+        d = (today or dt.date.today()).isoformat()
+        fm["status"] = "proposed"
+        fm["revision"] = {"reason": "content-edited", "from_status": "accepted", "at": d}
+        fm.pop("verified_by", None)
+        fm.pop("verification", None)
+        fm["tags"] = [t for t in (fm.get("tags") or []) if t != "auto-reviewed"]
     e = _save(p, fm, cur_body, today or dt.date.today())
-    _reindex(repo)  # §44: title/body/tags 都是 draft 索引列(summary/dedup_key 派生
-    return e        # 自它们), 滞留则 kb_get 返回旧文、去重指纹与面板展示全部失真
+    _reindex(repo)  # §44: title/body/tags 都是索引列(summary/dedup_key 派生自它们),
+    return e        # 滞留则 kb_get 返回旧文、去重指纹与面板展示全部失真
 
 
 def review(repo, id: str, to: str, today: dt.date | None = None, *,

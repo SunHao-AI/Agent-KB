@@ -1,6 +1,6 @@
 import datetime as dt
 import pytest
-from kb.gate import update_draft, review, set_scope, export_entry, GateViolation
+from kb.gate import update_entry, review, set_scope, export_entry, GateViolation
 from kb.entry import parse_entry
 from conftest import make_entry
 
@@ -20,20 +20,51 @@ def _mk(tmp_repo, eid, status="draft", conf="speculative", scope="project", tags
 
 def test_update_draft_ok(tmp_repo):
     _mk(tmp_repo, "kb-20261014-aaaa")
-    e = update_draft(tmp_repo, "kb-20261014-aaaa", body="## 根因\n新机制。\n", today=TODAY)
+    e = update_entry(tmp_repo, "kb-20261014-aaaa", body="## 根因\n新机制。\n", today=TODAY)
     assert e.body.count("新机制") == 1 and e.fm["updated"] == "2026-10-14"
     assert e.fm["status"] == "draft"
+    assert "revision" not in e.fm
 
 
-def test_update_draft_rejects_accepted(tmp_repo):
-    _mk(tmp_repo, "kb-20261014-bbbb", status="accepted", conf="verified")
-    with pytest.raises(GateViolation, match="accepted"):
-        update_draft(tmp_repo, "kb-20261014-bbbb", body="x")
+def test_update_proposed_ok_no_downgrade(tmp_repo):
+    """proposed 是建议期过渡态: 可全量改且不动 status。"""
+    _mk(tmp_repo, "kb-20261014-ppp1", status="proposed", conf="probable")
+    e = update_entry(tmp_repo, "kb-20261014-ppp1", body="## 根因\n补充。\n", today=TODAY)
+    assert e.fm["status"] == "proposed"
+    assert "revision" not in e.fm
+
+
+def test_update_accepted_downgrades_to_proposed(tmp_repo):
+    """已终审条目被编辑 → 自动降级重审, 且清掉"当时通过"的留痕(留着会误导抽查)."""
+    from kb.entry import dump_entry
+    p = _mk(tmp_repo, "kb-20261014-bbbb", status="accepted", conf="verified",
+            tags=["auto-reviewed"])
+    cur = parse_entry(p)
+    cur.fm["verified_by"] = "agent"
+    cur.fm["verification"] = {"evidence": "旧证据", "reviewed_at": "2026-10-14"}
+    p.write_text(dump_entry(cur), encoding="utf-8")
+    e = update_entry(tmp_repo, "kb-20261014-bbbb", body="## 根因\n改写了。\n", today=TODAY)
+    assert e.fm["status"] == "proposed"
+    assert "verified_by" not in e.fm
+    assert "verification" not in e.fm
+    assert "auto-reviewed" not in (e.fm.get("tags") or [])
+    assert e.fm["revision"]["from_status"] == "accepted"
+    assert e.fm["revision"]["reason"] == "content-edited"
+    assert e.fm["revision"]["at"] == "2026-10-14"
+    # confidence 不回退: 降级只影响 status, 重审时再确认
+    assert e.fm["confidence"] == "verified"
+
+
+@pytest.mark.parametrize("st", ["deprecated", "superseded"])
+def test_update_rejects_terminal(tmp_repo, st):
+    _mk(tmp_repo, "kb-20261014-term", status=st, conf="verified")
+    with pytest.raises(GateViolation, match=st):
+        update_entry(tmp_repo, "kb-20261014-term", body="x")
 
 
 def test_update_draft_missing_id(tmp_repo):
     with pytest.raises(FileNotFoundError):
-        update_draft(tmp_repo, "kb-20261014-9999", body="x")
+        update_entry(tmp_repo, "kb-20261014-9999", body="x")
 
 
 @pytest.mark.parametrize("frm,conf,to,ok", [
@@ -206,7 +237,7 @@ def test_update_draft_refreshes_draft_index(tmp_repo):
     指纹全部滞留旧值。"""
     import json
     _mk(tmp_repo, "kb-20261014-c1c1", title="旧标题")
-    update_draft(tmp_repo, "kb-20261014-c1c1", title="新标题", today=TODAY)
+    update_entry(tmp_repo, "kb-20261014-c1c1", title="新标题", today=TODAY)
     rec = [json.loads(x) for x in
            (tmp_repo / "kb" / "index.draft.jsonl").read_text(encoding="utf-8").splitlines()
            if x.strip()]

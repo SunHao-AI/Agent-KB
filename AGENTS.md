@@ -79,7 +79,16 @@ kb doctor --repo docs --agent-kb .agent-kb      # 接入自检(FAIL 才退 1)
     tag 后才命中)——中英各补一组, 别只补一边。
 4. 无实测证据的结论**必须**标 `confidence: speculative`; 采信时默认只信 verified/probable,
    `speculative` 结论须自行验证后才可依据(检索本身不做 confidence 过滤)。
-5. 单次任务最多沉淀 **3 条**, 自主终审 accepted 单会话也**最多 3 条**, 防刷噪音。
+5. 单次任务最多沉淀 **3 条**(防刷噪音的节流点在新建); **自主终审 accepted 不限次**
+   ——清理存量 backlog 不该被会话上限切成多轮, accepted 的硬约束只剩 evidence +
+   confidence 提升 + `auto-reviewed` 留痕。
+6. `kb_update` 可编辑本项目 draft/proposed; **编辑已 accepted 的条目会自动降级
+   proposed**(结论被改动必须重审), 并清掉 `verified_by`/`verification`/`auto-reviewed`
+   留痕、写 `revision` 审计字段。deprecated/superseded 终态不可编辑。
+
+> **不要手改 front-matter**: confidence 提升不是"人工改文件", 而是一次
+> `kb review <id> --to accepted --confidence verified --evidence "实测证据出处" --repo docs`
+> (MCP 面同名为 `kb_review`)。手改 status/confidence 属绕过门控的违规操作。
 
 ## 收录标准
 

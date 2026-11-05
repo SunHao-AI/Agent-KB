@@ -9,10 +9,8 @@ from mcp.server.fastmcp import FastMCP
 from kb import trace as kbtrace
 from kb import sources
 from kb.gate import (DuplicateCandidate, GateViolation, create_draft, review,
-                     update_draft)
+                     update_entry)
 from kb.layers import get_layered, related_layers, search_layers_report
-
-AUTO_ACCEPT_CAP = 3  # 单次会话(每 server 实例) agent 自审 accepted 上限
 
 
 def _json(obj) -> str:
@@ -32,7 +30,6 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
     name = repo_name or repo.resolve().name.lower()
     connectors = sources.build_connectors()  # FR-6: 默认空(纯本地), KB_SOURCES 开启
     mcp = FastMCP(f"kb-{name}")
-    auto_accepted = 0  # 本会话已自审 accepted 计数
 
     @mcp.tool()
     def kb_search(query: str | None = None, type: str | None = None,
@@ -161,9 +158,14 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
     @mcp.tool()
     def kb_update(id: str, title: str | None = None, body: str | None = None,
                   tags: list[str] | None = None, severity: str | None = None) -> str:
-        """更新**本项目 draft 条目**。accepted/proposed 一律拒绝(人工 CLI 专用)。"""
+        """更新**本项目条目**正文/元数据。
+
+        draft/proposed 直接改; accepted 改完自动降级 proposed 并清掉终审留痕
+        (结论已被改动, 必须重审), 审计痕迹写进 revision;
+        deprecated/superseded 终态拒绝编辑。scope 与 status 本身不在此入口,
+        状态流转走 kb_review, scope 上提只能人工 CLI。"""
         try:
-            e = update_draft(repo, id, title=title, body=body, tags=tags, severity=severity)
+            e = update_entry(repo, id, title=title, body=body, tags=tags, severity=severity)
         except FileNotFoundError:
             raise ValueError(f"not found in project layer: {id}") from None
         return _json({**e.fm, "path": str(e.path)})
@@ -176,25 +178,20 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
         规则: 流转必须沿合法路径(draft→accepted 或 proposed→accepted);
         accepted 必须带实测 evidence 并把 confidence 提升为 verified/probable,
         否则被拒(speculative 不可 accepted)。自审 accepted 会打 auto-reviewed
-        留痕, 单会话最多 3 条。scope 上提(stack/universal)仍只能人工 CLI。"""
-        nonlocal auto_accepted
+        留痕供事后抽查回滚, 终审条数不限(节流靠 kb_create 的单任务沉淀上限,
+        清理存量 backlog 不该被切成多个会话)。scope 上提(stack/universal)仍只能人工 CLI。"""
         try:
             if to == "accepted":
                 if not (evidence and evidence.strip()):
                     raise GateViolation(
                         f"{id}: accepted 需先完成自行验证并附 evidence"
                         f"(当前 confidence=speculative 不可 accepted)")
-                if auto_accepted >= AUTO_ACCEPT_CAP:
-                    raise GateViolation(
-                        f"{id}: 单次会话自主终审已达上限 {AUTO_ACCEPT_CAP} 条")
             e = review(repo, id, to, by="agent", confidence=confidence,
                        evidence=evidence)
         except GateViolation as exc:
             raise ValueError(str(exc)) from None
         except FileNotFoundError:
             raise ValueError(f"not found in project layer: {id}") from None
-        if to == "accepted":
-            auto_accepted += 1
         return _json({**e.fm, "path": str(e.path)})
 
     return mcp

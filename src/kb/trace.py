@@ -221,7 +221,11 @@ def _parse_file(f: Path) -> tuple[list, list, list]:
     searches: list[dict] = []
     gets: list[dict] = []
     warns: list[str] = []
-    lines = [ln for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    # errors="replace": 账本 append-only(kb-2026-11-02-caller), 写入侧一旦落进非 UTF-8
+    # 字节就永久留在历史里, 严格解码会让整个文件读不出来 → stats/feed/report 全挂。
+    # 替换后坏行由下面的 bad line 分支跳过并记 warn, 与 §26/§47 的行级容错口径一致。
+    lines = [ln for ln in f.read_text(encoding="utf-8", errors="replace").splitlines()
+             if ln.strip()]
     if not lines:
         warns.append(f"{f.name}: 空文件, 跳过")
     else:

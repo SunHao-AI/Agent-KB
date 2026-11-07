@@ -136,6 +136,19 @@ def test_read_skips_bad_line_and_warns(kbroot):
     assert any("bad line" in w for w in warns)
 
 
+def test_read_survives_non_utf8_bytes(kbroot):
+    """2026-11-07 回归: 账本里落进非 UTF-8 字节(写入侧 GBK 残片)时, 严格解码曾让
+    trace report / stats / feed 整体 UnicodeDecodeError 全挂。读取改 errors="replace",
+    坏行退回既有 bad line 分支跳过, 其余事件照常返回。"""
+    name = f"{dt.date.today():%Y-%m-%d}.jsonl"
+    d = _write(kbroot, name, [{"kind": "meta", "schema": 1}, _ev(1)])
+    with (d / name).open("ab") as fh:
+        fh.write(b'\xac", "\xe4\xbb\xbb\n')
+    searches, _, warns = trace.read_traces(root=kbroot)
+    assert {s["trace_id"] for s in searches} == {"t-1"}
+    assert any("bad line" in w for w in warns)
+
+
 def test_read_coerces_dirty_types_and_warns(kbroot):
     """§26 回归: 脏类型(null/非列表 returned/非数值 chars)解析期归一, 不再让 stats 崩。"""
     bad_ret, bad_chars = _ev(2), _ev(3)

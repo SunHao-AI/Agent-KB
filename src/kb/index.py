@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from kb.dedup import fingerprint, h2_sections
 from kb.entry import Entry, iter_entry_paths, parse_entry
+from kb.fskit import write_text_lf
 
 # FR-3.4 keywords 派生(竞品 Mem0 "entity 信号"的零依赖本地化): agent 最自然的
 # 查询词往往是报错串/函数名/配置键, 它们只出现在正文。取三类高信息标识符;
@@ -138,9 +139,9 @@ def build_indexes(repo_root: Path, repo_name: str = "agent-kb"):
     md = root / "INDEX.md"
     jl = root / "index.jsonl"
     dj = root / "index.draft.jsonl"
-    md.write_text(_md(live), encoding="utf-8")
-    jl.write_text(_jsonl(live), encoding="utf-8")
-    dj.write_text(_jsonl(draft), encoding="utf-8")
+    write_text_lf(md, _md(live))
+    write_text_lf(jl, _jsonl(live))
+    write_text_lf(dj, _jsonl(draft))
     return md, jl, dj
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 from kb.taxonomy import load_taxonomy
 from kb.entry import Entry, iter_entry_paths, parse_entry
+from kb.fskit import write_text_lf
 
 _NONKEBAB = re.compile(r"[^a-z0-9]+")
 
@@ -95,5 +96,5 @@ def create_entry(repo_root: Path, type: str, domain: str, scope: str,
     body = f"\n# {title}\n\n{_template_body(type)}"
     path = _unique_path(Path(repo_root), type, domain, title, today, fm["id"])
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{fm_text}\n---\n{body}", encoding="utf-8")
+    write_text_lf(path, f"---\n{fm_text}\n---\n{body}")
     return parse_entry(path)

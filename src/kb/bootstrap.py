@@ -16,6 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from kb.fskit import write_text_lf
+
 INTERPRETERS = (".venv/bin/python", ".venv/Scripts/python.exe")
 
 
@@ -205,9 +207,8 @@ def init_repo(kb_base: Path, agent_kb: Path | None, kb_dir: str,
     if out.exists() and not force:
         raise FileExistsError(f"{out} 已存在(覆盖请加 --force)")
     name = (repo_name or repo.resolve().name).lower()
-    out.write_text(render_mcp_json(name, kb_dir, ak_rel, cmd_rel, mcp_name,
-                                   serve_url=serve_url),
-                   encoding="utf-8")
+    write_text_lf(out, render_mcp_json(name, kb_dir, ak_rel, cmd_rel, mcp_name,
+                                       serve_url=serve_url))
     userconf_path = None
     if serve_url:  # 凭据只落用户级(团队态令牌分发标准动作, 见 PRD FR-2.5 示例)
         from kb.userconf import write_serve_config

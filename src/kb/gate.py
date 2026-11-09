@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from kb.dedup import fingerprint, fingerprint_source, fingerprint_text
 from kb.entry import Entry, parse_entry, dump_entry, iter_entry_paths
+from kb.fskit import write_text_lf
 from kb.new_entry import create_entry
 from kb.taxonomy import load_taxonomy
 
@@ -133,7 +134,7 @@ def create_draft(repo, *, type: str, domain: str, title: str, body: str | None =
             cur.fm["tags"] = list(tags)
         if severity:
             cur.fm["severity"] = severity
-        e.path.write_text(dump_entry(cur), encoding="utf-8")
+        write_text_lf(e.path, dump_entry(cur))
         e = parse_entry(e.path)
     _reindex(repo)  # §44: 新建 draft 要进 index.draft.jsonl——get_entry/kb_get/related
     return e        # 的底座 query._records 只读两个索引文件, 不重建则"create 返回
@@ -165,7 +166,7 @@ def _find(repo, id: str) -> Path:
 
 def _save(p: Path, fm: dict, body: str, today: dt.date) -> Entry:
     fm["updated"] = today.isoformat()
-    p.write_text(dump_entry(Entry(fm=fm, body=body, path=p)), encoding="utf-8")
+    write_text_lf(p, dump_entry(Entry(fm=fm, body=body, path=p)))
     return parse_entry(p)
 
 
@@ -364,7 +365,7 @@ def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
     fm["source"] = {**src_meta,
                     "project": src_meta.get("project") or _project_name(project_repo)}
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(dump_entry(Entry(fm=fm, body=e.body, path=dst)), encoding="utf-8")
+    write_text_lf(dst, dump_entry(Entry(fm=fm, body=e.body, path=dst)))
     src.unlink()
     # 搬移后重建双方索引: 旧实现两仓 index 均滞留——源仓检索命中已删条目(断链),
     # 目标仓检索看不到新条目直到有人手动 kb index(第十四轮走查)

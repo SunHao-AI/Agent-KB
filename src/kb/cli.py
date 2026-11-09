@@ -13,6 +13,7 @@ from kb.gate import DuplicateCandidate, GateViolation, create_draft, export_entr
 from kb.gate import review as gate_review
 from kb.gate import set_scope as gate_set_scope
 from kb.entry import dump_entry, parse_entry
+from kb.fskit import write_text_lf
 from kb.index import build_indexes, check_indexes, resolve_repo_name
 from kb.layers import get_layered, related_layers, search_layers_report
 from kb.lint import lint_repo
@@ -219,7 +220,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
             if args.severity:
                 cur = parse_entry(e.path)
                 cur.fm["severity"] = args.severity
-                e.path.write_text(dump_entry(cur), encoding="utf-8")
+                write_text_lf(e.path, dump_entry(cur))
             # §44: 非门控路径建的是 proposed(进 live 池), 与 create_draft 同理须重建,
             # 否则 `kb new` 返回路径后立刻 `kb show <id>` 报 not found
             from kb.gate import _reindex
@@ -267,7 +268,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
         warns = [e for e in errs if e.startswith("warning: ")]
         hard = [e for e in errs if not e.startswith("warning: ")]
         if args.update_baseline:
-            base_path.write_text("".join(w + "\n" for w in sorted(warns)), encoding="utf-8")
+            write_text_lf(base_path, "".join(w + "\n" for w in sorted(warns)))
             print(f"baseline updated: {len(warns)} warnings -> {base_path}")
             for e in hard:
                 print(e, file=sys.stderr)
@@ -468,8 +469,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
             rec = to_record(ev, [g for g in gets
                                  if g.get("trace_id") == args.id])
             out = Path(args.out) if args.out else Path(f"{args.id}.json")
-            out.write_text(json.dumps(rec, ensure_ascii=False, indent=2),
-                           encoding="utf-8")
+            write_text_lf(out, json.dumps(rec, ensure_ascii=False, indent=2))
             print(out)
             return 0
         if args.trace_cmd == "report":

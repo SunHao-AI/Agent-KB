@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from kb.fskit import write_text_lf
+
 TASK_NAME = "kb-serve"
 UNIT_NAME = "kb-serve.service"
 
@@ -125,7 +127,7 @@ def install_systemd(repo: Path, port: int, bind: str,
     cmd, args, wd = serve_command(repo, port, bind, default_caller, extra_repos)
     unit = Path.home() / ".config" / "systemd" / "user" / UNIT_NAME
     unit.parent.mkdir(parents=True, exist_ok=True)
-    unit.write_text(render_systemd_unit(cmd, args, wd), encoding="utf-8")
+    write_text_lf(unit, render_systemd_unit(cmd, args, wd))
     rc, msg = _run(["systemctl", "--user", "daemon-reload"])
     if rc != 0:
         raise RuntimeError(f"systemctl daemon-reload 失败: {msg}")

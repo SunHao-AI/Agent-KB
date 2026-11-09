@@ -82,6 +82,22 @@ def test_new_file_writes_meta_once(kbroot):
     assert len(lines) == 3
 
 
+def test_append_event_writes_lf_on_windows(kbroot):
+    """回归: append 必须以 LF 落盘。
+
+    Windows 上 `open("a", newline=None)` 会把 "\n" 译成 "\r\n", JSONL 尾随 \r
+    曾污染展示层(live.py fmtKV/fmtTable)。修复 = f.open(..., newline="\n")。
+    """
+    trace.append_event(_ev(1), root=kbroot)
+    trace.append_event(_ev(2), root=kbroot)
+    f = next((kbroot / "traces").glob("*.jsonl"))
+    raw = f.read_bytes()
+    assert b"\r" not in raw
+    assert raw.endswith(b"\n")
+    for ln in raw.decode("utf-8").splitlines():
+        json.loads(ln)  # 无 \r 残留, 每行可解析
+
+
 def test_read_splits_search_and_get(kbroot):
     trace.append_event(_ev(1), root=kbroot)
     trace.append_event(_ev(1, kind="get"), root=kbroot)

@@ -98,7 +98,7 @@ def append_event(event: dict, root: Path | None = None, *,
         with _APPEND_LOCK:  # 锁内一次写完多行, 保证行完整性
             head = [] if f.exists() else [json.dumps({"kind": "meta", "schema": SCHEMA},
                                                      ensure_ascii=False)]
-            with f.open("a", encoding="utf-8") as fh:
+            with f.open("a", encoding="utf-8", newline="\n") as fh:
                 fh.write("".join(ln + "\n" for ln in [*head, line]))
     except OSError:
         return

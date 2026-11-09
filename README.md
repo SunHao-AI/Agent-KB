@@ -149,11 +149,13 @@ git 始终是权威账本, ingest 上报只是直播加速通道(幂等按 trace
 - **要多团队**: 优先双令牌重叠期轮换(serve 并行校验新旧两把), 或每团队独立 serve。
 - **traces/ 年增长 >50MB**: 触发月分卷评审; **>20 人或 ≥2 仓同连一把 serve**: 触发小规模压测。
 
-### trace 提交节奏(D-3 约定)
+### trace 提交节奏(D-3 约定, 2026-11-09 更新)
 
-`traces/` 随检索不断变脏, 约定**每日定时任务自动提交**(每天 18:30, 只 commit 不
-push, 推送仍人工): 平时不必手动提交 traces/, 也不必为它改 pre-push 钩子; 功能提交
-时看到 traces/ 脏属预期, 跳过即可。周报/日报类自动化见 `docs/reports/`。
+`traces/` 随检索不断变脏, 约定**每日定时任务自动提交并推送**(每天 18:30, commit 后
+直接 push origin/master, 随后 `reset origin/master` + `clean -fd traces/` 复原工作树,
+日常保持 clean): 平时不必手动提交 traces/, 也不必为它改 pre-push 钩子。traces/ 现已
+上远端, 各仓 submodule pin 会校验到这些 commit, 钩子不再报"未 push commit 不可达"。
+周报/日报类自动化见 `docs/reports/`。
 
 ## 贡献流程
 

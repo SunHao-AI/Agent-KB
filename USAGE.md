@@ -174,7 +174,7 @@ kb trace report --format md               # 零命中周报(高频待消化词 +
 
 trace 落盘到本仓 `traces/YYYY-MM-DD.jsonl`(入 git, 只含元数据与摘要级信息, 永不写正文)。
 优先级: 命令显式 `--trace/--no-trace` > 环境变量 `KB_TRACE` > 仓根 `.kb-trace` 标记 > 默认关闭。
-`traces/` 由每日定时任务自动 commit(不 push), **不要**把它混进功能提交。
+`traces/` 由每日定时任务自动 commit + push(2026-11-09 起, 详见 README「trace 提交节奏」), **不要**把它混进功能提交。
 
 团队常开态(非本机 bind 必须带令牌, 否则 serve 拒绝启动):
 

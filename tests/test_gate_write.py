@@ -179,6 +179,67 @@ def test_review_invalid_confidence_rejected(tmp_repo):
     assert e.fm["confidence"] == "verified"
 
 
+# --- 复核升级通道(kb-20261109-0ac8): accepted 自环升 confidence ---
+def test_review_reverify_accepted_upgrade_ok(tmp_repo):
+    """已 accepted/probable 拿到实测证据 → 同状态 + --confidence verified + evidence
+    应放行(修复前: accepted 无出边, 纯 CLI 会话无任何合规通道, 只能手改违规)。"""
+    _mk(tmp_repo, "kb-20261014-rv03", status="accepted", conf="probable")
+    e = review(tmp_repo, "kb-20261014-rv03", "accepted", by="agent",
+               confidence="verified", evidence="2026-10-14 实测复跑全过", today=TODAY)
+    assert e.fm["status"] == "accepted"
+    assert e.fm["confidence"] == "verified"
+    assert e.fm["verification"] == {"evidence": "2026-10-14 实测复跑全过",
+                                    "reviewed_at": "2026-10-14"}
+    assert e.fm["verified_by"] == "agent"
+    assert "auto-reviewed" in e.fm.get("tags", [])
+
+
+def test_review_reverify_requires_evidence(tmp_repo):
+    _mk(tmp_repo, "kb-20261014-rv04", status="accepted", conf="probable")
+    with pytest.raises(GateViolation, match="requires --evidence"):
+        review(tmp_repo, "kb-20261014-rv04", "accepted", confidence="verified",
+               today=TODAY)
+    with pytest.raises(GateViolation, match="requires --evidence"):
+        review(tmp_repo, "kb-20261014-rv04", "accepted", confidence="verified",
+               evidence="   ", today=TODAY)
+    # 拒绝不留半成品
+    e = parse_entry(tmp_repo / "kb" / "pitfall" / "frontend" / "kb-20261014-rv04.md")
+    assert e.fm["confidence"] == "probable" and "verification" not in e.fm
+
+
+def test_review_reverify_requires_upgrade(tmp_repo):
+    """无信息量的自环(同 confidence / 不给 confidence / 降 confidence)一律拒绝——
+    防止刷 updated 与 verification 制造虚假活跃度。"""
+    _mk(tmp_repo, "kb-20261014-rv05", status="accepted", conf="probable")
+    with pytest.raises(GateViolation, match="requires confidence upgrade"):
+        review(tmp_repo, "kb-20261014-rv05", "accepted", evidence="再看一下",
+               today=TODAY)
+    with pytest.raises(GateViolation, match="requires confidence upgrade"):
+        review(tmp_repo, "kb-20261014-rv05", "accepted", confidence="probable",
+               evidence="同档重审", today=TODAY)
+    with pytest.raises(GateViolation, match="cannot lower confidence"):
+        review(tmp_repo, "kb-20261014-rv05", "accepted", confidence="speculative",
+               evidence="想降回去", today=TODAY)
+    e = parse_entry(tmp_repo / "kb" / "pitfall" / "frontend" / "kb-20261014-rv05.md")
+    assert e.fm["confidence"] == "probable"
+
+
+def test_review_reverify_top_confidence_rejected(tmp_repo):
+    """verified 已顶格: 自环没有可升的档位, 只能走 kb_update 改正文降级重审。"""
+    _mk(tmp_repo, "kb-20261014-rv06", status="accepted", conf="verified")
+    with pytest.raises(GateViolation, match="requires confidence upgrade"):
+        review(tmp_repo, "kb-20261014-rv06", "accepted", confidence="verified",
+               evidence="已顶格", today=TODAY)
+
+
+def test_review_accepted_still_rejects_other_same_status(tmp_repo):
+    """自环只放行 accepted; draft/proposed/deprecated 的同状态流转仍按状态机拒绝。"""
+    for st in ("draft", "proposed", "deprecated"):
+        _mk(tmp_repo, f"kb-20261014-same-{st[:4]}", status=st, conf="probable")
+        with pytest.raises(GateViolation, match="illegal transition"):
+            review(tmp_repo, f"kb-20261014-same-{st[:4]}", st)
+
+
 # --- §43 第二十五轮: 写路径改 live 池字段后必须重建索引 ---
 def test_review_accepted_makes_entry_searchable_immediately(tmp_repo):
     """红线1 闭环: agent 自审 accepted"无需等人工"——若 review 不重建 index.jsonl,

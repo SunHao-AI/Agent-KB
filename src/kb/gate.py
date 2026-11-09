@@ -258,7 +258,29 @@ def review(repo, id: str, to: str, today: dt.date | None = None, *,
     if to == "accepted" and confidence in ("verified", "probable"):
         fm["confidence"] = confidence
     frm = e.fm.get("status", "")
-    if to not in _TRANSITIONS.get(frm, set()):
+    if frm == to == "accepted":
+        # 复核升级通道(kb-20261109-0ac8): _TRANSITIONS 中 accepted 无回自身出边,
+        # 后来拿到实测证据要升 confidence 时, 纯 CLI 会话(MCP kb_update 的降级重审
+        # 路径不可用)没有任何合规通道。放行 accepted 自环, 但语义是"复核"而非重复
+        # 终审: 必须带非空 evidence + confidence 严格升级(verified > probable >
+        # speculative), 否则拒绝——防止无信息量的自环刷 updated/verification。
+        # 审计留痕走下方既有 accepted 分支(verification 覆盖为本次证据)。
+        order = load_taxonomy()["enums"]["confidence"]   # [verified, probable, ...]
+        cur_c = e.fm.get("confidence")   # 用提升前的原值比较(fm 已在上文被写入
+        # --confidence, 读 fm 会把"本次要升到的档"误判成当前档, 使正常升级自拒)
+        if not (evidence or "").strip():
+            raise GateViolation(
+                f"{id}: accepted reverification requires --evidence")
+        if (confidence not in order or confidence == cur_c
+                or cur_c not in order):
+            raise GateViolation(
+                f"{id}: accepted reverification requires confidence upgrade "
+                f"(current: {cur_c})")
+        if order.index(confidence) > order.index(cur_c):
+            raise GateViolation(
+                f"{id}: accepted reverification cannot lower confidence "
+                f"({cur_c} -> {confidence})")
+    elif to not in _TRANSITIONS.get(frm, set()):
         raise GateViolation(f"{id}: illegal transition {frm} -> {to}")
     if to == "accepted" and fm.get("confidence") == "speculative":
         raise GateViolation(f"{id}: confidence=speculative must be verified before accepted")

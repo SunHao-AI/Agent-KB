@@ -1269,7 +1269,7 @@ async function loadWeek(){
       +bars+pctLine('hit_rate','var(--ok)')+pctLine('consume_rate','var(--link)')
       +pctLine('digest_rate','var(--warn)')+`</svg>`
       +`<div style="display:flex;justify-content:space-between;font:9px Consolas,monospace;color:var(--mu)">`
-      +snaps.map(s=>`<span${s.cold_start?' style="color:var(--warn)" title="冷启动周(样本<3), 比率不稳"':''}>${esc(String(s.week).slice(5))}</span>`).join('')+`</div>`
+      +snaps.map(s=>`<span${s.cold_start?' style="color:var(--warn)" title="冷启动周(有效检索日 <7 天), 比率不稳"':''}>${esc(String(s.week).slice(5))}</span>`).join('')+`</div>`
       +`<div class="s" style="font-size:11px;color:var(--mu)">━ <span style="color:var(--ok)">命中率</span> · ━ <span style="color:var(--link)">消费率</span> · ━ <span style="color:var(--warn)">消化率</span> · ▮ 检索量(悬停看精确值)</div>`
       +(d.warns&&d.warns.length?`<div style="font-size:11px;color:var(--warn)">⚠ 快照告警 ${d.warns.length} 条(坏文件已跳过)</div>`:'')
       +`</div>`;

@@ -21,8 +21,8 @@
 | --- | --- | --- |
 | 核心 KPI | `aggregate(searches, gets, since, until)` | hit_rate / consume_rate / searches / not_executed_count / returned_total / consumed_total / saved_chars_est / saved_unknown_count / overhead_chars / by_caller / by_day / cold_start |
 | 延迟 | `latency()` | n / p50_ms / p95_ms / avg_ms / max_ms |
-| 零命中榜 | `zero_hit_board(win, limit=30)` | board / digested / digest_rate |
-| 多仓归因 | `callers_matrix()` | 各 caller 窗口内计数 + stale(>14d 掉线), 落盘为快照顶层 `callers` 键(区别于 `metrics.by_caller` 的逐日聚合) |
+| 零命中榜 | `zero_hit_board(searches, limit=30)`(单参、返回 list, 行内带 `digested` 布尔) | board / digested / digest_rate |
+| 多仓归因 | `callers(searches, *, since, until)` | 各 caller 窗口内计数 + stale(>14d 掉线), 落盘为快照顶层 `callers` 键(区别于 `metrics.by_caller` 的逐日聚合) |
 
 - 周号解析: 接受 `YYYY-Www`(如 `2026-W45`), 用 `date.fromisocalendar(y, w, 1/7)`
   得周一/周日; 非法值 argparse 即拒(对齐 `_date_arg` 入口即拒风格)。
@@ -50,7 +50,7 @@
   "metrics": { "…aggregate() 原样…": null },
   "latency": { "…latency() 原样…": null },
   "zero_hit": { "board": [], "digested": [], "digest_rate": 0.0 },
-  "callers": { "…callers_matrix() 摘要: 各仓计数 + stale…": null },
+  "callers": { "…callers() 摘要: 各仓计数 + stale…": null },
   "warns": []
 }
 ```

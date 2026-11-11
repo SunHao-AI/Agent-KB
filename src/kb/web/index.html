@@ -1246,7 +1246,10 @@ async function loadWeek(){
   const box=$('weekTrend');
   try{
     const r=await fetch(apiUrl('/api/metrics'));
-    if(r.status!=200)return;
+    // 非 200 不能静默 return: 401/500 时卡片会永久空白, 与"快照不足"占位混淆,
+    // 用户读不出是没数据还是接口挂了。
+    if(r.status!=200){box.innerHTML=
+      `<div style="color:var(--warn);font-size:12px;padding:4px 0">⚠ 周指标接口返回 HTTP ${r.status}(需团队令牌? 见面板首次连接提示)</div>`;return;}
     const d=await r.json();
     const snaps=(d.snapshots||[]).slice(-12);      // 最多 12 周, 老快照留在账本不挤面板
     if(snaps.length<2){box.innerHTML=

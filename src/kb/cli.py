@@ -34,6 +34,16 @@ def _date_arg(v: str) -> str:
     return v
 
 
+def _week_arg(s: str) -> str:
+    """ISO 周号入口即拒(对齐 _date_arg): 坏周号不进业务面。"""
+    from kb import metrics as _m
+    try:
+        _m.week_bounds(s)
+    except ValueError as exc:
+        raise argparse.ArgumentError(None, str(exc)) from None
+    return s
+
+
 def _dispatch(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="kb")
     common = argparse.ArgumentParser(add_help=False)
@@ -188,6 +198,18 @@ def _dispatch(argv: list[str] | None = None) -> int:
                        help="YYYY-MM-DD, 默认近 7 天")
     p_trp.add_argument("--caller", default=None)
     p_trp.add_argument("--format", default="md", choices=["md", "json"])
+
+    # 长周期观测: 自然周指标快照(不可变账本)+ 周报 + 消化工单建议
+    p_tsn = tr_sub.add_parser("snapshot",
+                              help="周指标快照(落盘 traces/metrics/ + 周报 + 消化工单建议)")
+    p_tsn.add_argument("--repo", default=None,
+                       help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
+    p_tsn.add_argument("--week", default=None, type=_week_arg,
+                       help="YYYY-Www(如 2026-W45), 默认上一个完整自然周")
+    p_tsn.add_argument("--force", action="store_true",
+                       help="重写已存在的周快照(改变历史口径, 需在评审说明)")
+    p_tsn.add_argument("--format", default="md", choices=["md", "json"],
+                       help="md=周报正文(默认); json=快照原文(供脚本消费)")
 
     args = ap.parse_args(argv)
     # trace 子命令 --repo 缺省 None(= kb_root()); 其余命令经 common 恒有默认 "."
@@ -498,6 +520,25 @@ def _dispatch(argv: list[str] | None = None) -> int:
                           f"最近 {r['last_ts'][:10]})")
             else:
                 print("\n本窗口零命中已全部消化 ✅")
+            return 0
+        if args.trace_cmd == "snapshot":
+            from kb import metrics as kbmetrics
+            week = args.week or kbmetrics.prev_week()
+            try:
+                snap = kbmetrics.build_snapshot(root, week)
+                path = kbmetrics.write_snapshot(root, snap, force=args.force)
+            except FileExistsError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            if args.format == "json":
+                print(json.dumps(snap, ensure_ascii=False, indent=2))
+                return 0
+            snaps, _w = kbmetrics.load_snapshots(root)
+            prev = next((s for s in reversed(snaps)
+                         if s.get("week") == kbmetrics.prev_of(week)), None)
+            plan = kbmetrics.digest_plan(root, snap)
+            print(kbmetrics.report_markdown(snap, prev, plan))
+            print(f"\n快照已落盘: {path.relative_to(root) if root else path}")
             return 0
         if args.trace_cmd == "show":
             ev = kbtrace.find_trace(args.id, root=root)

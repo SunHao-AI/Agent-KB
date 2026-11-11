@@ -249,6 +249,8 @@ document.documentElement.dataset.theme=m==='auto'?(matchMedia('(prefers-color-sc
   <button class="xbtn" data-ex="trend" title="导出逐日序列 CSV">趋势 CSV</button></h3>
   <div id="trendFocus" style="display:none;font-size:11.5px;color:var(--warn);padding:2px 0 4px"></div>
   <div id="trend" style="overflow-x:auto"></div></div>
+<div class="card" id="weekCard"><h3>周趋势 <span class="tip">逐周快照(不可变账本) · 命中率/消费率/消化率三条折线 + 检索量柱 · 快照由 kb trace snapshot 每周一生成</span></h3>
+  <div id="weekTrend" style="overflow-x:auto"></div></div>
 <div class="card" id="matrixCard" style="display:none"><h3>项目矩阵
   <span class="tip">点击项目行 → 下钻到该项目单项目视图</span></h3>
   <div id="matrixWrap"><table id="matrix"></table></div></div>
@@ -1237,6 +1239,39 @@ async function loadTrend(){
     else tf.style.display='none';
   }catch(e){/* 趋势失败不整卡报错, 保留上次曲线 */}
 }
+// W1 周趋势: 只画 /api/metrics 的不可变周快照(与逐日瞬时窗口互补, 零前端计算)。
+// 快照 <2 个画不出"趋势"(单点没有斜率), 显式占位而不是硬画 —— 冷启动期
+// 用户需要知道"为什么没有", 沉默空白会被读成坏了(仿 loadTrend 冷启动占位)。
+async function loadWeek(){
+  const box=$('weekTrend');
+  try{
+    const r=await fetch(apiUrl('/api/metrics'));
+    if(r.status!=200)return;
+    const d=await r.json();
+    const snaps=(d.snapshots||[]).slice(-12);      // 最多 12 周, 老快照留在账本不挤面板
+    if(snaps.length<2){box.innerHTML=
+      '<div style="color:var(--mu);font-size:12px;padding:6px 0">周快照不足 2 个, 趋势暂不绘制(每周一自动生成, 或手动 kb trace snapshot 回补)</div>';return;}
+    const pctLine=(key,color)=>{                 // 0~1 比率 → y 坐标折线
+      const pts=snaps.map((s,i)=>s[key]==null?null:
+        [8+56*i/(snaps.length-1),86-70*s[key]].join(','));
+      const ok=pts.filter(p=>p);
+      if(ok.length<2)return '';
+      return `<polyline fill="none" stroke="${color}" stroke-width="1.6" points="${ok.join(' ')}"/>`;};
+    const mx=Math.max(1,...snaps.map(s=>s.searches||0));
+    const bars=snaps.map((s,i)=>{
+      const h=Math.round(64*(s.searches||0)/mx);
+      const x=8+56*i/(snaps.length-1);
+      return `<rect x="${(x-2.4).toFixed(1)}" y="${(86-h).toFixed(1)}" width="4.8" height="${Math.max(1,h)}" fill="var(--trendoff)" opacity="0.5"><title>${esc(s.week)} · ${s.searches||0} 次检索</title></rect>`;}).join('');
+    box.innerHTML=`<div style="min-width:340px"><svg viewBox="0 0 68 96" style="width:100%;height:130px" preserveAspectRatio="none">`
+      +bars+pctLine('hit_rate','var(--ok)')+pctLine('consume_rate','var(--link)')
+      +pctLine('digest_rate','var(--warn)')+`</svg>`
+      +`<div style="display:flex;justify-content:space-between;font:9px Consolas,monospace;color:var(--mu)">`
+      +snaps.map(s=>`<span${s.cold_start?' style="color:var(--warn)" title="冷启动周(样本<3), 比率不稳"':''}>${esc(String(s.week).slice(5))}</span>`).join('')+`</div>`
+      +`<div class="s" style="font-size:11px;color:var(--mu)">━ <span style="color:var(--ok)">命中率</span> · ━ <span style="color:var(--link)">消费率</span> · ━ <span style="color:var(--warn)">消化率</span> · ▮ 检索量(悬停看精确值)</div>`
+      +(d.warns&&d.warns.length?`<div style="font-size:11px;color:var(--warn)">⚠ 快照告警 ${d.warns.length} 条(坏文件已跳过)</div>`:'')
+      +`</div>`;
+  }catch(e){box.innerHTML=`<div style="color:var(--warn);font-size:12px;padding:4px 0">⚠ ${esc(fetchErr(e))}</div>`;}
+}
 function conn(ok){$('conn').textContent=ok?'● 已连接':'● 断连(重试中)';
   $('conn').classList.toggle('bad',!ok);}
 // C1: 窗口按钮 tooltip 显示实际起始日期(复用 sinceDate), 每次 render 随窗口刷新
@@ -1255,7 +1290,7 @@ function render(push){
     c.classList.toggle('on',on);
     c.title=c.dataset.w==='pw'?'上一自然周(周一到周日, 周报口径)':winTitle(+c.dataset.w);});
   syncUrl(push);
-  loadStats(); loadQuality(); loadFeed(); loadTrend(); stream(); if(view==='fed')loadMatrix();
+  loadStats(); loadQuality(); loadFeed(); loadTrend(); loadWeek(); stream(); if(view==='fed')loadMatrix();
 }
 document.querySelectorAll('[data-ex]').forEach(b=>b.onclick=()=>exportCsv(b.dataset.ex));
 // csvOf/dl 供两处: 榜单导出(打 /api/export)与弹层清单导出(本地行, 所见即所导)。

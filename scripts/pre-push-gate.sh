@@ -202,6 +202,68 @@ fi
     exit 1
 }
 
+# ---- 1.8 release 产物分支: 验证语义 = 确定性重放, 不是源码测试 (kb-20261024-222f) ----
+# make-release-branch.py 造的孤儿提交在 message 嵌 trailer `Release-Artifact-Source:
+# <完整源sha>`。产物树按设计剔除全部 tests/, "跑 pytest + 测试面一致"对它结构性
+# 不可满足 → 首推永不可能(2026-11-11 setting release 实测死结)。唯一可信的验证:
+# 对源 sha 重跑同一过滤脚本, 产物根树哈希必须与 tip 的树**逐位相同**(同源必同树;
+# 不一致 = 手改产物 / 脚本或源已漂移, 拦下重建即可)。
+# 判定对象 = 被推 tip, 全程 git 对象库操作, 不碰工作区, 也不做测试面一致断言。
+# 脚本从**工作区**调用(不在产物树内, DROP_PATTERNS 剔除; 源 sha 处往往是加 verify
+# 能力之前的旧版, 从源取会 argparse 炸 rc=2 造成假红)。工作区脚本比产物新时,
+# 重放不一致会 FAIL 并提示重建 —— 方向是偏严不是偏松, 可接受。
+artifact_pairs=""
+n_tips=0
+n_art=0
+for t in $tips; do
+    n_tips=$((n_tips + 1))
+    # 循环内首个 git 命令会吞 hook stdin(剩余 ref 行), 必须 <&- 关 fd
+    src=$(git log -1 --format=%B "$t" <&- | grep '^Release-Artifact-Source: ' \
+          | tail -1 | sed 's/^Release-Artifact-Source: //')
+    if [ -n "$src" ]; then
+        n_art=$((n_art + 1))
+        artifact_pairs="$artifact_pairs
+$t	$src"
+    fi
+done
+if [ "$n_art" -gt 0 ]; then
+    if [ "$n_art" -lt "$n_tips" ]; then
+        echo "pre-push-gate: FAIL - 本次 push 混推产物分支与普通分支, 拒绝。" >&2
+        echo "  产物分支的验证语义(树哈希比对)不同于源码分支, 请分开推。" >&2
+        exit 1
+    fi
+    ART_SCRIPT="scripts/delivery/make-release-branch.py"
+    if [ ! -f "$ART_SCRIPT" ]; then
+        echo "pre-push-gate: FAIL - 待推的是产物分支, 但工作区没有 $ART_SCRIPT," >&2
+        echo "  无法重放验证。请在装了交付脚本的克隆里推, 或 PREPUSH_SKIP=1 应急。" >&2
+        exit 1
+    fi
+    art_fail=0
+    while IFS="$(printf '\t')" read -r a_tip a_src; do
+        [ -n "$a_tip" ] || continue
+        if ! git cat-file -e "${a_src}^{commit}" 2>/dev/null; then
+            echo "pre-push-gate: FAIL - 产物分支 ${a_tip:0:12} 声明的源 $a_src 不可达" >&2
+            art_fail=1
+            continue
+        fi
+        echo "pre-push-gate: 产物分支 ${a_tip:0:12} <- 源 ${a_src:0:12}: 重放树哈希比对 ..." >&2
+        if ! "$VENV_PY" "$ART_SCRIPT" --ref "$a_src" --verify-against "$a_tip"; then
+            echo "  处置: 在集成分支根重跑" >&2
+            echo "    uv run --no-sync python scripts/delivery/make-release-branch.py --ref $a_src --branch release" >&2
+            echo "  整体重建后重推(产物分支只由脚本重建, 永不手改)。" >&2
+            art_fail=1
+        fi
+    done <<ART
+$artifact_pairs
+ART
+    [ "$art_fail" -eq 0 ] || {
+        echo "pre-push-gate: FAIL - 产物分支与脚本确定性输出不一致, 禁止 push。" >&2
+        exit 1
+    }
+    echo "pre-push-gate: PASS (产物分支 ${n_art} 个: 重放树哈希比对一致)" >&2
+    exit 0
+fi
+
 # coverage 被测包: 目录启发式 backend/ -> app/ -> src/<pkg>/ -> 仓根; 排除 egg-info 等构建产物
 if [ -d backend ]; then
     COV_TARGET="backend"

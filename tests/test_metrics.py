@@ -117,6 +117,26 @@ def test_load_snapshots_sorts_and_skips_broken(tmp_path):
     assert len(warns) == 2 and all("2026-W4" in w for w in warns)
 
 
+def test_load_snapshots_skips_wrong_child_types(tmp_path):
+    """合法 JSON 但子对象类型错(如 metrics 是 list)必须判坏跳过: 消费面
+    会对其 .get(...) → AttributeError → /api/metrics 500。"""
+    d = tmp_path / "traces" / "metrics"
+    d.mkdir(parents=True)
+    (d / "2026-W45.json").write_text(
+        '{"week":"2026-W45","metrics":[1,2]}', encoding="utf-8")
+    (d / "2026-W46.json").write_text(
+        '{"week":"2026-W46","metrics":{"searches":1},"callers":"alpha"}',
+        encoding="utf-8")
+    (d / "2026-W47.json").write_text(
+        '{"week":"2026-W47","metrics":{"searches":1},"callers":[]}',
+        encoding="utf-8")
+    snaps, warns = metrics.load_snapshots(tmp_path)     # 不抛异常
+    assert [s["week"] for s in snaps] == ["2026-W47"]   # 坏文件不进结果
+    assert len(warns) == 2
+    assert any("2026-W45.json" in w for w in warns)     # warns 可定位到文件
+    assert any("2026-W46.json" in w for w in warns)
+
+
 def test_load_snapshots_empty_root(tmp_path):
     assert metrics.load_snapshots(tmp_path) == ([], [])
 

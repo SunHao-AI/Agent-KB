@@ -1450,6 +1450,25 @@ def test_api_metrics_sorted_and_trimmed(tmp_path):
         srv.shutdown()
 
 
+def test_api_metrics_wrong_child_type_degrades_not_500(tmp_path):
+    """合法 JSON 但子对象类型错(metrics 是 list / callers 是 str)不得让端点
+    500: 该快照降级为 warns, 其余好快照照常返回。"""
+    d = tmp_path / "traces" / "metrics"
+    d.mkdir(parents=True)
+    (d / "2026-W45.json").write_text(
+        '{"week":"2026-W45","metrics":[1,2],"callers":"alpha"}', encoding="utf-8")
+    (d / "2026-W46.json").write_text(json.dumps(_snap("2026-W46", 0.8, 10, 0.2)),
+                                     encoding="utf-8")
+    srv, base = _serve(tmp_path)
+    try:
+        code, body = _get_url(f"{base}/api/metrics")
+        assert code == 200
+        assert [s["week"] for s in body["snapshots"]] == ["2026-W46"]
+        assert any("2026-W45.json" in w for w in body["warns"])
+    finally:
+        srv.shutdown()
+
+
 def test_api_metrics_sees_snapshot_written_after_first_request(tmp_path):
     """新快照必须立刻可见: 这正是"直连读盘、不走 agg 缓存"的行为证据 ——
     AggCache 的签名只盯 traces/*.jsonl, 新增 metrics/*.json 不会使其失效,

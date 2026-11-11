@@ -105,6 +105,11 @@ def write_snapshot(root: Path | None, snap: dict, *, force: bool = False) -> Pat
     return p
 
 
+# 快照子对象期望类型(缺省键允许, 存在则必须对): 消费面用 .get(...), 类型错就 500。
+_SNAP_SHAPES = (("metrics", dict), ("latency", dict), ("zero_hit", dict),
+                ("callers", list), ("warns", list))
+
+
 def load_snapshots(root: Path | None) -> tuple[list[dict], list[str]]:
     """读全部周快照, 按周号升序。坏文件跳过并计 warns —— 一个手改坏的快照
     不该让整条趋势线与 /api/metrics 500(stats §26/§50 同族教训)。"""
@@ -121,6 +126,13 @@ def load_snapshots(root: Path | None) -> tuple[list[dict], list[str]]:
             continue
         if not isinstance(obj, dict) or not obj.get("week"):
             warns.append(f"{f.name}: 缺 week 字段, 已跳过")
+            continue
+        # 子对象类型也要校验: 合法 JSON 但 `"metrics": [1,2]` 会让消费方
+        # (.get(...)) 抛 AttributeError → /api/metrics 500, 同样只降级为 warns。
+        bad = next(((k, t) for k, t in _SNAP_SHAPES
+                    if k in obj and not isinstance(obj[k], t)), None)
+        if bad:
+            warns.append(f"{f.name}: 子对象 {bad[0]} 类型应为 {bad[1].__name__}, 已跳过")
             continue
         out.append(obj)
     out.sort(key=lambda o: str(o["week"]))

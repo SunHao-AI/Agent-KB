@@ -976,6 +976,24 @@ def test_panel_api_requests_use_apiurl():
     assert all("/api/session" in m for m in leak), f"token 混入常规请求 URL: {leak}"
 
 
+def test_panel_session_exchange_precedes_data_requests():
+    """E1 同源竞态守护(2026-11-11 实测): ticket→cookie 交换必须先完成, 首帧数据请求
+    (health / 各 load*)才可发出。旧写法 health 与交换并发, 带 ?token= 打开时 health
+    抢跑 401 → spiderReady 未判定, 首次点条目误弹内置 SVG 降级回放(刷新才恢复)。
+    浏览器层面难稳定复现, 这里用静态时序断言锁住: 交换语句在 health 之前, 且初始化
+    链路 await/串接 sessionReady。"""
+    from pathlib import Path
+    from kb.serve import _asset_dir
+    html = (Path(_asset_dir()) / "index.html").read_text(encoding="utf-8")
+    i_ex = html.find("fetch('/api/session")
+    i_health = html.find("apiUrl('/api/health')")
+    assert i_ex >= 0 and i_health >= 0, "session 交换或 health 探测缺失"
+    assert i_ex < i_health, "session 交换必须在 health 之前(否则首帧 401 竞态复现)"
+    tail = html[i_ex:i_health]
+    assert "await sessionReady" in tail, "health 请求前必须 await sessionReady"
+    assert "sessionReady.then(render)" in html, "render(及内部 load*)必须串在交换完成之后"
+
+
 def test_panel_custom_clickables_are_keyboard_reachable():
     """§59(D-50) a11y 回归守护: 自定义(非 button/a)元素绑 onclick 必须同时具备
     tabindex + role + 键盘处理——实测踩坑: 联邦矩阵下钻行只有 onclick, 是全屏唯一

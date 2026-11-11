@@ -1474,7 +1474,14 @@ document.addEventListener('keydown',e=>{
   const t=e.target,tag=t&&t.tagName;
   if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||(t&&t.isContentEditable))return;
   e.preventDefault();$('fq').focus();$('fq').select();});
-(async()=>{try{const h=await fetch(apiUrl('/api/health'));const d=await h.json();
+// E1 同源竞态(2026-11-11 实测): ticket→cookie 交换必须**先于 health**——旧顺序
+// health 与交换并发, 首帧带 ?token= 打开时 health 抢跑拿 401 → 走 catch 跳过
+// spiderReady 判定, 首点条目误弹内置 SVG 降级回放(刷新一次才恢复)。
+const sessionReady=(async()=>{if(tk0){   // E1: 数据请求发出前完成 ticket→cookie 交换(必须串行, 并发会 401)
+  try{await fetch('/api/session?ticket='+encodeURIComponent(tk0));}catch(e){}
+}})();
+(async()=>{await sessionReady;
+try{const h=await fetch(apiUrl('/api/health'));const d=await h.json();
   spiderReady=!!d.spider_ready;   // 桥就绪→点条目弹回放浮层; 不就绪→SVG 弹层降级
   if(!d.exists)banner('','<b>traces/ 目录不存在</b> — 观测尚未开启: 业务仓 .mcp.json 加 <code>"env":{"KB_TRACE":"1"}</code> 或重跑 <code>kb init</code>。检索本身不受影响。');
   // spider 桥未就绪时回放降级为内置 SVG, 但浮层标题仍写"SPIDER REPLAY"——
@@ -1483,9 +1490,7 @@ document.addEventListener('keydown',e=>{
   if(qs.get('degraded'))banner('bad',`已配置团队观测服务端 <code>${esc(qs.get('serve_url')||'')}</code> 但不可达, 当前为<b>本机降级视图</b>(数据仅本机, 非团队全量)`);
 }catch(e){conn(false);}
 history.replaceState({view,caller,win},'',location.href);   // 固化初始态, 保证首条 popstate 有 state
-(async()=>{if(tk0){   // E1: 数据请求发出前完成 ticket→cookie 交换(必须串行, 并发会 401)
-  try{await fetch('/api/session?ticket='+encodeURIComponent(tk0));}catch(e){}
-}})().then(render);})();
+sessionReady.then(render);})();
 // 浏览器前进/后退: 从 URL 恢复完整状态(视图/窗口/过滤态)
 addEventListener('popstate',e=>{const p=new URLSearchParams(location.search);
   view=p.get('caller')==='*'?'fed':'single';

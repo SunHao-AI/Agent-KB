@@ -102,7 +102,13 @@ def test_read_traces_ignores_metrics_subdir(env):
     d = env / "traces" / "metrics"
     d.mkdir(parents=True)
     (d / "2026-W45.json").write_text('{"schema":1,"week":"2026-W45"}', encoding="utf-8")
-    (d / "decoy.jsonl").write_text('{"kind":"search","trace_id":"t-ghost"}\n', encoding="utf-8")
+    # 诱饵写成**完整合法事件流**(meta 首行 + 事件行): 若日后 _iter_raw 改成
+    # rglob, 这行会以真实事件身份混进结果 → 断言失败与 warn 语义无关, 不假绿。
+    (d / "decoy.jsonl").write_text(
+        '{"kind":"meta","schema":1}\n'
+        '{"kind":"search","trace_id":"t-ghost","ts":"2026-11-03T10:00:00+08:00",'
+        '"source":"cli","caller_repo":"ghost","query":"q","returned":[],"layers":[]}\n',
+        encoding="utf-8")
     after = trace.read_traces(root=env)
     assert [e.get("trace_id") for e in after[0]] == [e.get("trace_id") for e in before[0]]
-    assert after[2] == before[2]  # warns 不得多报(快照不是坏行)
+    assert after[2] == before[2]  # 子目录快照不该被读, 故 warns 不得新增

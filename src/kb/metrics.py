@@ -66,7 +66,11 @@ def snapshot_path(root: Path | None, week: str) -> Path:
 
 def build_snapshot(root: Path | None, week: str) -> dict:
     """聚合某自然周的指标(口径全在 stats)。入参先过 denoise —— 与面板/KPI 同口径,
-    否则快照会把 pytest 合成语料算进分母(2026-11-02 实测污染 25%)。"""
+    否则快照会把 pytest 合成语料算进分母(2026-11-02 实测污染 25%)。
+
+    callers 传的是 denoise 后的**全量**事件而非 win_s: stats.callers 内部自己切窗
+    算统计列, 但行集与活跃性刻意看全量(见其 docstring §29)——若在这里先切窗,
+    只在窗口外活跃的项目会整行消失, "掉线项目"在快照里永久不可见。"""
     since, until = week_bounds(week)
     searches, gets, warns = kbtrace.read_traces(root)
     searches, gets, _n, _bad = stats.denoise(searches, gets)
@@ -84,7 +88,7 @@ def build_snapshot(root: Path | None, week: str) -> dict:
         "latency": stats.latency(win_s, since=since, until=until),
         "zero_hit": {"board": board, "digested": len(dig),
                      "digest_rate": round(len(dig) / len(board), 4) if board else None},
-        "callers": stats.callers(win_s, since=since, until=until),
+        "callers": stats.callers(searches, since=since, until=until),
         "warns": warns,
     }
 
@@ -202,7 +206,9 @@ def report_markdown(snap: dict, prev: dict | None = None,
         return "环比 —(上周快照缺失)" if v is None \
             else f"环比 {'+' if v >= 0 else ''}{v:.0f}ms"
 
-    cold = " · ⚠ 冷启动(样本 <3, 比率不稳)" if m.get("cold_start") else ""
+    # 判据是 aggregate 的 cold_start(窗口内有效检索日 <7 天), 文案必须跟着判据说,
+    # 否则读者会把门槛理解成"检索次数", 与实际的"连续观测天数"错位。
+    cold = " · ⚠ 冷启动(有效检索日 <7 天, 比率不稳)" if m.get("cold_start") else ""
     out = [f"# 知识库周指标 · {snap.get('week')}({snap.get('since')} ~ {snap.get('until')})",
            "",
            f"- 检索 **{m.get('searches') or 0}** 次 · 命中率 **{_pct(m.get('hit_rate'))}**"

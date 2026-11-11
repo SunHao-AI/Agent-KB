@@ -75,9 +75,34 @@ def test_write_snapshot_is_idempotent(tmp_path):
     snap = metrics.build_snapshot(tmp_path, "2026-W45")
     p = metrics.write_snapshot(tmp_path, snap)
     assert p.exists() and p.name == "2026-W45.json"
+    # 往返断言: 只查文件存在会放过"写空文件/写 str(snap)"这类序列化损坏,
+    # 必须真的读回并核对关键字段。
+    back = json.loads(p.read_text(encoding="utf-8"))
+    assert back["week"] == snap["week"] and back["schema"] == snap["schema"]
+    assert isinstance(back, dict) and back["metrics"]["searches"] == snap["metrics"]["searches"]
+    snaps, warns = metrics.load_snapshots(tmp_path)
+    assert [s["week"] for s in snaps] == ["2026-W45"] and warns == []
+    assert snaps[0]["zero_hit"]["digest_rate"] == snap["zero_hit"]["digest_rate"]
     with pytest.raises(FileExistsError):              # 幂等红线: 已存在拒覆盖
         metrics.write_snapshot(tmp_path, snap)
     assert metrics.write_snapshot(tmp_path, snap, force=True) == p
+
+
+def test_build_snapshot_keeps_offline_caller(tmp_path):
+    """只在窗口外活跃的项目必须留在 callers 里(掉线检测), 本周计数 0 且 stale。"""
+    mon = dt.date.fromisocalendar(2026, 40, 1)   # 取已过去的周, 掉线才能判出来
+    inside = (mon + dt.timedelta(days=1)).isoformat() + "T10:00:00+08:00"
+    outside = (mon + dt.timedelta(days=20)).isoformat() + "T10:00:00+08:00"
+    for e in (_search("s1", "alpha", "推流 死锁", ["k1"], inside),
+              _search("s2", "beta", "授权 台账", [], outside)):   # 窗口外(且 >14d)
+        trace.append_event(e, root=tmp_path)
+    snap = metrics.build_snapshot(tmp_path, "2026-W40")
+    by = {r["caller"]: r for r in snap["callers"]}
+    assert set(by) == {"alpha", "beta"}
+    assert by["beta"]["searches"] == 0 and by["beta"]["hit_rate"] is None
+    assert by["beta"]["stale"] is True
+    assert by["beta"]["last_ts"] == outside
+    assert by["alpha"]["searches"] == 1   # 窗口内活动的项目统计列照旧
 
 
 def test_load_snapshots_sorts_and_skips_broken(tmp_path):

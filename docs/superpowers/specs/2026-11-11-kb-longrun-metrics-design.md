@@ -49,11 +49,13 @@
   "generated_at": "<ISO8601>",
   "metrics": { "…aggregate() 原样…": null },
   "latency": { "…latency() 原样…": null },
-  "zero_hit": { "board": [], "digested": [], "digest_rate": 0.0 },
+  "zero_hit": { "board": [], "digested": 0, "digest_rate": null },
   "callers": { "…callers() 摘要: 各仓计数 + stale…": null },
   "warns": []
 }
 ```
+
+(`zero_hit.digested` 是整数计数, 不是清单; 榜为空时 `digest_rate` 为 `null` —— 没有分母就不写 0。)
 
 - **幂等**: 目标文件已存在 → 拒绝覆盖并退 1; 显式 `--force` 才重写。
   理由: 月度深分析 diff 四周快照, 历史数字必须可比; 重写会静默改变已归档曲线,

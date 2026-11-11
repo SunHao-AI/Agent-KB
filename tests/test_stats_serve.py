@@ -1419,6 +1419,8 @@ def test_api_metrics_empty(tmp_path):
     try:
         code, body = _get_url(f"{base}/api/metrics")
         assert code == 200 and body["snapshots"] == [] and body["warns"] == []
+        # 只读红线: 端点不得顺手建目录/写文件
+        assert not (tmp_path / "traces" / "metrics").exists()
     finally:
         srv.shutdown()
 
@@ -1426,9 +1428,10 @@ def test_api_metrics_empty(tmp_path):
 def test_api_metrics_sorted_and_trimmed(tmp_path):
     d = tmp_path / "traces" / "metrics"
     d.mkdir(parents=True)
-    (d / "2026-W46.json").write_text(json.dumps(_snap("2026-W46", 0.8, 10, 0.2)),
-                                     encoding="utf-8")
-    (d / "2026-W45.json").write_text(
+    # 文件名与 week 故意反序: 否则 glob 的自然名序会让"按 week 排序"的断言恒真
+    (d / "a.json").write_text(json.dumps(_snap("2026-W46", 0.8, 10, 0.2)),
+                              encoding="utf-8")
+    (d / "b.json").write_text(
         json.dumps(_snap("2026-W45", 0.6, 4, 0.5, cold=True)), encoding="utf-8")
     (d / "broken.json").write_text("{坏", encoding="utf-8")
     srv, base = _serve(tmp_path)
@@ -1437,6 +1440,7 @@ def test_api_metrics_sorted_and_trimmed(tmp_path):
         assert code == 200
         assert [s["week"] for s in body["snapshots"]] == ["2026-W45", "2026-W46"]
         assert len(body["warns"]) == 1                       # 坏文件跳过并上报
+        assert "broken.json" in body["warns"][0]             # 上报要能定位到文件
         # 点状字段白名单(面板只画这些), 完整 board 不回传(省带宽)
         pt = body["snapshots"][0]
         assert set(pt) == {"week", "since", "until", "searches", "hit_rate",

@@ -1400,3 +1400,66 @@ def test_join_qs_keeps_base_query_and_drops_fragment():
     assert out == "http://h/base?a=1&token=x%20y%23z"
     out2 = _join_qs("http://h/base#frag", [("caller", "*")])
     assert out2 == "http://h/base?caller=%2A"      # 前端 URLSearchParams 解回 '*'
+
+
+# ---- /api/metrics: 只读消费 traces/metrics/*.json --------------------------
+
+def _snap(week, hit, searches, dig_rate, cold=False):
+    return {"schema": 1, "week": week, "since": "2026-11-02", "until": "2026-11-08",
+            "generated_at": "2026-11-09T18:30:00+08:00",
+            "metrics": {"searches": searches, "hit_rate": hit, "consume_rate": 0.5,
+                        "cold_start": cold},
+            "latency": {"n": 5, "p50_ms": 120, "p95_ms": 400},
+            "zero_hit": {"board": [], "digested": 0, "digest_rate": dig_rate},
+            "callers": [], "warns": []}
+
+
+def test_api_metrics_empty(tmp_path):
+    srv, base = _serve(tmp_path)
+    try:
+        code, body = _get_url(f"{base}/api/metrics")
+        assert code == 200 and body["snapshots"] == [] and body["warns"] == []
+    finally:
+        srv.shutdown()
+
+
+def test_api_metrics_sorted_and_trimmed(tmp_path):
+    d = tmp_path / "traces" / "metrics"
+    d.mkdir(parents=True)
+    (d / "2026-W46.json").write_text(json.dumps(_snap("2026-W46", 0.8, 10, 0.2)),
+                                     encoding="utf-8")
+    (d / "2026-W45.json").write_text(
+        json.dumps(_snap("2026-W45", 0.6, 4, 0.5, cold=True)), encoding="utf-8")
+    (d / "broken.json").write_text("{坏", encoding="utf-8")
+    srv, base = _serve(tmp_path)
+    try:
+        code, body = _get_url(f"{base}/api/metrics")
+        assert code == 200
+        assert [s["week"] for s in body["snapshots"]] == ["2026-W45", "2026-W46"]
+        assert len(body["warns"]) == 1                       # 坏文件跳过并上报
+        # 点状字段白名单(面板只画这些), 完整 board 不回传(省带宽)
+        pt = body["snapshots"][0]
+        assert set(pt) == {"week", "since", "until", "searches", "hit_rate",
+                           "consume_rate", "digest_rate", "p50_ms", "cold_start"}
+        assert pt["cold_start"] is True
+    finally:
+        srv.shutdown()
+
+
+def test_api_metrics_sees_snapshot_written_after_first_request(tmp_path):
+    """新快照必须立刻可见: 这正是"直连读盘、不走 agg 缓存"的行为证据 ——
+    AggCache 的签名只盯 traces/*.jsonl, 新增 metrics/*.json 不会使其失效,
+    走缓存的话这里第二次请求仍会返回空列表。"""
+    srv, base = _serve(tmp_path)
+    try:
+        code, body = _get_url(f"{base}/api/metrics")
+        assert code == 200 and body["snapshots"] == []
+        d = tmp_path / "traces" / "metrics"
+        d.mkdir(parents=True)
+        (d / "2026-W45.json").write_text(json.dumps(_snap("2026-W45", 0.6, 4, 0.5)),
+                                         encoding="utf-8")
+        code, body = _get_url(f"{base}/api/metrics")
+        assert code == 200
+        assert [s["week"] for s in body["snapshots"]] == ["2026-W45"]
+    finally:
+        srv.shutdown()

@@ -19,6 +19,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from urllib.parse import parse_qs, urlparse
 
+from kb import metrics as kbmetrics
 from kb import stats, trace as kbtrace
 
 _POLL_SEC = 1.0
@@ -469,6 +470,25 @@ class _Handler(BaseHTTPRequestHandler):
                 ck = ("trend", q.get("caller", ""), q.get("since", ""), q.get("until", ""),
                       q.get("raw", ""))
                 self._json(srv.agg.get(ck, lambda: _trend_payload(srv, q)))
+            elif u.path == "/api/metrics":
+                # 周快照直连不走 agg 缓存: AggCache._sig 只盯 traces/*.jsonl,
+                # 新生成的 .json 快照不会使其失效 —— 走缓存会把"刚生成的上周快照"
+                # 藏到 serve 重启为止。读盘是目录级小 IO, 面板轮询扛得住。
+                snaps, warns = kbmetrics.load_snapshots(srv.root)
+                points = []
+                for s in snaps:
+                    m = s.get("metrics") or {}
+                    zh = s.get("zero_hit") or {}
+                    la = s.get("latency") or {}
+                    points.append({"week": s["week"], "since": s.get("since"),
+                                   "until": s.get("until"),
+                                   "searches": m.get("searches"),
+                                   "hit_rate": m.get("hit_rate"),
+                                   "consume_rate": m.get("consume_rate"),
+                                   "digest_rate": zh.get("digest_rate"),
+                                   "p50_ms": la.get("p50_ms"),
+                                   "cold_start": bool(m.get("cold_start"))})
+                self._json({"snapshots": points, "warns": warns})
             elif u.path == "/api/export":
                 # B4: JSON 附件下载, 面板转成 CSV。走 agg 缓存会返回同一份对象,
                 # 导出低频且要即时性, 直连实现函数

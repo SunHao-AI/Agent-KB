@@ -53,8 +53,12 @@ def test_snapshot_writes_and_reports(env, capsys):
 def test_snapshot_idempotent_refuses_and_force(env, capsys):
     assert main(["trace", "snapshot", "--week", "2026-W45"]) == 0
     capsys.readouterr()
+    p = env / "traces" / "metrics" / "2026-W45.json"
+    before = p.read_bytes()
     assert main(["trace", "snapshot", "--week", "2026-W45"]) == 1   # 幂等红线: 退 1
     assert "--force" in capsys.readouterr().err
+    # 只断言退 1 挡不住"先覆盖再报错": 必须比较拒绝前后字节
+    assert p.read_bytes() == before
     assert main(["trace", "snapshot", "--week", "2026-W45", "--force"]) == 0
     assert main(["trace", "snapshot", "--week", "2026-W01"]) == 0   # 空周也成立
     snap = json.loads((env / "traces" / "metrics" / "2026-W01.json")
@@ -70,8 +74,9 @@ def test_snapshot_json_format(env, capsys):
 
 
 def test_snapshot_bad_week_rejected_by_argparse(env):
-    with pytest.raises(SystemExit):                    # 入口即拒, 不进业务面
+    with pytest.raises(SystemExit) as ei:              # 入口即拒, 不进业务面
         main(["trace", "snapshot", "--week", "2026-45"])
+    assert ei.value.code == 2                          # argparse 用法错固定退 2
 
 
 def test_snapshot_default_is_previous_iso_week(env, capsys, monkeypatch):

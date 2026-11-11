@@ -90,3 +90,19 @@ def test_since_invalid_date_rejected(env, capsys):
     assert ex.value.code == 2
     # 合法日期照常
     assert main(["trace", "list", "--since", "2026-10-15"]) == 0
+
+
+def test_read_traces_ignores_metrics_subdir(env):
+    """spec §2 兼容红线: traces/metrics/YYYY-Www.json 是快照落盘位, 必须被
+    read_traces 忽略——_iter_raw 只对 traces/ 根 glob("*.jsonl"), 子目录与
+    .json 后缀双保险。此测试锁死该性质: 日后改成 rglob 或换后缀立即失败。"""
+    _seed(env)
+    before = trace.read_traces(root=env)
+    assert before[0], "前置: _seed 应有可读物理事件"
+    d = env / "traces" / "metrics"
+    d.mkdir(parents=True)
+    (d / "2026-W45.json").write_text('{"schema":1,"week":"2026-W45"}', encoding="utf-8")
+    (d / "decoy.jsonl").write_text('{"kind":"search","trace_id":"t-ghost"}\n', encoding="utf-8")
+    after = trace.read_traces(root=env)
+    assert [e.get("trace_id") for e in after[0]] == [e.get("trace_id") for e in before[0]]
+    assert after[2] == before[2]  # warns 不得多报(快照不是坏行)

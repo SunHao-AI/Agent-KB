@@ -295,3 +295,28 @@ def test_all_readers_share_single_discovery_rule(tmp_repo):
             pass
     due = {d["id"] for d in due_review(tmp_repo, dt.date(2030, 1, 1))}
     assert due == {"kb-20261013-d1d1"}   # 散文件/外仓条目同样不入待复核
+
+
+# --- draft 豁免(kb-20261111-c872): Agent 在本仓沉淀的暂存草稿不使 CI 变红 ---
+def test_agent_kb_draft_project_scope_is_warning_only(tmp_repo):
+    # 门控通道产物(draft + scope=project)在 agent-kb 范围降为 warning, 不出 error
+    _put(tmp_repo, "kb/pitfall/frontend/a.md",
+         make_entry(scope="project", status="draft", confidence="speculative",
+                    severity="medium"))
+    errs = lint_repo(tmp_repo, scope="agent-kb")
+    assert any(m.startswith("warning: ") and "must not live in agent-kb" in m
+               for m in errs)
+    assert not any(not m.startswith("warning: ") and "must not live in agent-kb"
+                   in m for m in errs)
+
+
+def test_agent_kb_proposed_project_scope_still_error(tmp_repo):
+    # 只豁免 draft: proposed 及以上仍是 error, 封死"项目私有知识常驻通用仓"的反向漏洞
+    for st in ("proposed", "accepted", "deprecated"):
+        (tmp_repo / "kb" / "pitfall" / "frontend").mkdir(parents=True, exist_ok=True)
+        _put(tmp_repo, "kb/pitfall/frontend/a.md",
+             make_entry(scope="project", status=st, confidence="probable",
+                        severity="medium"))
+        errs = lint_repo(tmp_repo, scope="agent-kb")
+        assert any(not m.startswith("warning: ") and "must not live in agent-kb"
+                   in m for m in errs), st

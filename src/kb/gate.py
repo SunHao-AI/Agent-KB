@@ -99,6 +99,26 @@ def _dup_hits(repos: list[Path], fp: str, title: str) -> list[dict]:
     return hits
 
 
+def _strip_h1_lines(body: str) -> str:
+    """body 参数契约是"不含 H1 的正文"——唯一 H1 由写入口统一前置。调用方误传
+    整篇文档(含 H1)时, 旧实现原样拼接出双 H1, 要等 lint 才报 "exactly one H1"
+    (2026-11-11 实际踩中两轮: 追加"新发现"传了含旧 H1 的全文, 修 H1 的脚本又基于
+    e.body 再传一次, 每改一轮多一个)。写入口先剥掉围栏外全部 H1 行, 与 lint 的
+    围栏感知计数同口径(``` 块内的 "# " 是内容不是标题); 幂等——剥过的正文再传
+    进来不变。"""
+    out: list[str] = []
+    in_fence = False
+    for ln in body.splitlines():
+        if ln.strip().startswith("```"):
+            in_fence = not in_fence
+            out.append(ln)
+            continue
+        if not in_fence and ln.strip().startswith("# "):
+            continue
+        out.append(ln)
+    return "\n".join(out)
+
+
 def _check_severity(severity: str | None) -> None:
     """severity 枚举守门(第三十八轮走查): CLI 面有 argparse choices 挡, MCP 面经
     gate 直写**没有**任何枚举校验——`severity='blocker'` 一路落盘进 draft 索引,
@@ -129,7 +149,7 @@ def create_draft(repo, *, type: str, domain: str, title: str, body: str | None =
     if body or tags or severity:
         cur = parse_entry(e.path)
         if body:
-            cur.body = f"\n# {title}\n\n{body.strip()}\n"
+            cur.body = f"\n# {title}\n\n{_strip_h1_lines(body).strip()}\n"
         if tags:
             cur.fm["tags"] = list(tags)
         if severity:
@@ -218,7 +238,7 @@ def update_entry(repo, id: str, *, title: str | None = None, body: str | None = 
         fm["title"] = title
         cur_body = cur_body.replace(f"# {h1}", f"# {title}", 1)
     if body:
-        cur_body = f"\n# {fm.get('title', h1)}\n\n{body.strip()}\n"
+        cur_body = f"\n# {fm.get('title', h1)}\n\n{_strip_h1_lines(body).strip()}\n"
     if tags is not None:
         fm["tags"] = list(tags)
     if severity:

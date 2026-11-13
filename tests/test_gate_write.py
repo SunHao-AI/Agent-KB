@@ -67,6 +67,28 @@ def test_update_draft_missing_id(tmp_repo):
         update_entry(tmp_repo, "kb-20261014-9999", body="x")
 
 
+def test_update_body_with_h1_is_stripped_not_duplicated(tmp_repo):
+    """body 契约: 唯一 H1 由写入口前置。误传含 H1 的全文(2026-11-11 实际踩中:
+    追加"新发现"传旧全文 → 双 H1 等 lint 才暴露)→ 剥掉围栏外 H1, 结果恒一个;
+    围栏代码块内的 "# " 是内容, 保留。"""
+    _mk(tmp_repo, "kb-20261014-h1st", title="demo")
+    body = ("# demo\n\n## 背景\n追加全文.\n\n```\n# demo\n```\n\n"
+            "    # demo(缩进重复行)\n")
+    e = update_entry(tmp_repo, "kb-20261014-h1st", body=body, today=TODAY)
+    in_fence, h1 = False, 0
+    for ln in e.body.splitlines():
+        if ln.strip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and ln.strip().startswith("# "):
+            h1 += 1
+    assert h1 == 1 and e.body.splitlines()[0] == "# demo"
+    assert e.body.count("# demo\n```") == 1      # 围栏内示例未被误剥
+    assert "# demo(缩进重复行)" not in e.body     # 围栏外缩进 H1 也被剥(lint 同口径)
+    # 幂等: 剥过的正文再传一次不增不减
+    e2 = update_entry(tmp_repo, "kb-20261014-h1st", body=e.body, today=TODAY)
+    assert e2.body == e.body
+
+
 @pytest.mark.parametrize("frm,conf,to,ok", [
     ("draft", "probable", "proposed", True),
     ("draft", "probable", "accepted", True),

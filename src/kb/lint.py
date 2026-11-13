@@ -72,7 +72,16 @@ def lint_repo(repo_root: Path, scope: str = "project",
         for err in sorted(validator.iter_errors(e.fm), key=lambda x: x.json_path):
             errors.append(f"{rid}: schema {err.json_path}: {err.message}")
         if e.fm.get("scope") == "project" and scope == "agent-kb":
-            errors.append(f"{rid}: scope=project must not live in agent-kb")
+            # draft 豁免: 门控通道(kb new --generated / kb_create)在 Agent-KB 仓内
+            # 只能产出 scope=project 的暂存草稿(红线 #2: Agent 永不改 scope), 终审
+            # 落地(set-scope stack)前不算违规——否则 Agent 在本仓沉淀必使 CI 变红
+            # 且无法自修(2026-11-11 实测, kb-20261111-c872)。只豁免 draft:
+            # proposed 及以上仍是 error, 防止"项目私有知识常驻通用仓"反向漏洞。
+            msg = f"{rid}: scope=project must not live in agent-kb"
+            if e.fm.get("status") == "draft":
+                errors.append(f"warning: {msg} (draft 暂存待终审)")
+            else:
+                errors.append(msg)
         if e.fm.get("scope") != "project" and scope == "project":
             errors.append(f"{rid}: scope!=project must be promoted to agent-kb")
         for f in ("related",):

@@ -69,7 +69,8 @@ def test_build_search_event_shape(tmp_path):
     assert set(ev["filters"]) == {"type", "domain", "tag", "scope", "status", "confidence"}
     assert len(ev["layers"]) == 1
     assert set(ev["layers"][0]) == {"repo", "scanned", "rejected", "matched",
-                                    "taken", "truncated_at_limit"}
+                                    "taken", "truncated_at_limit", "match_mode"}
+    assert ev["layers"][0]["match_mode"] == "and"   # query="vite" AND 有命中
     assert ev["layers"][0]["matched"][0]["hit_fields"] == ["title"]
     assert ev["ts"][:4].isdigit()
 
@@ -79,3 +80,26 @@ def test_build_get_event():
                                id="kb-1", layer="docs", ok=True)
     assert ev["kind"] == "get" and ev["id"] == "kb-1"
     assert ev["layer"] == "docs" and ev["ok"] is True and ev["trace_id"] == "t-1"
+
+
+def test_build_search_event_carries_partial_mode(tmp_path):
+    # AND 零结果走降级(仍零命中也标 partial), 事件必须带 match_mode 供归因
+    docs = _mk(tmp_path, "docs", [_rec(1, "vite hmr 抖动", tags=["vite"])])
+    _, rep = search.evaluate(docs, query="vite webpack")
+    rep.update({"repo": "docs", "taken": 0, "truncated_at_limit": False})
+    ev = trace.build_search_event(
+        trace_id="t-2", source="mcp", caller_repo="web", query="vite webpack",
+        filters={}, limit=10, reports=[rep], returned=[], duration_ms=3)
+    assert ev["layers"][0]["match_mode"] == "partial"
+
+
+def test_build_search_event_legacy_report_without_match_mode(tmp_path):
+    # limit≤0 短路的 report 与历史数据无 match_mode 键: 透传 None 不 KeyError
+    ev = trace.build_search_event(
+        trace_id="t-3", source="mcp", caller_repo="web", query="vite",
+        filters={}, limit=0,
+        reports=[{"repo": "docs", "scanned": 0,
+                  "rejected": {"filter": 0, "query": 0}, "matched": [],
+                  "taken": 0, "truncated_at_limit": False}],
+        returned=[], duration_ms=1)
+    assert ev["layers"][0]["match_mode"] is None

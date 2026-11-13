@@ -556,7 +556,10 @@ def build_search_event(*, trace_id: str, source: str, caller_repo: str,
         "limit": limit, "duration_ms": duration_ms,
         "layers": [{"repo": r["repo"], "scanned": r["scanned"],
                     "rejected": r["rejected"], "matched": r["matched"],
-                    "taken": r["taken"], "truncated_at_limit": r["truncated_at_limit"]}
+                    "taken": r["taken"], "truncated_at_limit": r["truncated_at_limit"],
+                    # 部分命中降级归因(spec 2026-11-13 §3.3); limit≤0 短路与
+                    # 历史 report 无该键 → None, 聚合口径不读它, hit_rate 不变
+                    "match_mode": r.get("match_mode")}
                    for r in reports],
         "returned": list(returned),
     }

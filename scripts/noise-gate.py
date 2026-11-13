@@ -62,8 +62,8 @@ def baseline_index(repo: Path, ref: str) -> list[dict]:
 def ranked(recs: list[dict], toks: list[str], today: str) -> list[tuple[str, list[str]]]:
     scored = []
     for order, rec in enumerate(recs):
-        fields, spans = _hit(_parts(rec), toks)
-        if fields:
+        fields, spans, ht = _hit(_parts(rec), toks)
+        if ht == set(toks):
             scored.append((-_score(rec, fields, spans, toks, today), order,
                            rec["id"], fields))
     scored.sort()

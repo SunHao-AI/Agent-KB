@@ -163,3 +163,22 @@ def test_missing_index_returns_empty(tmp_path):
     rows, rep = search.evaluate(tmp_path)
     assert rows == [] and rep == {"scanned": 0,
                                   "rejected": {"filter": 0, "query": 0}, "matched": []}
+
+
+# ---- 部分命中降级 spec 3.1: _hit 三态 ----
+
+def test_hit_returns_triple_with_hit_tokens():
+    from kb.search import _hit, _parts
+
+    parts = _parts(_rec(1, title="vite hmr 抖动", tags=("vite",), summary=""))
+    # 全命中: hit_tokens 覆盖全部 token, fields/spans 与旧行为一致
+    fields, spans, ht = _hit(parts, ["vite", "hmr"])
+    assert ht == {"vite", "hmr"}
+    assert fields == ["title", "tags"]          # "vite" 同时现于 title 与 tags
+    assert spans and all(len(s) == 2 for s in spans)
+    # 部分命中: 未命中 token 不再一票否决, 只返回已命中部分
+    fields, spans, ht = _hit(parts, ["vite", "webpack"])
+    assert ht == {"vite"}
+    assert fields == ["title", "tags"]          # spans 只覆盖 "vite"
+    # 零命中: 三空
+    assert _hit(parts, ["webpack", "rollup"]) == ([], [], set())

@@ -65,30 +65,37 @@ def _token_spans(hay: str, tok: str) -> list[list[int]]:
     return hit_spans if covered / len(dict.fromkeys(grams)) >= _CJK_COVERAGE else []
 
 
-def _hit(parts, tokens: list[str]) -> tuple[list[str], list[list[int]]]:
-    """AND 分词匹配: 每个 token 都须命中拼接文本(不要求连续)。
+def _hit(parts, tokens: list[str]) -> tuple[list[str], list[list[int]], set[str]]:
+    """AND 分词匹配, 三态返回 (fields, spans, hit_tokens)。
 
-    任一 token 缺位 → 返回空(整条不命中)。spans 收集全部 token 的全部
-    出现位置并按起点排序; hit_fields 按字段首现顺序。hay 拼接与旧实现一致
-    (各段无条件空格拼接, 空段同样产生分隔空格)。
+    全命中: hit_tokens == set(tokens), fields/spans 与旧实现逐字节一致;
+    部分命中: hit_tokens 非空但缺 token, fields/spans 只覆盖已命中 token
+    (spec 2026-11-13 §3.1: 供 evaluate 降级分支复用, 不重扫 haystack);
+    零命中: ([], [], set())。spans 收集全部命中 token 的全部出现位置并按
+    起点排序; hit_fields 按字段首现顺序。hay 拼接与旧实现一致(各段无条件
+    空格拼接, 空段同样产生分隔空格)。
     """
     hay, bounds, pos = " ".join(text for _, text in parts), [], 0
     for name, text in parts:
         bounds.append((name, pos, pos + len(text)))
         pos += len(text) + 1
     spans: list[list[int]] = []
+    hit_tokens: set[str] = set()
     for tok in tokens:
         tok_spans = _token_spans(hay, tok)
         if not tok_spans:
-            return [], []
+            continue
+        hit_tokens.add(tok)
         spans.extend(tok_spans)
+    if not hit_tokens:
+        return [], [], set()
     spans.sort()
     fields: list[str] = []
     for i, j in spans:
         for name, s, e in bounds:
             if i < e and j > s and name not in fields:
                 fields.append(name)
-    return fields, spans
+    return fields, spans, hit_tokens
 
 
 def _filtered_out(rec, type, domain, tag, scope, status, confidence) -> bool:
@@ -159,8 +166,9 @@ def evaluate(repo_root: Path, *, type=None, domain=None, tag=None, scope=None,
         if _filtered_out(rec, type, domain, tag, scope, status, confidence):
             n_filter += 1
             continue
-        fields, spans = ([], []) if not tokens else _hit(_parts(rec), tokens)
-        if tokens and not fields:
+        fields, spans, hit_tokens = (
+            ([], [], set()) if not tokens else _hit(_parts(rec), tokens))
+        if tokens and hit_tokens != set(tokens):
             n_query += 1
             continue
         hits.append((_score(rec, fields, spans, tokens, today), order, rec, fields, spans))

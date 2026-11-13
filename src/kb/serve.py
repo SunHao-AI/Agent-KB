@@ -438,8 +438,9 @@ class _Handler(BaseHTTPRequestHandler):
         import secrets as _secrets
         t = _secrets.token_urlsafe(32)
         with srv.login_lock:
+            # 满池淘汰单张而非全清: 全清会让所有设备/标签页同时静默掉线
             if len(srv.tickets) >= 64:
-                srv.tickets.clear()
+                srv.tickets.pop()
             srv.tickets.add(t)
         ck = f"kb_tk={t}; {_COOKIE_ATTRS}"
         if remember:
@@ -509,8 +510,9 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             import secrets as _secrets
             t = _secrets.token_urlsafe(32)
+            # 满池淘汰单张而非全清: 全清会让所有设备/标签页同时静默掉线
             if len(srv.tickets) >= 64:
-                srv.tickets.clear()
+                srv.tickets.pop()
             srv.tickets.add(t)
             self._json({"ok": True}, extra={
                 "Set-Cookie": f"kb_tk={t}; Path=/; HttpOnly; SameSite=Lax"})

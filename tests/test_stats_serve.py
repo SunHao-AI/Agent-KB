@@ -1802,6 +1802,25 @@ def test_login_session_cookie(tmp_path):
         srv.server_close()
 
 
+def test_login_full_ticket_pool_evicts_one(tmp_path):
+    """票据池满时只淘汰一张, 不清空: 全清会让所有设备/标签页同时掉线。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        old = {f"old-ticket-{i}" for i in range(64)}
+        with srv.login_lock:
+            srv.tickets.update(old)
+        st, body, hd = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        assert st == 200 and body["ok"] is True
+        new = hd["Set-Cookie"].split(";")[0].removeprefix("kb_tk=")
+        with srv.login_lock:
+            assert len(srv.tickets) == 64
+            assert new in srv.tickets
+            assert len(old & srv.tickets) == 63  # 仅淘汰一张旧票据
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_login_remember_sets_max_age(tmp_path):
     srv, base = _serve(tmp_path, token="s3cret")
     try:
@@ -1864,6 +1883,29 @@ def test_logout_revokes_cookie(tmp_path):
             raise AssertionError("退出后旧 cookie 应 401")
         except urllib.error.HTTPError as e:
             assert e.code == 401
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_logout_revokes_only_current_ticket(tmp_path):
+    """退出只撤当前票据: 另一张登录票据(其他设备/标签页)不受影响。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        _, _, hd1 = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        _, _, hd2 = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        ck1 = hd1["Set-Cookie"].split(";")[0]
+        ck2 = hd2["Set-Cookie"].split(";")[0]
+        assert ck1 != ck2
+        st, _, _ = _post_json_hd(f"{base}/api/logout", {}, cookie=ck1)
+        assert st == 200
+        try:
+            _get_url(f"{base}/api/stats", cookie=ck1)
+            raise AssertionError("已退出票据应 401")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401
+        st2, _ = _get_url(f"{base}/api/stats", cookie=ck2)
+        assert st2 == 200
     finally:
         srv.shutdown()
         srv.server_close()

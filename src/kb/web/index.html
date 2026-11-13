@@ -421,7 +421,7 @@ function showLogin(msg){
       $('loginErr').textContent = r.status===429
         ? `失败次数过多，请 ${r.headers.get('Retry-After')||'稍'} 秒后重试`
         : r.status===409 ? '当前服务未启用令牌鉴权'
-        : '令牌不正确，请核对配置或启动参数';
+        : '令牌不正确，请核对 ~/.kb/config.toml [serve].token 或启动参数';
     }catch(_){ $('loginErr').textContent='无法连接服务端，请确认 kb serve 在运行'; }
     btn.disabled=false; btn.textContent='登录';
   });

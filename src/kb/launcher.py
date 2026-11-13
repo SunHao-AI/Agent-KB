@@ -113,7 +113,8 @@ def open_panel(port: int = 4320, *, repo: Path | None = None, caller: str | None
     params: list[tuple[str, str]] = ([("caller", "*")] if all_projects
                                      else ([("caller", resolved)] if resolved else []))
     team_url, team_token = serve_target()
-    tok = team_token or token  # 配置令牌优先于显式参数: 本机/团队两条链用同一口径
+    # 配置/环境令牌优先; 显式 token 参数只在本机代拉起时兜底(kb web 当前不暴露 --token)
+    tok = team_token or token
     if team_url and probe_http(team_url, team_token):
         team_params = list(params)
         if tok:

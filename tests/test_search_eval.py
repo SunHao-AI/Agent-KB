@@ -182,3 +182,80 @@ def test_hit_returns_triple_with_hit_tokens():
     assert fields == ["title", "tags"]          # spans 只覆盖 "vite"
     # 零命中: 三空
     assert _hit(parts, ["webpack", "rollup"]) == ([], [], set())
+
+
+# ---- spec 3.2/3.3: 降级分支与报告 ----
+
+def test_and_hit_no_fallback_marks_and(tmp_path):
+    _mk(tmp_path, [
+        _rec(1, title="license 授权服务", tags=("license",), summary="设备授权"),
+        _rec(2, title="license 校验", tags=("license",), summary="签名校验"),
+    ])
+    _, rep = search.evaluate(tmp_path, query="license 授权")
+    assert rep["match_mode"] == "and"
+    assert "partial" not in rep
+    assert [m["id"] for m in rep["matched"]] == ["kb-x1"]  # 逐字节同旧行为
+
+
+def test_partial_fallback_min_hit_and_report(tmp_path):
+    # 3 个去重 token, 只有 2 个命中的条目降级放行; 全不沾的计 query 死因
+    _mk(tmp_path, [
+        _rec(1, title="vite hmr 抖动排查", tags=("vite",), summary="热更新失效"),
+        _rec(2, title="完全无关", tags=("x",), summary="无关"),
+    ])
+    rows, rep = search.evaluate(tmp_path, query="vite hmr 不存在词")
+    assert [m["id"] for m in rep["matched"]] == ["kb-x1"]
+    assert rep["match_mode"] == "partial"
+    assert rep["partial"] == {"min_hit": 2, "tokens": 3}
+    assert rep["rejected"] == {"filter": 0, "query": 1}
+    assert rep["rejected"]["filter"] + rep["rejected"]["query"] \
+        + len(rep["matched"]) == rep["scanned"]           # 恒等式
+    assert [r["id"] for r in rows] == ["kb-x1"]
+
+
+def test_partial_below_min_hit_stays_zero(tmp_path):
+    # 4 token 仅 1 命中 < min_hit=2 → 仍零命中, 该条计入 rejected.query, 附 suggest
+    _mk(tmp_path, [_rec(1, title="vite hmr 抖动", tags=("vite",), summary="")])
+    rows, rep = search.evaluate(tmp_path, query="vite webpack rollup jest")
+    assert rows == [] and rep["matched"] == []
+    assert rep["match_mode"] == "partial"
+    assert rep["rejected"] == {"filter": 0, "query": 1}
+    assert "suggest" in rep                                # 降级后仍零命中照给建议
+
+
+def test_single_token_never_downgrades(tmp_path):
+    _mk(tmp_path, [_rec(1, title="vite hmr", tags=("vite",), summary="")])
+    assert search.search(tmp_path, query="webpack") == []
+    _, rep = search.evaluate(tmp_path, query="webpack")
+    assert rep["match_mode"] == "and"                      # 单 token 无 AND 可放宽
+
+
+def test_partial_ranking_ratio_then_score(tmp_path):
+    # 排序先看命中比例档再看 score: A 命中 2/4 但字段权重最高(16 分级),
+    # 仍排在命中 3/4 的 B/C 之后; B/C 同档(3/4)再按 score 分先后(gamma 在
+    # title 的 B 压过 gamma 只在 tags 的 C)
+    _mk(tmp_path, [
+        _rec(1, title="alpha beta", tags=("alpha", "beta"), summary=""),
+        _rec(2, title="gamma", tags=("x",), summary="alpha beta 提及"),
+        _rec(3, title="低", tags=("gamma",), summary="alpha delta 提及"),
+    ])
+    _, rep = search.evaluate(tmp_path, query="alpha beta gamma delta")
+    assert [m["id"] for m in rep["matched"]] == ["kb-x2", "kb-x3", "kb-x1"]
+    assert rep["match_mode"] == "partial"
+
+
+def test_partial_tie_index_order(tmp_path):
+    # spec 4.1"同分 index 序": 两条命中比例与 score 完全相同(同字段同 updated),
+    # 按 index 升序稳定输出
+    _mk(tmp_path, [
+        _rec(1, title="甲 alpha", tags=("beta",), summary=""),
+        _rec(2, title="乙 alpha", tags=("beta",), summary=""),
+    ])
+    _, rep = search.evaluate(tmp_path, query="alpha beta gamma")
+    assert [m["id"] for m in rep["matched"]] == ["kb-x1", "kb-x2"]
+
+
+def test_no_query_report_unchanged(tmp_path):
+    _mk(tmp_path, [_rec(1)])
+    _, rep = search.evaluate(tmp_path)
+    assert set(rep) == {"scanned", "rejected", "matched"}  # 兼容红线不加键

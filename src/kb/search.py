@@ -156,23 +156,52 @@ def evaluate(repo_root: Path, *, type=None, domain=None, tag=None, scope=None,
     report 供 trace 埋点消费; rows 与改造前 search() 元素同形, 但**有查询词时
     按 score 降序**(FR-3.1), 无查询词保持 index 序。零命中时 report 附
     `suggest` 近似词(FR-3.2), 供 MCP 透传与面板"已消化"判定。
+
+    部分命中降级(spec 2026-11-13): 严格 AND 有结果时行为逐字节不变; 仅当
+    AND 零结果且去重 token ≥2 时, 放行命中 ≥min(2, n_uniq) 个 token 的条目,
+    按(命中比例档降序, score 降序, index 升序)排序——描述式长查询不再全 AND
+    硬拒(hit_rate W46 35.1%), 同时比例档在前保证 3/4 命中稳定压过 1/4 命中。
     """
     recs = _load(repo_root)
     tokens = query.lower().split() if query else []
     today = dt.date.today().isoformat()  # 时效基准取当日(索引无构建时间字段)
-    hits: list[tuple[float, int, dict, list[str], list[list[int]]]] = []
-    n_filter = n_query = 0
+    uniq = set(tokens)
+    and_hits: list[tuple[float, int, dict, list[str], list[list[int]]]] = []
+    cands: list[tuple[set[str], int, dict, list[str], list[list[int]]]] = []
+    n_filter = n_no_hit = 0
     for order, rec in enumerate(recs):
         if _filtered_out(rec, type, domain, tag, scope, status, confidence):
             n_filter += 1
             continue
         fields, spans, hit_tokens = (
             ([], [], set()) if not tokens else _hit(_parts(rec), tokens))
-        if tokens and hit_tokens != set(tokens):
-            n_query += 1
-            continue
-        hits.append((_score(rec, fields, spans, tokens, today), order, rec, fields, spans))
-    hits.sort(key=lambda h: (-h[0], h[1]))  # 分数降序, 同分保持 index 序(稳定可解释)
+        if hit_tokens == uniq:                 # 无 query 时两侧同为空集, 走此支
+            and_hits.append((_score(rec, fields, spans, tokens, today),
+                             order, rec, fields, spans))
+        elif hit_tokens:
+            cands.append((hit_tokens, order, rec, fields, spans))
+        else:
+            n_no_hit += 1
+    report_partial = None
+    if not tokens or and_hits or len(uniq) < 2:
+        # AND 有结果(或无可放宽空间): 逐字节旧路径, 单 token 永不降级
+        match_mode = "and" if tokens else None
+        hits = sorted(and_hits, key=lambda h: (-h[0], h[1]))
+        n_query = n_no_hit + len(cands)        # 部分命中在 AND 模式下同样死于 query
+    else:
+        match_mode = "partial"
+        min_hit = min(2, len(uniq))
+        scored = []
+        for hit_tokens, order, rec, fields, spans in cands:
+            if len(hit_tokens) < min_hit:
+                continue
+            score = _score(rec, fields, spans, sorted(hit_tokens), today)
+            ratio = round(len(hit_tokens) / len(uniq), 6)
+            scored.append((-ratio, -score, order, score, rec, fields, spans))
+        scored.sort()                          # order 全局唯一, 天然打破元组平分
+        hits = [(h[3], h[2], h[4], h[5], h[6]) for h in scored]
+        n_query = n_no_hit + (len(cands) - len(scored))  # 低于门槛也计 query 死因
+        report_partial = {"min_hit": min_hit, "tokens": len(uniq)}
     matched = [{"id": h[2]["id"], "title": h[2].get("title"), "scope": h[2].get("scope"),
                 "confidence": h[2].get("confidence"), "hit_fields": h[3],
                 "hit_spans": h[4], "score": h[0], "rank": i + 1}
@@ -181,6 +210,10 @@ def evaluate(repo_root: Path, *, type=None, domain=None, tag=None, scope=None,
     report = {"scanned": len(recs),
               "rejected": {"filter": n_filter, "query": n_query},
               "matched": matched}
+    if match_mode:
+        report["match_mode"] = match_mode
+    if report_partial:
+        report["partial"] = report_partial
     if tokens and not hits:
         report["suggest"] = _suggest([r.get("title", "") for r in recs], tokens)
     return rows, report

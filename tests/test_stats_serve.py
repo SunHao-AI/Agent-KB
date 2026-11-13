@@ -1902,3 +1902,19 @@ def test_healthz_reports_auth_flag(tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_open_panel_local_carries_config_token(monkeypatch):
+    """spec §4.1: 本机模式解析到令牌时, URL 带 token 且代拉起 serve 收到同一令牌。"""
+    from kb import launcher, userconf
+
+    seen = {}
+    monkeypatch.setattr(userconf, "serve_target", lambda path=None: (None, "cfg-tok"))
+    monkeypatch.setattr(launcher, "probe_http", lambda *a, **k: False)
+    seq = iter([False, True])
+    monkeypatch.setattr(launcher, "probe_port", lambda *a, **k: next(seq))
+    monkeypatch.setattr(launcher, "spawn_serve",
+                        lambda root, port, caller, token=None: seen.update(token=token))
+    url, mode = launcher.open_panel(4320, caller=None, no_browser=True)
+    assert seen["token"] == "cfg-tok"
+    assert mode == "local" and _qs_of(url).get("token") == "cfg-tok"

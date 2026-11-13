@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hmac
 import json
 import threading
 import time
@@ -267,6 +268,20 @@ class TraceWatcher(threading.Thread):
         return f.name not in self._preexisting
 
 
+_LOGIN_WINDOW = 60.0
+_LOGIN_MAX_FAILS = 5
+_LOGIN_MAX_IPS = 256
+_COOKIE_ATTRS = "Path=/; HttpOnly; SameSite=Lax"
+
+
+def _same_secret(a: str, b: str) -> bool:
+    """常量时间比较(非 ASCII 也安全): 避免逐字符短路泄露令牌前缀。"""
+    try:
+        return hmac.compare_digest(a, b)
+    except TypeError:
+        return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "kb-serve/1"
 
@@ -308,7 +323,7 @@ class _Handler(BaseHTTPRequestHandler):
             got = got[7:]
         elif not got:  # SSE(EventSource)不能带自定义头 → query 传 token(兜底路径)
             got = parse_qs(urlparse(self.path).query).get("token", [""])[0]
-        return got == tok
+        return _same_secret(got, tok)
 
     def do_POST(self) -> None:  # noqa: N802
         srv = self.server  # type: ignore[attr-defined]
@@ -329,6 +344,12 @@ class _Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(n)
         elif n > 64 * 1024:
             self.close_connection = True
+        if u.path == "/api/session":
+            self._login(raw, n)
+            return
+        if u.path == "/api/logout":
+            self._logout()
+            return
         if u.path != "/api/ingest":
             self._json({"error": "not found"}, 404)
             return
@@ -383,12 +404,91 @@ class _Handler(BaseHTTPRequestHandler):
         kbtrace.append_event(ev, srv.root, ingest=False)
         self._json({"ok": True, "deduped": False})
 
+    def _login(self, raw: bytes, n: int) -> None:
+        """JSON body 登录(spec §4.2): 令牌只进请求体, 不进 URL/历史/Referer。"""
+        srv = self.server  # type: ignore[attr-defined]
+        if not srv.token:
+            self._json({"error": "auth disabled"}, 409)
+            return
+        if n <= 0:
+            self._json({"error": "bad body"}, 400)
+            return
+        if n > 4096:
+            self._json({"error": "body too large"}, 413)
+            return
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._json({"error": "bad json"}, 400)
+            return
+        tok = body.get("token") if isinstance(body, dict) else None
+        remember = bool(body.get("remember")) if isinstance(body, dict) else False
+        ip = self.client_address[0] if self.client_address else "?"
+        wait = self._login_wait(srv, ip)
+        if wait:
+            self._json({"error": "too many attempts"}, 429,
+                       extra={"Retry-After": str(wait)})
+            return
+        if not isinstance(tok, str) or not _same_secret(tok, srv.token):
+            self._record_login_fail(srv, ip)
+            self._json({"error": "bad token"}, 403)
+            return
+        with srv.login_lock:
+            srv.login_fail.pop(ip, None)
+        import secrets as _secrets
+        t = _secrets.token_urlsafe(32)
+        with srv.login_lock:
+            if len(srv.tickets) >= 64:
+                srv.tickets.clear()
+            srv.tickets.add(t)
+        ck = f"kb_tk={t}; {_COOKIE_ATTRS}"
+        if remember:
+            ck += "; Max-Age=2592000"
+        self._json({"ok": True, "remember": remember}, extra={"Set-Cookie": ck})
+
+    def _login_wait(self, srv, ip: str) -> int:
+        """返回需要等待的整秒; 0 表示放行。只清理/统计, 不改写超出窗口的记录。"""
+        now = time.monotonic()
+        with srv.login_lock:
+            times = [t for t in srv.login_fail.get(ip, [])
+                     if now - t < _LOGIN_WINDOW]
+            if times:
+                srv.login_fail[ip] = times
+            else:
+                srv.login_fail.pop(ip, None)
+            if len(times) >= _LOGIN_MAX_FAILS:
+                return max(1, int(_LOGIN_WINDOW - (now - times[0])) + 1)
+            return 0
+
+    def _record_login_fail(self, srv, ip: str) -> None:
+        now = time.monotonic()
+        with srv.login_lock:
+            times = [t for t in srv.login_fail.get(ip, [])
+                     if now - t < _LOGIN_WINDOW]
+            times.append(now)
+            srv.login_fail[ip] = times
+            if len(srv.login_fail) > _LOGIN_MAX_IPS:
+                srv.login_fail.pop(next(iter(srv.login_fail)), None)
+
+    def _logout(self) -> None:
+        """撤销当前 cookie 的票据(spec §4.2): 只影响本会话, 其他设备不动。"""
+        srv = self.server  # type: ignore[attr-defined]
+        ck = self.headers.get("Cookie", "")
+        for part in ck.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "kb_tk" and v:
+                with srv.login_lock:
+                    srv.tickets.discard(v)
+        self._json({"ok": True}, extra={
+            "Set-Cookie": f"kb_tk=; {_COOKIE_ATTRS}; Max-Age=0"})
+
     # ---- 路由 -----------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802
         srv = self.server  # type: ignore[attr-defined]
         u = urlparse(self.path)
         if u.path == "/healthz":
-            self._json({"ok": True, "schema": kbtrace.SCHEMA})
+            self._json({"ok": True, "schema": kbtrace.SCHEMA,
+                        "auth": bool(srv.token)})
             return
         if u.path == "/":
             # 静态壳免鉴权(不含数据, 数据全在 /api/* 逐个鉴权): 否则无 token 用户
@@ -404,7 +504,7 @@ class _Handler(BaseHTTPRequestHandler):
             # serve 多标签共用 token, 一次性会破坏重开/多标签; ticket 可交换的
             # 能力本就以持有 token 为前提, 不新增重放面。
             tokq = parse_qs(urlparse(self.path).query).get("ticket", [""])[0]
-            if not srv.token or tokq != srv.token:
+            if not srv.token or not _same_secret(tokq, srv.token):
                 self._json({"error": "bad ticket"}, 403)
                 return
             import secrets as _secrets
@@ -614,6 +714,9 @@ class ServeServer(ThreadingHTTPServer):
         self._html_sig: tuple | None = None
         # E1: 一次性 ticket → 会话票据池(有界, 超限清最旧重建; 重启即失效可接受)
         self.tickets: set[str] = set()
+        # 登录失败限流(spec §4.3): 每 IP 60s 滑动窗口, 有界防内存滥用
+        self.login_fail: dict[str, list[float]] = {}
+        self.login_lock = threading.Lock()
         self._panel_html()
 
     def _panel_html(self) -> str:
@@ -1193,7 +1296,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--repo", default=None, help="Agent-KB 仓根, 默认本包所在仓")
     ap.add_argument("--port", type=int, default=4320)
     ap.add_argument("--bind", default="127.0.0.1")
-    ap.add_argument("--token", default=None, help="团队态访问令牌(亦可用 KB_SERVE_TOKEN)")
+    ap.add_argument("--token", default=None,
+                    help="访问令牌; 缺省读 KB_SERVE_TOKEN 或 ~/.kb/config.toml [serve].token")
     ap.add_argument("--default-caller", default=None, help="单项目视图默认项目(kb web 代拉起时传入)")
     ap.add_argument("--repos", action="append", metavar="NAME=PATH", default=None,
                     help="额外纳入质量面的库(PATH 指向其 kb 根, 如 "

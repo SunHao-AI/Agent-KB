@@ -404,10 +404,12 @@ def _serve(tmp_path, token=None, default_caller=None):
     return srv, f"http://127.0.0.1:{port}"
 
 
-def _get_url(url, token=None):
+def _get_url(url, token=None, cookie=None):
     req = urllib.request.Request(url)
     if token:
         req.add_header("Authorization", f"Bearer {token}")
+    if cookie:
+        req.add_header("Cookie", cookie)
     with urllib.request.urlopen(req, timeout=5) as r:
         return r.status, json.loads(r.read().decode())
 
@@ -1761,3 +1763,142 @@ def test_resolve_token_priority(monkeypatch, tmp_path):
     monkeypatch.delenv("KB_SERVE_TOKEN", raising=False)
     cfg.unlink()
     assert serve.resolve_token(None) is None
+
+
+# ---- 登录/退出(spec §4.2/§4.3/§4.6) ----------------------------------------
+
+def _post_json_hd(url, payload, cookie=None):
+    """POST JSON, 非 2xx 也返回 (status, body, headers)。
+
+    与 ingest 用例的 _post_json 分开命名: 后者只要 (status, body), 登录/退出
+    必须读到 Set-Cookie / Retry-After 响应头。
+    """
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json"})
+    if cookie:
+        req.add_header("Cookie", cookie)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, json.loads(r.read().decode()), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode()), dict(e.headers)
+
+
+def test_login_session_cookie(tmp_path):
+    """spec §4.2/§4.6: 登录成功种 HttpOnly 会话 cookie, 默认无 Max-Age。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        st, body, hd = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        assert st == 200 and body["ok"] is True
+        ck = hd["Set-Cookie"]
+        assert "kb_tk=" in ck and "HttpOnly" in ck and "SameSite=Lax" in ck
+        assert "Max-Age" not in ck
+        cookie = ck.split(";")[0]
+        st2, _ = _get_url(f"{base}/api/stats", cookie=cookie)
+        assert st2 == 200
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_login_remember_sets_max_age(tmp_path):
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        st, body, hd = _post_json_hd(
+            f"{base}/api/session", {"token": "s3cret", "remember": True})
+        assert st == 200 and body["remember"] is True
+        assert "Max-Age=2592000" in hd["Set-Cookie"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_login_bad_token_and_lockout(tmp_path):
+    """spec §4.3: 前 5 次 403 计数, 第 6 次 429 + Retry-After; 成功后清零。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(5):
+            st, _, _ = _post_json_hd(f"{base}/api/session", {"token": "nope"})
+            assert st == 403
+        st, _, hd = _post_json_hd(f"{base}/api/session", {"token": "nope"})
+        assert st == 429 and int(hd["Retry-After"]) >= 1
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(4):
+            _post_json_hd(f"{base}/api/session", {"token": "nope"})
+        st, _, _ = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        assert st == 200
+        st, _, _ = _post_json_hd(f"{base}/api/session", {"token": "nope"})
+        assert st == 403  # 成功已清零, 未触发限流
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_login_auth_disabled_returns_409(tmp_path):
+    srv, base = _serve(tmp_path)  # 无 token = 免鉴权
+    try:
+        st, body, _ = _post_json_hd(f"{base}/api/session", {"token": "x"})
+        assert st == 409 and "auth disabled" in body["error"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_logout_revokes_cookie(tmp_path):
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        _, _, hd = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        cookie = hd["Set-Cookie"].split(";")[0]
+        st, _ = _get_url(f"{base}/api/stats", cookie=cookie)
+        assert st == 200
+        st, body, hd2 = _post_json_hd(f"{base}/api/logout", {}, cookie=cookie)
+        assert st == 200 and "Max-Age=0" in hd2["Set-Cookie"]
+        try:
+            _get_url(f"{base}/api/stats", cookie=cookie)
+            raise AssertionError("退出后旧 cookie 应 401")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_login_body_too_large(tmp_path):
+    """spec §4.2: 登录 body 上限 4 KiB, 超限 413。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        big = json.dumps({"token": "x" * 5000}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base}/api/session", data=big, method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("超限 body 应 413")
+        except urllib.error.HTTPError as e:
+            assert e.code == 413
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_healthz_reports_auth_flag(tmp_path):
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        st, body = _get_url(f"{base}/healthz")
+        assert st == 200 and body["auth"] is True
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    srv, base = _serve(tmp_path)
+    try:
+        _, body = _get_url(f"{base}/healthz")
+        assert body["auth"] is False
+    finally:
+        srv.shutdown()
+        srv.server_close()

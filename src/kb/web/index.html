@@ -388,7 +388,9 @@ let loginShown=false, urlTokenBad=false;
 function showLogin(msg){
   if(loginShown)return; loginShown=true;
   const m=document.createElement('div'); m.className='login-mask';
-  const remember=localStorage.getItem('kb.remember')==='1';
+  // 隐私模式/站点存储被禁时 localStorage 会抛错: 读取失败按"未勾选"处理, 不能因此弹不出卡
+  let remember=false;
+  try{remember=localStorage.getItem('kb.remember')==='1';}catch(_){}
   m.innerHTML=`<form class="login-card" id="loginForm">
     <h3>需要访问令牌</h3>
     <p class="tip">令牌来源: <code>~/.kb/config.toml [serve].token</code>、
@@ -411,7 +413,11 @@ function showLogin(msg){
       const r=await fetch('/api/session',{method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({token:tk,remember:rm})});
-      if(r.ok){localStorage.setItem('kb.remember',rm?'1':'0');location.reload();return;}
+      if(r.ok){
+        // cookie 已种成功: 写偏好失败(隐私模式/存储被禁)也要照常刷新, 且不能被外层 catch
+        // 误报成"无法连接服务端"
+        try{localStorage.setItem('kb.remember',rm?'1':'0');}catch(_){}
+        location.reload();return;}
       $('loginErr').textContent = r.status===429
         ? `失败次数过多，请 ${r.headers.get('Retry-After')||'稍'} 秒后重试`
         : r.status===409 ? '当前服务未启用令牌鉴权'
@@ -1084,7 +1090,7 @@ async function loadFeed(append){          // 一次拉足(百条级), 分页纯�
   const wq2=winQ();
   try{
     const r=await fetch(apiUrl(`/api/feed?${cp}${cp?'&':''}${wq2}&limit=500&offset=${offset}${RAWQ}`));
-    if(r.status===401){ showLogin(urlTokenBad?'URL 中的令牌无效':''); return;}
+    if(r.status===401){ feedFail('需要访问令牌'); showLogin(urlTokenBad?'URL 中的令牌无效':''); return;}
     rows=await r.json();
     // 窗口内真实总数走 X-Total-Count: body 被 limit 截断后长度≠总数, 面板得靠它
     // 区分"窗口里就这么多"与"还有更早的没载入"(2026-11-02 实测两者都显 500)

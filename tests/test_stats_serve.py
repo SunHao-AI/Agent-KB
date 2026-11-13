@@ -1015,7 +1015,7 @@ def test_panel_session_exchange_precedes_data_requests():
     from pathlib import Path
     from kb.serve import _asset_dir
     html = (Path(_asset_dir()) / "index.html").read_text(encoding="utf-8")
-    i_ex = html.find("fetch('/api/session")
+    i_ex = html.find("fetch('/api/session?ticket=")
     i_health = html.find("apiUrl('/api/health')")
     assert i_ex >= 0 and i_health >= 0, "session 交换或 health 探测缺失"
     assert i_ex < i_health, "session 交换必须在 health 之前(否则首帧 401 竞态复现)"

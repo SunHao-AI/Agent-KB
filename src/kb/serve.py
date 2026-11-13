@@ -1159,6 +1159,16 @@ def parse_repos(items: list[str] | None) -> dict[str, Path]:
     return out
 
 
+def resolve_token(cli_token: str | None = None) -> str | None:
+    """令牌解析唯一入口(spec §4.1): --token > KB_SERVE_TOKEN > 用户配置。
+
+    配置来源是 `~/.kb/config.toml [serve].token`, 由 userconf.serve_target 统一读取;
+    缺省 None 表示本机单人态免鉴权(行为不变)。
+    """
+    from kb import userconf
+    return cli_token or userconf.serve_target()[1] or None
+
+
 def run(root: Path | None = None, *, port: int = 4320, bind: str = "127.0.0.1",
         token: str | None = None, default_caller: str | None = None,
         quiet: bool = False, extra_repos: dict[str, Path] | None = None) -> None:
@@ -1178,7 +1188,6 @@ def run(root: Path | None = None, *, port: int = 4320, bind: str = "127.0.0.1",
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
-    import os
 
     ap = argparse.ArgumentParser(prog="kb serve")
     ap.add_argument("--repo", default=None, help="Agent-KB 仓根, 默认本包所在仓")
@@ -1214,7 +1223,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         run(Path(a.repo) if a.repo else None, port=a.port, bind=a.bind,
-            token=a.token or os.environ.get("KB_SERVE_TOKEN") or None,
+            token=resolve_token(a.token),
             default_caller=a.default_caller, extra_repos=extra)
     except ValueError as exc:
         print(f"kb serve: {exc}")

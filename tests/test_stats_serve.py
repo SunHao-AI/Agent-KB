@@ -1742,3 +1742,22 @@ def test_serve_stats_quarantines_registered_fixture_events(tmp_path):
         assert {x["trace_id"] for x in feed_raw} == {"r1", "f1"}
     finally:
         srv.shutdown()
+
+
+def test_resolve_token_priority(monkeypatch, tmp_path):
+    """spec §4.1: --token > env > config, 缺省 None(本机免鉴权)。"""
+    from kb import serve, userconf
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[serve]\ntoken = "cfg-tok"\n', encoding="utf-8")
+    monkeypatch.setattr(userconf, "config_path", lambda: cfg)
+    monkeypatch.delenv("KB_SERVE_TOKEN", raising=False)
+
+    assert serve.resolve_token(None) == "cfg-tok"
+    monkeypatch.setenv("KB_SERVE_TOKEN", "env-tok")
+    assert serve.resolve_token(None) == "env-tok"
+    assert serve.resolve_token("cli-tok") == "cli-tok"
+
+    monkeypatch.delenv("KB_SERVE_TOKEN", raising=False)
+    cfg.unlink()
+    assert serve.resolve_token(None) is None

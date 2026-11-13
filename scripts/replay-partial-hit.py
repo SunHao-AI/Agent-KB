@@ -89,7 +89,6 @@ def main() -> int:
     regressions: list[tuple[str, list[str], list[str]]] = []
     old_hit = new_hit = 0
     week_total = week_hit = 0
-    seen: set[str] = set()
     for s in searches:
         q = s["query"]
         toks = q.lower().split()

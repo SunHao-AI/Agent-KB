@@ -136,7 +136,8 @@ token = "你的令牌"
 
 配置里只需写一次, `kb serve` / `kb web` 都会读取。直接打开面板(不带 `?token=`)
 会看到登录卡, 可勾选"记住我 30 天"(默认不勾选); 页头"退出"只撤销当前会话,
-不影响其他设备。连续输错 5 次会限流 60 秒。cookie 为 HttpOnly + SameSite=Lax,
+不影响其他设备。60 秒内累计输错 5 次会限流(登录与 `?token=`、`Authorization: Bearer`、
+`?ticket=` 共用计数), 无凭据的匿名请求不计次。cookie 为 HttpOnly + SameSite=Lax,
 令牌不进浏览器存储。局域网共享请只在可信内网使用: HTTP 明文传输, 跨不可信网络
 需前置 HTTPS 反向代理。
 

@@ -9,6 +9,8 @@
   C HTTP 并发  serve(ThreadingHTTPServer) 各路由冷热延迟 + 缓存加速比
   C2 一致性    append 后 /api/stats 计数必须立即增长(AggCache 不得脏读)
   D 写侧并发   多线程 append_event → 行数/可解析/trace_id 唯一
+  D2 多进程写  N 个独立 python 进程同写当日文件(OS 锁面; Windows O_APPEND
+               仅 open 时定位 EOF, 线程锁跨不过进程 → kb-20261021-6223 遗留边界)
 
 用法:
   python scripts/loadtest.py                       # 全场景, 合成数据
@@ -23,7 +25,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
+import subprocess
 import shutil
 import socket
 import statistics
@@ -285,18 +289,81 @@ def scenario_write(work: Path, out: dict, fails: list[str], threads: int, per: i
         fails.append(f"D 重复 trace_id {dup} 条")
 
 
+def _mp_worker() -> int:
+    """D2 子进程入口: 向 KB_LT_MP_ROOT 指向的仓独立 append N 条事件。"""
+    root = Path(os.environ["KB_LT_MP_ROOT"])
+    tag = os.environ["KB_LT_MP_TAG"]
+    for i in range(int(os.environ.get("KB_LT_MP_N", "150"))):
+        kbtrace.append_event({"kind": "search", "trace_id": f"{tag}-{i}",
+                              "ts": "2026-10-20T12:00:00+08:00", "source": "cli",
+                              "caller_repo": tag, "query": "q" * 32, "filters": {},
+                              "limit": 10, "duration_ms": 1, "layers": [],
+                              "returned": [], "returned_chars": 0}, root, ingest=False)
+    return 0
+
+
+def scenario_write_mp(work: Path, out: dict, fails: list[str], procs: int, per: int) -> None:
+    print(f"== D2 多进程写完整性 ({procs} 进程 × {per} 事件, OS 文件锁面) ==")
+    root = work / "writer-mp"
+    shutil.rmtree(root, ignore_errors=True)
+    kbtrace.traces_dir(root).mkdir(parents=True, exist_ok=True)
+    total = procs * per
+    env = {**os.environ, "KB_LT_MP_ROOT": str(root), "KB_LT_MP_N": str(per),
+           "PYTHONPATH": str(REPO / "src"), "KB_TRACE": "1"}
+    t0 = time.perf_counter()
+    # 同一命令行同时起 N 进程(线程包 Popen 让 spawn 尽量贴近同刻),
+    # 每进程一个 tag 便于按 trace_id 前缀核对归属
+    cmd = [sys.executable, str(Path(__file__).resolve()), "--only", "D2W"]
+
+    def spawn(k: int) -> subprocess.CompletedProcess:
+        return subprocess.run(cmd, env=dict(env, KB_LT_MP_TAG=f"p{k}"),
+                              capture_output=True, text=True)
+
+    with ThreadPoolExecutor(procs) as ex:
+        res = list(ex.map(spawn, range(procs)))
+    dt_ms = (time.perf_counter() - t0) * 1000
+    for r in res:
+        if r.returncode != 0:
+            fails.append(f"D2 子进程退出码 {r.returncode}: {r.stderr[-200:]}")
+    ids, bad = [], 0
+    for f in sorted(kbtrace.traces_dir(root).glob("*.jsonl")):
+        for ln in f.read_text(encoding="utf-8").splitlines():
+            if not ln.strip():
+                continue
+            try:
+                ev = json.loads(ln)
+                if ev.get("kind") == "search":
+                    ids.append(ev.get("trace_id"))
+            except json.JSONDecodeError:
+                bad += 1
+    lost = total - len(ids)
+    dup = len(ids) - len(set(ids))
+    out["D2"] = {"total_ms": round(dt_ms), "expected": total, "written": len(ids),
+                 "lost": lost, "corrupt": bad, "dup": dup}
+    print(f"  {dt_ms:.0f}ms 落盘={len(ids)}/{total} 丢行={lost} 碎行={bad} 重复={dup}")
+    if bad:
+        fails.append(f"D2 碎行 {bad} 条: 多进程 append 未走 OS 锁互相覆盖")
+    if lost:
+        fails.append(f"D2 丢行 {lost} 条: 多进程 append 事件未落盘(Windows O_APPEND 竞态)")
+    if dup:
+        fails.append(f"D2 重复 trace_id {dup} 条")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Agent-KB 负载/压力测试(仓外隔离, 不碰真实 traces)")
     ap.add_argument("--repo", default=None, help="可选: 用该仓真实 index.jsonl 跑检索场景")
     ap.add_argument("--work", default=None, help="临时工作目录(默认 <系统temp>/kb-loadtest)")
     ap.add_argument("--scale", type=float, default=1.0, help="合成数据规模倍数(默认 1)")
     ap.add_argument("--threads", type=int, default=16, help="写侧并发线程数(默认 16)")
+    ap.add_argument("--procs", type=int, default=8, help="D2 多进程写并发进程数(默认 8)")
     ap.add_argument("--port", type=int, default=0, help="HTTP 端口(默认自动选空闲端口)")
     ap.add_argument("--only", default="ABC D", help="限定场景, 如 A / AB / ABCD(默认全部)")
     ap.add_argument("--json", dest="json_out", default=None, help="结果另存 JSON 路径")
     ap.add_argument("--keep", action="store_true", help="保留临时目录(便于排查)")
     a = ap.parse_args()
     only = a.only.replace(" ", "").upper()
+    if only == "D2W":  # D2 的子进程模式: 只写不测, 不落临时目录
+        return _mp_worker()
     scale = max(0.1, a.scale)
 
     work = Path(a.work or Path(tempfile.gettempdir()) / "kb-loadtest")
@@ -329,8 +396,10 @@ def main() -> int:
         except OSError as e:
             print(f"  [环境] HTTP 场景跳过: {e}", file=sys.stderr)
             return 2
-    if "D" in only:
+    if "D" in only:  # "D2" 亦含 D: 显式跑 D2 时顺带跑同门的线程面
         scenario_write(work, out, fails, a.threads, 125)
+    if "D2" in only:
+        scenario_write_mp(work, out, fails, a.procs, 150)
 
     print("\n---- 结论 ----")
     if fails:

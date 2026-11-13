@@ -23,11 +23,12 @@ from kb.spider_export import spider_id
 COMPLETE_AFTER_SEC = 5.0     # search 后无新 get 即定格(可回放)
 _POLL_SEC = 0.5
 
-# route 四色语义(与面板一致): code=项目层, model=通用层, ext=外接源(B-1, PRD 指定
-# #F34A87), you=已读消费
+# route 语义(与面板一致): code=项目层, model=通用层, you=已读消费。
+# 公开版对端(lib/config.js ROUTES)只认 code/model/you: 外接源命中并入 model,
+# 区分信息留在 label 的"外接 <源>: "前缀(2026-11-11 对端白名单实测, 同
+# spider_export 的切换原因——多一个 ext 键会被 normalizeConfig 整包拒)。
 ROUTES = {"code": {"label": "项目层命中", "color": "#42D6A4"},
           "model": {"label": "通用层命中", "color": "#F28A76"},
-          "ext": {"label": "外接源命中", "color": "#F34A87"},
           "you": {"label": "已读消费", "color": "#F0CA57"}}
 
 
@@ -126,13 +127,13 @@ def event_to_updates(search: dict) -> tuple[dict, list[dict]]:
                            "route": "code" if ly.get("repo") == proj_repo else "model",
                            "status": "running",
                            "detail": "hit: " + "+".join(m.get("hit_fields") or [])})
-    for e in search.get("ext") or []:  # 外接源命中 → ext 分支色(粉), label 带源名
+    for e in search.get("ext") or []:  # 外接源命中并入 model(公开版对端无 ext 分支)
         for eid in e.get("hits", []):
             if eid not in seen:
                 seen.add(eid)
                 events.append({"id": spider_id(eid),
                                "label": f"外接 {e.get('source')}: {eid}"[:40],
-                               "route": "ext", "status": "running",
+                               "route": "model", "status": "running",
                                "detail": f"source://{e.get('source')}"})
     q = search.get("query") or "-"
     cfg = {"title": f"KB 直播 {search.get('caller_repo', '?')}"[:80],

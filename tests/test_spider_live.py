@@ -20,8 +20,10 @@ def test_route_mapping_three_branches():
     by = {e["id"]: e for e in events}
     assert by["p1"]["route"] == "code"   # 首层=项目层(docs) 全部 code 绿
     assert by["g1"]["route"] == "code"
-    assert by["d1"]["route"] == "ext"    # 外接源 → ext 粉(B-1 独立分支)
-    assert cfg["routes"]["ext"]["color"] == "#F34A87"  # PRD FR-5.2 指定色
+    # 外接源并入 model: 公开版对端只认 code/model/you, 多一个 ext 键整包被拒
+    assert by["d1"]["route"] == "model"
+    assert by["d1"]["label"].startswith("外接 demo:")
+    assert set(cfg["routes"]) == {"code", "model", "you"}
     assert cfg["routes"]["you"]["color"] == "#F0CA57"  # 已读消费=you 黄(由 get 事件驱动)
 
 
@@ -60,6 +62,9 @@ def test_titles_truncated_to_40():
 def test_find_spider_home_missing_raises(monkeypatch):
     from kb import spider_live
     monkeypatch.setattr(spider_live, "COMMON_HOMES", [])
+    # 本机若设了 KB_SPIDER_HOME, 它优先于 COMMON_HOMES 直接命中(用例原本漏了这一层,
+    # 表现为"开发机恒失败、CI 恒通过"的环境依赖假失败)
+    monkeypatch.delenv("KB_SPIDER_HOME", raising=False)
     with pytest.raises(FileNotFoundError):
         spider_live.find_spider_home(r"Z:\不存在的目录")
 

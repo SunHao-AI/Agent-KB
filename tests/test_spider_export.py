@@ -39,9 +39,11 @@ def test_record_shape():
     assert rec["config"]["title"].startswith("KB 命中")
     assert rec["config"]["unit"] == "task"
     labels = {r["label"] for r in rec["config"]["routes"].values()}
-    assert labels == {"项目层命中", "通用层命中", "外接源命中", "已读消费"}
-    # 词墙布局(参考演示同款观感): 克隆仓 config.js 白名单已含 wall
-    assert rec["config"]["layout"] == "wall"
+    # 公开版对端 ROUTES=['code','model','you'], routes 多一个键都会被
+    # normalizeConfig 拒(Unknown configuration field)——2026-11-11 线上实测。
+    assert labels == {"项目层命中", "通用层命中", "已读消费"}
+    # layout 白名单以当前挂载对端为准: 公开版只认 portrait/landscape/square
+    assert rec["config"]["layout"] == "landscape"
 
 
 def test_spider_id_sanitizes_and_roundtrips():
@@ -67,14 +69,16 @@ def test_get_without_id_key_does_not_crash_consumed():
     assert rec["consumed"] == []
 
 
-def test_ext_hits_are_ext_route_and_sanitized():
+def test_ext_hits_are_model_route_and_sanitized():
+    """外接源命中: 公开版对端无 ext 分支(validateEvent 只认 code/model/you),
+    并入 model 分支, 区分信息留在 label 的"外接 <源>: "前缀。"""
     tr = _trace()
     tr["returned"] = ["kb-a", "source://tdbm/wiki/redis.md"]
     tr["ext"] = [{"source": "tdbm", "ok": True, "hits": ["source://tdbm/wiki/redis.md"]}]
     rec = spider_export.to_record(tr, _gets())
     by_id = {e["id"]: e for e in rec["events"]}
     sid = "source:--tdbm-wiki-redis.md"
-    assert by_id[sid]["route"] == "ext"
+    assert by_id[sid]["route"] == "model"
     assert by_id[sid]["detail"] == "source://tdbm"
     # consumed 回原生 id(仓内语义), 不是归一后的
     assert rec["consumed"] == ["kb-a"]

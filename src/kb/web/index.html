@@ -104,6 +104,20 @@ document.documentElement.dataset.theme=m==='auto'?(matchMedia('(prefers-color-sc
   .mono{font-family:Consolas,monospace;color:var(--mu);margin-left:auto;font-size:11px;white-space:nowrap}
   .mono .dur{display:inline-block;min-width:5.5ch;text-align:right}   /* 耗时定宽: 跨行右缘与时间列对齐 */
   .banner{border-left:3px solid var(--warn);background:var(--bgbanner);padding:9px 13px;border-radius:0 8px 8px 0;margin:10px 0;font-size:13px;animation:bIn .3s cubic-bezier(.22,.8,.3,1)}
+  .login-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);backdrop-filter:blur(2px);
+        display:flex;align-items:center;justify-content:center;z-index:9999}
+  .login-card{background:var(--panel);border:1px solid var(--bd);border-radius:12px;
+        padding:22px 24px;width:min(92vw,360px);display:flex;flex-direction:column;gap:10px;
+        box-shadow:0 20px 60px rgba(0,0,0,.35)}
+  .login-card h3{margin:0;font-size:16px}
+  .login-card .tip{margin:0;font-size:12px;color:var(--dim,#8b98ab);line-height:1.5}
+  .login-card input[type=password]{width:100%;padding:9px 10px;border:1px solid var(--bd);
+        border-radius:8px;background:var(--panel2);color:var(--tx);font:inherit}
+  .login-card label{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--dim,#8b98ab)}
+  .login-card button{padding:9px 12px;border:1px solid var(--bd);border-radius:8px;
+        background:var(--panel2);color:var(--tx);font:inherit;cursor:pointer}
+  .login-card button:disabled{opacity:.6;cursor:default}
+  .login-err{color:#f34a87;font-size:12px;min-height:16px}
   @keyframes bIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
   .banner.bad{border-color:var(--bad)} .banner.ok{border-color:var(--ok)}
   .est{color:var(--ext);cursor:help}
@@ -370,6 +384,55 @@ function winQ(){
 // 为 yyyy/MM/dd HH:mm:ss(补齐到秒); 查看者在其他时区也显示上海钟点, 不做本地化换算。
 const fmtTs=s=>{const m=String(s||'').match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}:\d{2})(:\d{2})?/);
   return m?`${m[1]}/${m[2]}/${m[3]} ${m[4]}${m[5]||':00'}`:'—';};
+let loginShown=false, urlTokenBad=false;
+function showLogin(msg){
+  if(loginShown)return; loginShown=true;
+  const m=document.createElement('div'); m.className='login-mask';
+  const remember=localStorage.getItem('kb.remember')==='1';
+  m.innerHTML=`<form class="login-card" id="loginForm">
+    <h3>需要访问令牌</h3>
+    <p class="tip">令牌来源: <code>~/.kb/config.toml [serve].token</code>、
+      <code>KB_SERVE_TOKEN</code> 或 <code>--token</code></p>
+    <input id="loginTok" type="password" autocomplete="current-password"
+      placeholder="输入访问令牌" required>
+    <label><input type="checkbox" id="loginRemember"${remember?' checked':''}>
+      记住我 30 天</label>
+    <button type="submit">登录</button>
+    <div class="login-err" id="loginErr">${esc(msg||'')}</div>
+  </form>`;
+  document.body.appendChild(m);
+  $('loginTok').focus();
+  $('loginForm').addEventListener('submit', async e=>{
+    e.preventDefault();
+    const tk=$('loginTok').value.trim(), rm=$('loginRemember').checked;
+    const btn=e.target.querySelector('button');
+    btn.disabled=true; btn.textContent='登录中…';
+    try{
+      const r=await fetch('/api/session',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({token:tk,remember:rm})});
+      if(r.ok){localStorage.setItem('kb.remember',rm?'1':'0');location.reload();return;}
+      $('loginErr').textContent = r.status===429
+        ? `失败次数过多，请 ${r.headers.get('Retry-After')||'稍'} 秒后重试`
+        : r.status===409 ? '当前服务未启用令牌鉴权'
+        : '令牌不正确，请核对配置或启动参数';
+    }catch(_){ $('loginErr').textContent='无法连接服务端，请确认 kb serve 在运行'; }
+    btn.disabled=false; btn.textContent='登录';
+  });
+}
+async function initAuth(){
+  try{
+    const d=await (await fetch('/healthz')).json();
+    if(!d.auth)return;
+    const b=document.createElement('button');
+    b.textContent='退出'; b.id='logoutBtn';
+    b.style.cssText='margin-left:8px;padding:2px 8px;border:1px solid var(--bd);'+
+      'border-radius:6px;background:var(--panel2);color:var(--tx);cursor:pointer;font:inherit';
+    b.onclick=async()=>{ try{await fetch(apiUrl('/api/logout'),{method:'POST'});}catch(_){}
+      location.reload(); };
+    $('conn').after(b);
+  }catch(_){}
+}
 // token 只在 /api/session 交换这一次进 URL(见上); 其余任何 /api/* 请求(含 SSE)不再
 // 带 token, 凭会话 cookie 过鉴权。无 token 启动(直接访问根路径)时连交换都不需要——
 // serve 未设 token 时 cookie 免检。
@@ -712,7 +775,8 @@ $('kpi').onclick=()=>{if(kpiStale){kpiStale=false;loadStats();}};
 async function loadStats(){
   const q=`${callerParam()}${callerParam()?'&':''}${winQ()}${RAWQ}`;
   try{
-  const r=await fetch(apiUrl(`/api/stats?${q}`)); if(r.status==401)return banner('bad','需要访问令牌: 用 <code>kb web</code> 打开(自动携带)或在 URL 加 <code>?token=…</code>');
+  const r=await fetch(apiUrl(`/api/stats?${q}`));
+  if(r.status===401){ showLogin(urlTokenBad?'URL 中的令牌无效':''); return; }
   const d=await r.json(); conn(true);
   const k=d.kpi; const cold=k.cold_start;
   // baseline = 本库全库字符量(serve 端按索引签名缓存)。检索开销只有除以它才有
@@ -837,7 +901,9 @@ function drillTo(q){
 }
 async function loadMatrix(){
   // 统计列随窗口(同屏 KPI 同口径, §29); 活跃性/掉线检测由服务端保持全量语义
-  const r=await fetch(apiUrl(`/api/callers?${winQ()}${RAWQ}`));if(r.status==401)return;const rows=await r.json();
+  const r=await fetch(apiUrl(`/api/callers?${winQ()}${RAWQ}`));
+  if(r.status===401){ showLogin(urlTokenBad?'URL 中的令牌无效':''); return; }
+  const rows=await r.json();
   renderMatrix(rows);markMatrixUncov();
 }
 // Q5: traces 出现过但没配 --repos 的 caller 没有质量面可下钻, 此前只在折叠的
@@ -1018,9 +1084,7 @@ async function loadFeed(append){          // 一次拉足(百条级), 分页纯�
   const wq2=winQ();
   try{
     const r=await fetch(apiUrl(`/api/feed?${cp}${cp?'&':''}${wq2}&limit=500&offset=${offset}${RAWQ}`));
-    if(r.status==401){   // token 缺失/中途失效: 换静态提示, 401 横幅仍由 loadStats 统一出
-      feedFail('需要访问令牌: 用 <code>kb web</code> 打开(自动携带)或在 URL 加 <code>?token=…</code>');
-      return;}
+    if(r.status===401){ showLogin(urlTokenBad?'URL 中的令牌无效':''); return;}
     rows=await r.json();
     // 窗口内真实总数走 X-Total-Count: body 被 limit 截断后长度≠总数, 面板得靠它
     // 区分"窗口里就这么多"与"还有更早的没载入"(2026-11-02 实测两者都显 500)
@@ -1519,7 +1583,8 @@ document.addEventListener('keydown',e=>{
 // health 与交换并发, 首帧带 ?token= 打开时 health 抢跑拿 401 → 走 catch 跳过
 // spiderReady 判定, 首点条目误弹内置 SVG 降级回放(刷新一次才恢复)。
 const sessionReady=(async()=>{if(tk0){   // E1: 数据请求发出前完成 ticket→cookie 交换(必须串行, 并发会 401)
-  try{await fetch('/api/session?ticket='+encodeURIComponent(tk0));}catch(e){}
+  try{const r=await fetch('/api/session?ticket='+encodeURIComponent(tk0));
+    if(!r.ok) urlTokenBad=true;}catch(e){}
 }})();
 (async()=>{await sessionReady;
 try{const h=await fetch(apiUrl('/api/health'));const d=await h.json();
@@ -1531,7 +1596,8 @@ try{const h=await fetch(apiUrl('/api/health'));const d=await h.json();
   if(qs.get('degraded'))banner('bad',`已配置团队观测服务端 <code>${esc(qs.get('serve_url')||'')}</code> 但不可达, 当前为<b>本机降级视图</b>(数据仅本机, 非团队全量)`);
 }catch(e){conn(false);}
 history.replaceState({view,caller,win},'',location.href);   // 固化初始态, 保证首条 popstate 有 state
-sessionReady.then(render);})();
+sessionReady.then(render);
+initAuth();})();
 // 浏览器前进/后退: 从 URL 恢复完整状态(视图/窗口/过滤态)
 addEventListener('popstate',e=>{const p=new URLSearchParams(location.search);
   view=p.get('caller')==='*'?'fed':'single';

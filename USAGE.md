@@ -49,6 +49,12 @@ kb search --query "x" --repo docs --agent-kb .agent-kb      # 双层检索
 `status: draft` 的条目不进检索索引; 单次检索默认落一条 trace(见 §7)。
 本次不想留痕加 `--no-trace`, 强制留痕加 `--trace`。
 
+三级披露的机器面: L2 的检索实际读 `kb/index.jsonl`(`kb/INDEX.md` 只是同一批数据的人读
+投影), L3 是条目正文 markdown。观测上, 一次 `kb search` 记一条 L2 读取事件
+(`level=2` / `surface=index.jsonl`), 一次 `kb show` 记一条 L3(`level=3` / `surface=entry.md`);
+L1(AGENTS.md)由宿主装进系统提示, kb 进程不参与, 因此**没有读取事件**, 面板如实显示
+"不可观测"而不是 0。"只看元数据"(有返回但同 trace 未读全文)由 `meta_only` 显式统计。
+
 ## 4. 写一条新知识
 
 ```powershell
@@ -173,6 +179,8 @@ kb trace report --format md               # 零命中周报(高频待消化词 +
 ```
 
 trace 落盘到本仓 `traces/YYYY-MM-DD.jsonl`(入 git, 只含元数据与摘要级信息, 永不写正文)。
+事件自 2026-11-13 起带 `level`/`surface` 显式标注披露层级(L2=`index.jsonl`, L3=`entry.md`);
+更早的事件没有这两个字段, 聚合按 `kind` 兜底归类, 面板会标"显式层级字段 N/M"。
 优先级: 命令显式 `--trace/--no-trace` > 环境变量 `KB_TRACE` > 仓根 `.kb-trace` 标记 > 默认关闭。
 `traces/` 由每日定时任务自动 commit + push(2026-11-09 起, 详见 README「trace 提交节奏」), **不要**把它混进功能提交。
 

@@ -73,7 +73,12 @@ def build_snapshot(root: Path | None, week: str) -> dict:
     只在窗口外活跃的项目会整行消失, "掉线项目"在快照里永久不可见。"""
     since, until = week_bounds(week)
     searches, gets, warns = kbtrace.read_traces(root)
+    rules, qwarns = kbtrace.load_quarantine(root)
+    warns = warns + qwarns
     searches, gets, _n, _bad = stats.denoise(searches, gets)
+    # 事件级隔离清单: 与面板默认口径一致, 否则周报会把 caller=docs 下混着的
+    # 历史夹具事件(真实仓名被 conftest 复用, 整 caller 剔不掉)照旧算进消费率。
+    searches, gets, _ = stats.quarantine_events(searches, gets, rules)
     win_s = stats.in_window(searches, since, until)
     win_g = stats.in_window(gets, since, until)
     board = stats.zero_hit_board(win_s, limit=_BOARD_LIMIT)

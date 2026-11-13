@@ -18,12 +18,17 @@ Agent-KB 是**跨项目研发知识库的事实源**, 配套 `kb` CLI(本仓 `sr
 
 | 层级 | 载体 | 内容 | 何时加载 |
 | --- | --- | --- | --- |
-| L1 | 本文件(AGENTS.md) | 位置、命令、规则 | 常驻 |
-| L2 | `kb/INDEX.md`(或 `kb search`) | 标题 + 元数据 + 一句话摘要 | 判断相关性时 |
-| L3 | `kb show <id>` | 单条全文 | 确认相关后 |
+| L1 | 本文件(AGENTS.md) | 位置、命令、规则 | 常驻(宿主装载, kb 不产生读取事件) |
+| L2 | `kb/index.jsonl` 机器面(`kb/INDEX.md` 仅人读投影; 命令 `kb search`) | 标题 + 元数据 + 一句话摘要 | 判断相关性时 |
+| L3 | `kb show <id>`(条目正文 markdown) | 单条全文 | 确认相关后 |
 
 **标准路径**: 先 `kb search`(只回元数据+摘要+路径), 命中才 `kb show` 读全文。
 禁止跳过 L2 直接批量读 L3, 浪费 token。`status: draft` 的条目不进检索索引。
+
+**观测口径**: 每次 `kb search`/`kb_search` 落一条 L2 事件(`level=2`, `surface=index.jsonl`),
+每次 `kb show`/`kb_get` 落一条 L3 事件(`level=3`, `surface=entry.md`); L1 由宿主装进
+系统提示, kb 进程不参与, 因此**没有读取事件**——面板显示"不可观测"而不是 0。
+"只看元数据"(有返回但同 trace 未读全文)由 `meta_only` 显式出数, 不再从字符数反推。
 
 ## 常用命令
 

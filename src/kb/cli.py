@@ -357,12 +357,20 @@ def _dispatch(argv: list[str] | None = None) -> int:
     if args.cmd == "show":
         if args.agent_kb:
             got = get_layered([repo] + [Path(p) for p in args.agent_kb], args.id)
-            if got is None:
-                print(f"not found: {args.id}", file=sys.stderr)
-                return 1
-            print(got[0])
-            return 0
-        text = get_entry(repo, args.id)
+            text, layer = got if got else (None, None)
+        else:
+            text = get_entry(repo, args.id)
+            layer = Path(repo).resolve().name.lower() if text is not None else None
+        # 读全文必须入账: 此前 CLI show 完全没有埋点, 面板的消费率/估算节省只能看到
+        # MCP kb_get, 而 AGENTS.md 规定的标准路径是 `kb search` → `kb show` ——
+        # 主路径不入账, 消费率恒 0 且与"真的没读全文"不可区分。
+        if kbtrace.trace_enabled():
+            caller = resolve_repo_name(repo).lower()
+            kbtrace.append_event(kbtrace.build_get_event(
+                trace_id=kbtrace.latest_search_id(caller, entry_id=args.id),
+                source="cli", caller_repo=caller, id=args.id, layer=layer,
+                ok=text is not None,
+                chars=len(text) if text is not None else None))
         if not text:
             print(f"not found: {args.id}", file=sys.stderr)
             return 1

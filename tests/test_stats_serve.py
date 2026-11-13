@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 
 from kb import serve, stats
+from kb import trace as kbtrace
 
 
 def _search(tid, caller, query, returned, *, ts="2026-10-18T10:00:00+08:00",
@@ -471,6 +472,33 @@ def test_serve_health_stats_and_page(tmp_path):
         with urllib.request.urlopen(req, timeout=5) as r:
             html = r.read().decode()
         assert "Agent-KB 观测面板" in html
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_serve_stats_reports_kb_baseline(tmp_path):
+    """B 项(2026-11-13): 检索开销必须给分母。只报 overhead 是一个差值, 读者无从
+    判断"1.4× 全库"还是"0.01× 全库"; baseline 走索引 path 逐条读正文, 与窗口/caller
+    无关(分母是本库规模, 不随筛选变化)。"""
+    body = "# 标题\n\n" + "正文" * 50
+    d = tmp_path / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text(body, encoding="utf-8")
+    (tmp_path / "kb" / "index.jsonl").write_text(
+        json.dumps({"id": "kb-20260101-aaaa", "path": "kb/pitfall/frontend/a.md"}) + "\n",
+        encoding="utf-8")
+    (tmp_path / "kb" / "INDEX.md").write_text("索引", encoding="utf-8")
+    srv, base = _serve(tmp_path)
+    try:
+        st, d0 = _get_url(f"{base}/api/stats")
+        assert st == 200
+        bl = d0["baseline"]
+        assert bl["entries"] == 1 and bl["kb_chars"] == len(body)
+        assert bl["index_chars"] == len("索引")
+        # 窗口/caller 过滤不影响分母
+        st, d1 = _get_url(f"{base}/api/stats?since=2026-10-01&caller=ghost")
+        assert d1["baseline"] == bl
     finally:
         srv.shutdown()
         srv.server_close()
@@ -1462,7 +1490,8 @@ def test_api_metrics_sorted_and_trimmed(tmp_path):
         # 点状字段白名单(面板只画这些), 完整 board 不回传(省带宽)
         pt = body["snapshots"][0]
         assert set(pt) == {"week", "since", "until", "searches", "hit_rate",
-                           "consume_rate", "digest_rate", "p50_ms", "cold_start"}
+                           "consume_rate", "consume_tracked", "consume_partial",
+                           "digest_rate", "p50_ms", "cold_start"}
         assert pt["cold_start"] is True
     finally:
         srv.shutdown()
@@ -1502,5 +1531,214 @@ def test_api_metrics_sees_snapshot_written_after_first_request(tmp_path):
         code, body = _get_url(f"{base}/api/metrics")
         assert code == 200
         assert [s["week"] for s in body["snapshots"]] == ["2026-W45"]
+    finally:
+        srv.shutdown()
+
+
+# ---- 夹具隔离: 事件级清单 + 写时标记 -----------------------------------------
+
+def _pick(ev, **kw):
+    ev = dict(ev)
+    ev.update(kw)
+    return ev
+
+
+def test_quarantine_events_in_mixed_caller():
+    """caller=docs 混着真实(扫 300 条)与 conftest 夹具(扫 1 条)事件: 整 caller
+    剔噪会连真实数据一起丢, 清单按事件级隔离, 且日期上界保护同 id 的后续真实事件。"""
+    fix = "kb-20261014-e1e1"
+    real = _pick(_search("r1", "docs", "vite", ["k1"], ts="2026-10-15T10:00:00+08:00"))
+    real["layers"][0]["scanned"] = 300
+    bad_hit = _pick(_search("s1", "docs", "vite", [fix], ts="2026-10-15T10:01:00+08:00"))
+    bad_hit["layers"][0]["scanned"] = 1
+    bad_miss = _pick(_search("s2", "docs", "vite", [], ts="2026-10-15T10:02:00+08:00"))
+    bad_miss["layers"][0]["scanned"] = 1
+    # 日期上界之后: 同样的 id/规模也不再算夹具(防清单误伤未来真实事件)
+    late = _pick(_search("s3", "docs", "vite", [fix], ts="2026-11-10T10:00:00+08:00"))
+    late["layers"][0]["scanned"] = 1
+    S = [real, bad_hit, bad_miss, late]
+    G = [_get("r1", "k1", "docs"), _get("s1", fix, "docs")]
+    rules = [{"caller_repo": "docs", "ids": [fix], "until": "2026-11-03",
+              "why": "fixture-id"},
+             {"caller_repo": "docs", "kinds": ["search"], "max_scanned": 2,
+              "until": "2026-11-03", "why": "tiny-scan"}]
+    assert stats.synthetic_callers(S) == set()      # 启发式剔不掉混合 caller
+    s, g, audit = stats.quarantine_events(S, G, rules)
+    assert [x["trace_id"] for x in s] == ["r1", "s3"]
+    assert [x["trace_id"] for x in g] == ["r1"]
+    assert audit["dropped"] == 3
+    assert [(x["why"], x["searches"], x["gets"]) for x in audit["detail"]] == [
+        ("fixture-id", 1, 1), ("tiny-scan", 1, 0)]
+
+
+def test_quarantine_write_time_flag_needs_no_rules():
+    """写时标记(synthetic=true)不依赖清单文件: 没有规则也要剔掉。"""
+    S = [_search("r1", "real", "vite", ["k1"]),
+         _pick(_search("x1", "real", "vite", ["k1"]), synthetic=True)]
+    s, _g, audit = stats.quarantine_events(S, [])
+    assert [x["trace_id"] for x in s] == ["r1"]
+    assert audit["dropped"] == 1 and audit["detail"][0]["why"].startswith("synthetic-flag")
+
+
+def test_denoise_full_separates_guessed_and_registered():
+    """两级剔噪分开计数: 猜的(caller 启发式)与登记的(清单)混成一个数就没法自查。"""
+    tiny = _pick(_search("t1", "proj", "vite", ["kb-1"]))
+    tiny["layers"] = [{"repo": "proj", "scanned": 1, "matched": []}]
+    fixs = _pick(_search("f1", "docs", "vite", ["kb-fix"]))
+    fixs["layers"][0]["scanned"] = 300
+    S = [_search("r1", "real", "vite", ["k1"]), tiny, fixs]
+    G = [_get("f1", "kb-fix", "docs")]
+    s, _g, audit = stats.denoise_full(
+        S, G, [{"caller_repo": "docs", "ids": ["kb-fix"], "why": "fixture"}])
+    assert [x["trace_id"] for x in s] == ["r1"]
+    assert audit["caller_dropped"] == 1 and audit["callers"] == ["proj"]
+    assert audit["quarantine_dropped"] == 2 and audit["dropped"] == 3
+
+
+def test_load_quarantine_validation(tmp_path):
+    """清单是不可信输入: 坏 JSON / 无匹配条件 / 未知键必须报 warn 而不是静默失效。"""
+    d = tmp_path / "traces"
+    d.mkdir()
+    assert kbtrace.load_quarantine(tmp_path) == ([], [])          # 缺文件不告警
+    (d / kbtrace.QUARANTINE_FILE).write_text("{bad", encoding="utf-8")
+    rules, warns = kbtrace.load_quarantine(tmp_path)
+    assert rules == [] and any("解析失败" in w for w in warns)
+    (d / kbtrace.QUARANTINE_FILE).write_text(json.dumps({"rules": [
+        {"why": "无条件"},
+        {"caller_repo": "docs", "ids": ["x"], "id": "y", "why": "ok"},
+        {"caller_repo": "docs", "ids": ["z"]},
+    ]}), encoding="utf-8")
+    rules, warns = kbtrace.load_quarantine(tmp_path)
+    assert rules == [{"caller_repo": "docs", "ids": ["x"], "why": "ok"}]
+    assert any("缺匹配条件" in w for w in warns)
+    assert any("缺 why" in w for w in warns)
+    assert any("未知键" in w for w in warns)
+
+
+def test_aggregate_marks_pre_tracking_consume():
+    """CLI show 埋点前的窗口: 消费率不可观测(显示"未采集"), 而不是 0 消费。"""
+    old = [_search("t1", "a", "v", ["k1"], ts="2026-11-01T10:00:00+08:00")]
+    k = stats.aggregate(old, [])
+    assert k["consume_tracked"] is False
+    assert k["pre_tracking_searches"] == 1
+    new = [_search("t2", "a", "v", ["k1"], ts="2026-11-13T10:00:00+08:00")]
+    k2 = stats.aggregate(new, [])
+    assert k2["consume_tracked"] is True and k2["pre_tracking_searches"] == 0
+    k3 = stats.aggregate(old + new, [])              # 跨起点: 数值只是下界
+    assert k3["consume_tracked"] is False and k3["pre_tracking_searches"] == 1
+
+
+def test_build_events_declare_layer_and_surface():
+    """三级披露显式字段: search=L2/index.jsonl, get=L3/entry.md(§五 第 2 条)。"""
+    ev = kbtrace.build_search_event(
+        trace_id="t1", source="cli", caller_repo="docs", query="vite",
+        filters={}, limit=20, reports=[], returned=["k1"], duration_ms=3)
+    assert ev["level"] == 2 and ev["surface"] == "index.jsonl"
+    g = kbtrace.build_get_event(trace_id="t1", source="cli", caller_repo="docs",
+                                id="k1", layer="docs", ok=True, chars=10)
+    assert g["level"] == 3 and g["surface"] == "entry.md"
+
+
+def test_aggregate_layer_reads_and_meta_only_reconcile():
+    """L1 不可观测; L2/L3 计数与既有 KPI 可对账; meta_only 显式切分(§五 第 7 条)。"""
+    S = [_search("t1", "a", "vite", ["k1", "k2"], rc=400),   # 读了全文
+         _search("t2", "a", "hmr", ["k3"], rc=300),           # 只看元数据
+         _search("t3", "a", "x", [], rc=60)]                  # 零命中
+    G = [_get("t1", "k1", "a", chars=1000),
+         _get("t2", "k3", "a", ok=False, chars=0)]            # 失败读不算消费
+    k = stats.aggregate(S, G)
+    lr = k["layer_reads"]
+    assert lr["l1"]["events"] == 0 and lr["l1"]["observable"] is False
+    assert lr["l2"]["events"] == k["searches"] == 3
+    assert lr["l2"]["chars"] == k["overhead_chars"] == 760
+    assert lr["l3"]["events"] == k["get_events"] == 2
+    assert lr["l3"]["ok_events"] == 1 and lr["l3"]["chars"] == 1000
+    # 旧事件无显式 surface: 仍按 kind 归类, declared=0(不假装全都有)
+    assert lr["l2"]["declared"] == 0 and lr["l3"]["declared"] == 0
+    # meta_only + meta_to_full = 有返回的检索数(零命中不计入任何一侧)
+    assert k["meta_only"]["searches"] == 1 and k["meta_to_full"]["searches"] == 1
+    assert (k["meta_only"]["searches"] + k["meta_to_full"]["searches"]
+            == round(k["hit_rate"] * k["searches"]))
+    # 字符侧: 两侧之和 + 零命中事件 = overhead_chars
+    assert k["meta_only"]["chars"] == 300 and k["meta_to_full"]["chars"] == 400
+    assert k["meta_only"]["chars"] + k["meta_to_full"]["chars"] == 700
+    k2 = stats.aggregate([dict(S[0], surface="index.jsonl")], [])
+    assert k2["layer_reads"]["l2"]["declared"] == 1
+
+
+def test_level_coerce_rejects_dirty_values():
+    """level/surface 是声明不是事实: 脏值删键回退 kind 归类, 不打崩聚合。"""
+    warns: list[str] = []
+    ev = {"kind": "search", "level": True, "surface": 3}
+    kbtrace._coerce(ev, warns, "x.jsonl")
+    assert "level" not in ev and "surface" not in ev
+    assert any("level" in w for w in warns) and any("surface" in w for w in warns)
+    ev2 = {"kind": "search", "level": 2.0, "surface": "index.jsonl"}
+    kbtrace._coerce(ev2, [], "y.jsonl")
+    assert ev2["level"] == 2 and isinstance(ev2["level"], int)
+
+
+def test_append_event_marks_synthetic_only_outside_sandbox(tmp_path, monkeypatch):
+    """写侧事实级标记: 只有"测试进程写到沙箱之外(真实账本)"才打标, 且不改调用方对象。
+
+    沙箱内(tmp_path)的写入是用例自建夹具, 打标会把"用 append_event 造数据"的
+    聚合测试整批剔空——所以这里同时验证两个方向。
+    """
+    ev = _search("t1", "docs", "vite", ["k1"])
+    kbtrace.append_event(ev, root=tmp_path)
+    assert "synthetic" not in ev
+    s, _, _ = kbtrace.read_traces(root=tmp_path)
+    assert len(s) == 1 and "synthetic" not in s[0]
+    # 模拟"沙箱判据不成立"(= 写到了真实账本): 打标
+    monkeypatch.setattr(kbtrace, "_under", lambda p, b: False)
+    kbtrace.append_event(_search("t2", "docs", "vite", ["k1"]), root=tmp_path)
+    s, _, _ = kbtrace.read_traces(root=tmp_path)
+    marked = [x["trace_id"] for x in s if x.get("synthetic") is True]
+    assert marked == ["t2"]
+
+
+def test_serve_stats_quarantines_registered_fixture_events(tmp_path):
+    """面板口径与账本复算对齐: 默认剔隔离清单, raw=1 回全量; 消费率由 50%→100%。"""
+    today = dt.date.today().isoformat()
+    srv, base = _serve(tmp_path)
+    real_s = _pick(_search("r1", "docs", "连接池", ["k1"], ts=f"{today}T10:00:00+08:00",
+                           rc=100))
+    real_s["layers"][0]["scanned"] = 300
+    fix_s = _pick(_search("f1", "docs", "vite", ["kb-fix"], ts=f"{today}T10:01:00+08:00",
+                          rc=80))
+    fix_s["layers"][0]["scanned"] = 1
+    rows = [real_s, fix_s,
+            _get("r1", "k1", "docs", chars=900, ts=f"{today}T10:00:05+08:00"),
+            # 夹具 get 记 ok=False: 只为验证"get 也按清单剔", 不参与消费计数
+            _get("f1", "kb-fix", "docs", ok=False, chars=500,
+                 ts=f"{today}T10:01:05+08:00")]
+    lines = [json.dumps({"kind": "meta", "schema": kbtrace.SCHEMA})] + \
+        [json.dumps(r, ensure_ascii=False) for r in rows]
+    (tmp_path / "traces" / "ledger.jsonl").write_text("\n".join(lines) + "\n",
+                                                      encoding="utf-8")
+    (tmp_path / "traces" / kbtrace.QUARANTINE_FILE).write_text(json.dumps({
+        "schema": 1,
+        "rules": [{"caller_repo": "docs", "ids": ["kb-fix"], "why": "fixture-id",
+                   "evidence": "test"}]}), encoding="utf-8")
+    try:
+        st, d = _get_url(f"{base}/api/stats")
+        assert st == 200
+        assert d["quarantine_count"] == 2 and d["quarantine_total"] == 2
+        assert d["quarantine_detail"][0]["searches"] == 1
+        assert d["quarantine_detail"][0]["gets"] == 1
+        assert d["kpi"]["searches"] == 1
+        assert d["kpi"]["returned_total"] == 1 and d["kpi"]["consumed_total"] == 1
+        assert d["kpi"]["consume_rate"] == 1.0
+        assert d["kpi"]["consume_tracked"] is True
+        # 账本复算: 剔掉 1 条夹具 search + 1 条夹具 get 后与面板同值
+        st, dr = _get_url(f"{base}/api/stats?raw=1")
+        assert dr["quarantine_count"] == 0 and dr["quarantine_total"] == 0
+        assert dr["kpi"]["searches"] == 2 and dr["kpi"]["consumed_total"] == 1
+        assert dr["kpi"]["consume_rate"] == 0.5
+        # 检索流同口径: 默认看不到夹具检索
+        st, feed = _get_url(f"{base}/api/feed")
+        assert [x["trace_id"] for x in feed] == ["r1"]
+        st, feed_raw = _get_url(f"{base}/api/feed?raw=1")
+        assert {x["trace_id"] for x in feed_raw} == {"r1", "f1"}
     finally:
         srv.shutdown()

@@ -9,15 +9,97 @@ import datetime as dt
 import json
 import os
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from pathlib import Path
 
 SCHEMA = 2  # v2: search 事件+returned_chars, get 事件+chars(FR-1.2 估算节省 token 自包含)
+
+# 三级披露的机器面口径(2026-11-13 起写进事件, 旧事件无这两个字段, 聚合按 kind 兜底):
+# L1 = AGENTS.md 由宿主(IDE/agent 框架)装进系统提示, kb 进程不参与读取 —— 没有事件,
+#      恒不可观测, 不能用 0 冒充"没人读";
+# L2 = 检索面, 机器载体是 kb/index.jsonl(kb/INDEX.md 只是人读投影), 每次 search 一条;
+# L3 = 条目正文 markdown, 每次 get 一条。
+# 显式声明层级后, "只看元数据/继续读全文"可直接判定, 不必再从 returned_chars 反推。
+LEVEL_SEARCH, LEVEL_GET = 2, 3
+SURFACE_SEARCH = "index.jsonl"
+SURFACE_GET = "entry.md"
 _MARKER = ".kb-trace"
 _ENV = "KB_TRACE"
 _FALSY = ("", "0", "false", "False", "no")
 _APPEND_LOCK = threading.Lock()  # 同进程多线程 append 互斥(Windows 并发写共享文件指针会丢/碎行)
+_LOCK_SUFFIX = ".lock"           # 跨进程锁 sidecar: 不带 .jsonl, 避开读侧 glob("*.jsonl")
+_LOCK_TIMEOUT = 3.0              # 单条埋点的持锁上限; 超时宁可丢事件也不阻塞检索链路
+_LOCK_POLL = 0.02
+
+try:
+    import msvcrt as _msvcrt
+except ImportError:
+    _msvcrt = None
+if _msvcrt is None:
+    import fcntl as _fcntl
+else:
+    _fcntl = None
+
+
+def _try_lock(fh) -> bool:
+    """非阻塞独占锁: 拿到 True, 被他人持有 False。"""
+    try:
+        if _msvcrt is not None:
+            fh.seek(0)
+            _msvcrt.locking(fh.fileno(), _msvcrt.LK_NBLCK, 1)
+        else:
+            _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock(fh) -> None:
+    try:
+        if _msvcrt is not None:
+            fh.seek(0)
+            _msvcrt.locking(fh.fileno(), _msvcrt.LK_UNLCK, 1)
+        else:
+            _fcntl.flock(fh.fileno(), _fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
+def _append_locked(target: Path, lines: list[str], lock_path: Path | None = None) -> bool:
+    """进程内锁 + OS 文件锁双保险下追加整行; 取锁超时返回 False(调用方静默丢事件)。
+
+    为什么必须上 OS 锁(kb-20261021-6223 的遗留边界): Windows CRT 的 `O_APPEND`
+    只在 open 时定位一次 EOF, 之后各句柄按自己的指针推进 —— 同进程多线程已由
+    `_APPEND_LOCK` 串行, 但 serve(ThreadingHTTPServer) / CLI / MCP 是**多进程**同写
+    当日文件, 线程锁跨不过进程, 并发下互相覆盖并留下半行碎片(线上实测:
+    traces/2026-11-06 与 2026-11-11 各残留 1 条孤儿片段)。
+    """
+    deadline = time.monotonic() + _LOCK_TIMEOUT
+    with _APPEND_LOCK:
+        sidecar = None
+        if lock_path is not None:
+            try:
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                sidecar = lock_path.open("a+b")
+            except OSError:
+                sidecar = None
+        try:
+            if sidecar is not None:
+                while not _try_lock(sidecar):
+                    if time.monotonic() >= deadline:
+                        return False
+                    time.sleep(_LOCK_POLL)
+            head = [] if target.exists() else [
+                json.dumps({"kind": "meta", "schema": SCHEMA}, ensure_ascii=False)]
+            with target.open("a", encoding="utf-8", newline="\n") as fh:
+                fh.write("".join(ln + "\n" for ln in [*head, *lines]))
+            return True
+        finally:
+            if sidecar is not None:
+                _unlock(sidecar)
+                sidecar.close()
 
 
 def kb_root() -> Path:
@@ -90,20 +172,26 @@ def append_event(event: dict, root: Path | None = None, *,
     落盘即事实源成立; 之后若配置了 ingest 目标(FR-2.5 团队态直播通道),
     尽力异步 POST 一份 —— 失败静默、不重试第二跳、绝不反向影响检索。
     serve 端接收 ingest 后落盘时必须传 ingest=False, 防中继回环。
+
+    写时标记 `synthetic=true`: 测试进程把事件写到 pytest 沙箱**之外**(真实账本)
+    时打标, 与 caller 名/扫描规模等启发式判据解耦。沙箱内的写入不打标——那是
+    用例自建的合法夹具目录, 永远不会被真实面板读到, 打标反而会把"用 append_event
+    造数据"的聚合测试整批剔空。只加字段不改 `source`(cli/mcp 分渠道语义不变)。
     """
+    ev = event
+    if "synthetic" not in ev and _in_pytest_session():
+        target = Path(root) if root else kb_root()
+        if not _under(target, _pytest_tmp_root()):
+            ev = {**ev, "synthetic": True}
     try:
         f = _today_file(root)
         f.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(event, ensure_ascii=False)
-        with _APPEND_LOCK:  # 锁内一次写完多行, 保证行完整性
-            head = [] if f.exists() else [json.dumps({"kind": "meta", "schema": SCHEMA},
-                                                     ensure_ascii=False)]
-            with f.open("a", encoding="utf-8", newline="\n") as fh:
-                fh.write("".join(ln + "\n" for ln in [*head, line]))
+        line = json.dumps(ev, ensure_ascii=False)
+        _append_locked(f, [line], lock_path=f.with_suffix(_LOCK_SUFFIX))
     except OSError:
         return
     if ingest:
-        _post_ingest(event)
+        _post_ingest(ev)
 
 
 def _post_ingest(event: dict) -> None:
@@ -184,7 +272,7 @@ def _coerce(ev: dict, warns: list[str], src: str) -> None:
     # §52: 身份字段非字符串同族——caller_repo/ts 会进 by_caller 键与 ts_key 比较,
     # ingest 口已拒收(serve §52), 但手工写入/异构客户端的存量文件仍可能带 dict/
     # list; 读侧一并净化(删键+warn), 坏事件降级为"项目未知"而非打崩聚合。
-    for k in ("trace_id", "id", "caller_repo", "layer", "source", "ts"):
+    for k in ("trace_id", "id", "caller_repo", "layer", "source", "ts", "surface"):
         v = ev.get(k)
         if v is not None and not isinstance(v, str):
             warns.append(f"{src}: {k} 非字符串({type(v).__name__}), 按缺失处理")
@@ -205,6 +293,31 @@ def _coerce(ev: dict, warns: list[str], src: str) -> None:
         if v is not None and not isinstance(v, (int, float)):
             warns.append(f"{src}: {k} 非数值({type(v).__name__}), 该次不计入")
             ev[k] = None                         # 下游 `is None` 分支已正确跳过
+    # level 是三级披露的层级声明(1/2/3), 只认这三个整数; 脏值删键让聚合按 kind 兜底,
+    # 不把 True/浮点/"2" 之类的脏值带进层级统计。旧事件本就没有该键, 属正常缺失。
+    # NaN/Infinity 是 Python json 允许的字面量(int() 会抛), 一并归到"非法"分支。
+    lv = ev.get("level")
+    if lv is not None:
+        bad = isinstance(lv, bool) or not isinstance(lv, (int, float))
+        if not bad:
+            try:
+                bad = int(lv) not in (1, 2, 3)
+            except (ValueError, OverflowError):
+                bad = True
+        if bad:
+            warns.append(f"{src}: level 非法({lv!r}), 按 kind 兜底层级")
+            del ev["level"]
+        elif not isinstance(lv, int):
+            ev["level"] = int(lv)
+    # synthetic 是写时布尔标记(见 append_event), 判据只认 True/False 本身:
+    # 手工写入的 "yes"/1 按标量真值归一, 容器删键(否则下游 `is True` 静默失效)。
+    sy = ev.get("synthetic")
+    if sy is not None and not isinstance(sy, bool):
+        if isinstance(sy, (int, float, str)):
+            ev["synthetic"] = bool(sy) and str(sy).strip().lower() not in _FALSY
+        else:
+            warns.append(f"{src}: synthetic 为容器({type(sy).__name__}), 按缺失处理")
+            del ev["synthetic"]
 
 
 def _parse_file(f: Path) -> tuple[list, list, list]:
@@ -334,6 +447,65 @@ def read_traces(root: Path | None = None, *, caller: str | None = None,
     return searches, gets, warns
 
 
+QUARANTINE_FILE = "synthetic-ids.json"
+# 清单键的白名单: 未知键(常见笔误 id/until_ts)必须报 warn 而不是静默忽略——
+# 写错一个键 = 该规则永不命中 = 隔离形同虚设, 而数字看起来"很干净"。
+_QUARANTINE_KEYS = ("caller_repo", "kinds", "ids", "max_scanned",
+                    "since", "until", "why", "evidence")
+_QUARANTINE_MATCHERS = ("caller_repo", "kinds", "ids", "max_scanned")
+
+
+def load_quarantine(root: Path | None = None) -> tuple[list[dict], list[str]]:
+    """读 `traces/synthetic-ids.json`: 历史测试夹具事件的**显式登记**清单。
+
+    为什么需要它(启发式的盲区): `stats.synthetic_callers` 按 caller 名与扫描
+    规模判合成, 只能整 caller 剔。`caller_repo=docs` 既有 332 条真实检索(扫 300+
+    条), 也有 178 条 conftest 夹具检索(扫 1-2 条)——同一 caller 混着真实与合成,
+    整 caller 剔会连真实数据一起丢, 不剔则夹具照旧刷榜(实测 177 条 get 全落在
+    `kb-20261014-e1e1`/`kb-20261014-0000`/`source://demo/d1` 三个夹具 id)。
+
+    原则与 caller 剔噪一致: **改口径不抹事件**。账本是 append-only 事实源, 这里
+    只在读侧登记"哪些历史事件属于测试语料", 事件本身与 raw=1 逃生门都保留。
+
+    规则语义: 单条规则内所有已给条件 **AND**; 至少给一个匹配条件(否则会吞全库);
+    日期为 `[since, until]` 闭区间、按 ts 的日粒度。返回 (规则列表, 告警列表)。
+    """
+    base = Path(root) if root else kb_root()
+    path = traces_dir(base) / QUARANTINE_FILE
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return [], []
+    except OSError as exc:
+        return [], [f"{QUARANTINE_FILE}: 读取失败({exc.__class__.__name__}), 隔离未生效"]
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError:
+        return [], [f"{QUARANTINE_FILE}: JSON 解析失败, 隔离未生效"]
+    if not isinstance(doc, dict) or not isinstance(doc.get("rules"), list):
+        return [], [f"{QUARANTINE_FILE}: 顶层须为 {{\"rules\": [...]}}, 隔离未生效"]
+    rules: list[dict] = []
+    warns: list[str] = []
+    for i, r in enumerate(doc["rules"]):
+        tag = f"{QUARANTINE_FILE}#rules[{i}]"
+        if not isinstance(r, dict):
+            warns.append(f"{tag}: 非对象, 跳过")
+            continue
+        unknown = [k for k in r if k not in _QUARANTINE_KEYS]
+        if unknown:
+            warns.append(f"{tag}: 未知键 {unknown}, 已忽略")
+        rule = {k: r[k] for k in _QUARANTINE_KEYS if k in r}
+        if not any(k in rule for k in _QUARANTINE_MATCHERS):
+            warns.append(f"{tag}: 缺匹配条件({'/'.join(_QUARANTINE_MATCHERS)}), 跳过"
+                         "(无条件的规则会吞掉全库)")
+            continue
+        if not rule.get("why"):
+            warns.append(f"{tag}: 缺 why(隔离理由), 跳过")
+            continue
+        rules.append(rule)
+    return rules, warns
+
+
 def find_trace(trace_id: str, root: Path | None = None) -> dict | None:
     searches, _, _ = _iter_raw(Path(root) if root else kb_root())
     return next((s for s in searches if s.get("trace_id") == trace_id), None)
@@ -372,9 +544,12 @@ def build_search_event(*, trace_id: str, source: str, caller_repo: str,
 
     returned_chars: 本次返回给调用方的序列化字符数(FR-1.2 知识库自身开销/节省
     token 估算用); 调用方未传则省略字段, 聚合侧按"未知"跳过。
+    level/surface: 显式声明这次读的是三级披露的哪一层(见模块常量), 让"只看
+    元数据"可判定; 旧事件无此字段时聚合按 kind 兜底(search→L2)。
     """
     ev = {
         "kind": "search", "trace_id": trace_id, "ts": ts or _now(), "source": source,
+        "level": LEVEL_SEARCH, "surface": SURFACE_SEARCH,
         "caller_repo": caller_repo, "query": query,
         "filters": {k: filters.get(k) for k in
                     ("type", "domain", "tag", "scope", "status", "confidence")},
@@ -399,8 +574,10 @@ def build_search_event(*, trace_id: str, source: str, caller_repo: str,
 def build_get_event(*, trace_id: str | None, source: str, caller_repo: str, id: str,
                     layer: str | None, ok: bool, chars: int | None = None,
                     ts: str | None = None) -> dict:
-    """chars: 本次读到的全文字符数(FR-1.2 消费口径), ok=False 时无意义省略。"""
+    """chars: 本次读到的全文字符数(FR-1.2 消费口径), ok=False 时无意义省略。
+    level/surface: 显式声明这是 L3(条目正文)读取; 旧事件无此字段时按 kind 兜底。"""
     ev = {"kind": "get", "trace_id": trace_id, "ts": ts or _now(), "source": source,
+          "level": LEVEL_GET, "surface": SURFACE_GET,
           "caller_repo": caller_repo, "id": id, "layer": layer, "ok": ok}
     if chars is not None:
         ev["chars"] = int(chars)

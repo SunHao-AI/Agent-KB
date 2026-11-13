@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "note": "历史测试夹具事件的读侧隔离清单。账本 append-only, 本文件只登记'哪些事件属于测试语料', 由 kb.serve / kb.metrics 聚合时跳过; 事件本身不删不改, ?raw=1 仍可看全量。规则内条件 AND, 至少给一个匹配条件。",
+  "rules": [
+    {
+      "caller_repo": "docs",
+      "ids": ["kb-20261014-e1e1", "kb-20261014-0000", "source://demo/d1"],
+      "until": "2026-11-03",
+      "why": "conftest make_entry 合成夹具 id",
+      "evidence": "kb/pitfall/devops/2026-11-02-caller.md 记录 kb-20261014-e1e1 为夹具 id; 2026-11-13 复算: 2026-10-15..2026-11-03 该 caller 下 177 条 get(71 次 kb-20261014-0000/ok=false、71 次 kb-20261014-e1e1、35 次 source://demo/d1) 与同日 141 条 tiny-scan search 逐日成对出现, 2026-11-03 后无新增"
+    },
+    {
+      "caller_repo": "docs",
+      "kinds": ["search"],
+      "max_scanned": 2,
+      "until": "2026-11-03",
+      "why": "合成夹具仓扫描规模(1-2 条条目), 同批测试的零命中检索",
+      "evidence": "同一时间窗内 docs 真实检索扫 300+ 条(2026-11-13 实测 index 207 条/三库合计 544 条), 而 40 条零命中/未扫到的 search 全部 max(layers.scanned)<=2; 与上面 141 条夹具检索同日同批, 属同一 pytest 运行"
+    }
+  ]
+}

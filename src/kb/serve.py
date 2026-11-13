@@ -31,6 +31,10 @@ _SSE_KEEPALIVE_SEC = 15.0
 # 扫描, 点开的条数与卡上显示的数字不可能对不上。
 _QUALITY_CACHE: dict[str, dict] = {}
 
+# 全库字符量缓存(键=库根, 值=(index 签名, 统计结果)): 用于"检索开销 ÷ 全库规模"
+# 的 baseline 对照。不缓存则每 2s 轮询重读全部正文(本仓实测 208 条 / 48 万字)。
+_KB_CHARS_CACHE: dict[str, tuple[tuple[int, int], dict]] = {}
+
 # 质量分类(下钻 kind)= 面板五张可点卡片。清单不设上限: 单库量级只有数百条
 # (2026-11-02 实测三库合计 544 条), 截断反而制造"卡上 228 / 清单 200"的新对不上。
 _QUALITY_KINDS = ("draft", "speculative", "needs_scope", "no_tags", "due")
@@ -64,6 +68,14 @@ class AggCache:
                 parts.append(f"{f.name}:{st.st_mtime_ns}:{st.st_size}")
             except OSError:
                 parts.append(f"{f.name}:gone")
+        # 隔离清单也是口径输入: 改了清单必须让缓存失效, 否则面板要重启 serve
+        # 才认新规则(观测工具的"改了不生效"会被读成"规则没起作用")。
+        q = d / kbtrace.QUARANTINE_FILE
+        try:
+            st = q.stat()
+            parts.append(f"{q.name}:{st.st_mtime_ns}:{st.st_size}")
+        except OSError:
+            parts.append(f"{q.name}:none")
         return "|".join(parts)
 
     def get(self, key: tuple, compute):
@@ -485,10 +497,19 @@ class _Handler(BaseHTTPRequestHandler):
                                    "searches": m.get("searches"),
                                    "hit_rate": m.get("hit_rate"),
                                    "consume_rate": m.get("consume_rate"),
+                                   # 该周是否完全落在消费埋点前(整周不绘制); 部分覆盖
+                                   # (跨起点的那周)仍绘制, 用 consume_partial 标注下界。
+                                   "consume_tracked": (s.get("until") or "") >=
+                                   stats.CONSUME_TRACKING_SINCE,
+                                   "consume_partial": bool(m.get("pre_tracking_searches"))
+                                   and (s.get("until") or "") >= stats.CONSUME_TRACKING_SINCE,
                                    "digest_rate": zh.get("digest_rate"),
                                    "p50_ms": la.get("p50_ms"),
                                    "cold_start": bool(m.get("cold_start"))})
-                self._json({"snapshots": points, "warns": warns})
+                self._json({"snapshots": points, "warns": warns,
+                            # 消费率可采集起点: 之前周次的 consume_rate 是"CLI 读全文
+                            # 未埋点"的产物, 折线必须断开而不是当 0 画(见 stats 常量)。
+                            "consume_tracked_from": stats.CONSUME_TRACKING_SINCE})
             elif u.path == "/api/export":
                 # B4: JSON 附件下载, 面板转成 CSV。走 agg 缓存会返回同一份对象,
                 # 导出低频且要即时性, 直连实现函数
@@ -911,14 +932,18 @@ def _read(srv: "ServeServer", q: dict | None = None):
     默认剔, `?raw=1` 回到含噪声原始口径(自查判据是否误伤真实仓)。返回
     (searches, gets, warns, dropped_count, dropped_callers)。
 
-    为什么在读侧剔而不是改账本: traces/ 已按每日定时任务提交进 git, 历史污染
-    改写不得(账本是事实源, 改写=伪造观测数据); 判据与误判面见 stats.synthetic_callers。
+    剔噪两级(见 kb.stats.denoise_full): caller 级启发式 + `traces/synthetic-ids.json`
+    事件级隔离清单。为什么读侧剔而不是改账本: traces/ 已按每日定时任务提交进 git,
+    历史污染改写不得(账本是事实源, 改写=伪造观测数据); 规则与误判面见
+    stats.synthetic_callers / trace.load_quarantine。
     """
     s, g, warns = kbtrace.read_traces(root=srv.root)
+    rules, qwarns = kbtrace.load_quarantine(srv.root)
+    warns = warns + qwarns
     if (q or {}).get("raw") in ("1", "true", "yes"):
         return s, g, warns, 0, []
-    s, g, n, bad = stats.denoise(s, g)
-    return s, g, warns, n, sorted(bad)
+    s, g, audit = stats.denoise_full(s, g, rules)
+    return s, g, warns, audit["dropped"], audit["callers"]
 
 
 def _feed_payload(srv: "ServeServer", q: dict):
@@ -941,6 +966,40 @@ def _feed_payload(srv: "ServeServer", q: dict):
     return rows, total
 
 
+def _kb_chars(root: Path) -> dict:
+    """本库全库字符量: 给"检索开销"一个可核对的分母, 否则 saved_chars 只是差值不是节省。
+
+    只认 index.jsonl 里的 path(索引是唯一事实源), 不 glob 正文目录; 结果按索引
+    签名分库缓存, 轮询成本恒定。读不出正文的行跳过并按 entries 计数, 不猜大小。
+    """
+    root = Path(root)
+    idx = root / "kb" / "index.jsonl"
+    try:
+        sig = (idx.stat().st_mtime_ns, idx.stat().st_size)
+        raw = idx.read_text(encoding="utf-8")
+    except OSError:
+        return {"entries": 0, "kb_chars": 0, "index_chars": 0}
+    key = str(root.resolve()).lower()
+    hit = _KB_CHARS_CACHE.get(key)
+    if hit and hit[0] == sig:
+        return hit[1]
+    total = n = 0
+    for ln in raw.splitlines():
+        try:
+            rel = json.loads(ln)["path"]
+            total += len((root / rel).read_text(encoding="utf-8"))
+            n += 1
+        except (ValueError, KeyError, TypeError, OSError):
+            continue
+    try:
+        index_chars = len((root / "kb" / "INDEX.md").read_text(encoding="utf-8"))
+    except OSError:
+        index_chars = 0
+    data = {"entries": n, "kb_chars": total, "index_chars": index_chars}
+    _KB_CHARS_CACHE[key] = (sig, data)
+    return data
+
+
 def _stats_payload(srv: "ServeServer", q: dict) -> dict:
     """FR-1.2 出数(口径全在 kb.stats), 经 AggCache 按 trace 签名缓存。
 
@@ -956,24 +1015,41 @@ def _stats_payload(srv: "ServeServer", q: dict) -> dict:
     # 对账; 全账本数另给 synthetic_total。一次 read_traces 两口径共用(读盘是这里
     # 的主要成本, 不走 _read 二次读)。
     s0, g0, warns = kbtrace.read_traces(root=srv.root)
-    if q.get("raw") in ("1", "true", "yes"):
-        s, g, n_syn_all, bad_syn = s0, g0, 0, []
-    else:
-        s, g, n_syn_all, bad_syn = stats.denoise(s0, g0)
-        bad_syn = sorted(bad_syn)   # set 不可 JSON 序列化(500), 且顺序需稳定
+    rules, qwarns = kbtrace.load_quarantine(srv.root)
+    warns = warns + qwarns
+    raw = q.get("raw") in ("1", "true", "yes")
+    # 两级剔噪分开计数, 面板才能说清"剔的多少是猜的、多少是登记的":
+    # ① caller 级启发式(synthetic_callers) ② 事件级隔离清单(traces/synthetic-ids.json)
+    s_heur, g_heur, n_heur, bad_heur = stats.denoise(s0, g0)
+    s_q, g_q, q_audit = stats.quarantine_events(s_heur, g_heur, rules)
+    s, g = (s0, g0) if raw else (s_q, g_q)
+    bad_syn = [] if raw else sorted(bad_heur)
     sa, ga = srv.filter_caller(s0, g0, q)
+    sh, gh = srv.filter_caller(s_heur, g_heur, q)
     s, g = srv.filter_caller(s, g, q)
     since, until = q.get("since"), q.get("until")
+
+    def _wc(pair) -> int:
+        return (len(stats.in_window(pair[0], since, until))
+                + len(stats.in_window(pair[1], since, until)))
+
     # 两边都先过窗口再相减: s 只过了剔噪+caller(全窗口), 直接拿"窗口内原始数 −
     # 全窗口剔噪数"在窄窗口(如聚焦单日)会减穿成负数(2026-11-02 回归实测 -812)。
-    n_syn_win = ((len(stats.in_window(sa, since, until)) - len(stats.in_window(s, since, until)))
-                 + (len(stats.in_window(ga, since, until)) - len(stats.in_window(g, since, until))))
+    n_syn_win = 0 if raw else _wc((sa, ga)) - _wc((sh, gh))
+    n_q_win = 0 if raw else _wc((sh, gh)) - _wc((s, g))
+    n_syn_all = 0 if raw else n_heur
+    q_total = 0 if raw else q_audit["dropped"]
     # Q4: 审计明细恒基于原始账本(s0/g0)计算, 两口径都给——raw=1 的用途就是自查误伤,
     # 若 raw 下也留空, 逃生门等于没有。denoise_detail 内部对空 bad 直接返回 []。
     detail = stats.denoise_detail(s0, g0)
     return {"kpi": stats.aggregate(s, g, since=since, until=until),
+            # baseline 只描述本 serve root 的库, 与 caller 过滤无关; 前端按"本库"标注。
+            "baseline": _kb_chars(srv.root),
             "synthetic_count": n_syn_win, "synthetic_total": n_syn_all,
             "synthetic_callers": bad_syn, "synthetic_detail": detail,
+            # 隔离清单口径(事件级): 与 synthetic_* 并列单列, 混算会掩盖"哪些是登记的"
+            "quarantine_count": n_q_win, "quarantine_total": q_total,
+            "quarantine_detail": q_audit["detail"],
             "top_consumed": stats.top_consumed(stats.in_window(s, since, until),
                                                stats.in_window(g, since, until), limit=10),
             "dead_weight": stats.dead_weight(stats.in_window(s, since, until),

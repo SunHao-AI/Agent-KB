@@ -232,7 +232,7 @@ document.documentElement.dataset.theme=m==='auto'?(matchMedia('(prefers-color-sc
   <span class="conn" id="conn">连接中…</span>
 </header>
 <div id="banners"></div>
-<div id="kpi" class="card" aria-live="off"><div class="kpi-row" id="kpis"></div><div id="synNote"></div></div>
+<div id="kpi" class="card" aria-live="off"><div class="kpi-row" id="kpis"></div><div id="synNote"></div><div id="layerNote"></div></div>
 <div class="card" id="qualityCard"><h3>条目质量 <span class="tip" id="qScope">库本身的健康度(与检索面独立)</span>
   <button class="xbtn" data-ex="quality" title="导出分库质量矩阵 CSV(索引口径, 与窗口/项目无关, 服务端会拒绝带窗口参数)">质量 CSV</button></h3>
   <div class="kpi-row" id="qRow"></div><div id="qRepos"></div></div>
@@ -715,6 +715,10 @@ async function loadStats(){
   const r=await fetch(apiUrl(`/api/stats?${q}`)); if(r.status==401)return banner('bad','需要访问令牌: 用 <code>kb web</code> 打开(自动携带)或在 URL 加 <code>?token=…</code>');
   const d=await r.json(); conn(true);
   const k=d.kpi; const cold=k.cold_start;
+  // baseline = 本库全库字符量(serve 端按索引签名缓存)。检索开销只有除以它才有
+  // "相当于通读全库几次"的意义——否则 saved_chars 只是一个差值, 读不出省没省。
+  const bl=d.baseline||{}; const blChars=bl.kb_chars||0;
+  const blRatio=blChars?(k.overhead_chars||0)/blChars:null;
   // 剔噪口径已上移到 UI: 命中率分母已剔除"未扫库的空事件"(not_executed),
   // 单列出来如实标注——剔噪是改口径不是抹事件, 用户能看到被剔的条数。
   const ne=k.not_executed_count||0;
@@ -722,13 +726,19 @@ async function loadStats(){
     [`<span title="口径: 命中数>0 的检索事件 ÷ 真正执行过的检索事件, 逐次计。已剔除未扫库的空事件${ne?`(本窗剔 ${ne} 条)`:''}">${cold?'样本不足':'命中率'}</span>`,
       cold?`${k.searches} 次检索`:(k.hit_rate==null?'—':(k.hit_rate*100).toFixed(1)+'%'),
       cold?'数据<7天, 仅绝对计数':`共 ${k.searches} 次检索${ne?` · 剔空事件 ${ne}`:''}`],
-    [`<span class="est" title="估算口径: 被消费全文字符 − 摘要返回摊额; 非精确承诺">估算节省 token ⓘ</span>`,
-      '≈'+fmt(k.saved_chars_est), `未计入 ${k.saved_unknown_count} 次(老数据无字符数)`],
-    [`<span title="口径: 被 kb_get 读全文的条目数 ÷ 检索返回条目总数。低值=检索到摘要后多未读全文, 需配合零命中榜判断是摘要够用还是摘要不足以判相关性">返回→消费率 ⓘ</span>`,
-      k.consume_rate==null?'—':(k.consume_rate*100).toFixed(1)+'%',
-      `${k.consumed_total} 读 / ${k.returned_total} 返回`],
-    [`<span title="口径: 全部 search 事件 returned_chars 之和, 即检索面累计吐给调用方的字符量(知识库自身的输出开销)">知识库自身开销 ⓘ</span>`,
-      fmt(k.overhead_chars)+' 字','检索返回字符累计'],
+    [`<span class="est" title="口径: 被消费全文字符 − 摘要返回摊额, 单位是字符不是 token; token 按 4 字符/token 粗估, 非精确承诺">估算节省(字符) ⓘ</span>`,
+      '≈'+fmt(k.saved_chars_est), `≈${fmt(Math.round((k.saved_chars_est||0)/4))} token(÷4 粗估) · 未计入 ${k.saved_unknown_count} 次`],
+    // 消费率可采集性: CLI kb show 自 consume_tracked_from 起才写 get 事件。纯历史
+    // 窗口显示"未采集"而不是 0.0%——旧数据把所有 CLI 读全文都记成"没读", 0% 会把
+    // "没记录"读成"没有消费"。部分跨越时数值标"下界"(埋点前那部分读不可见)。
+    (()=>{const pre=k.pre_tracking_searches||0, full=k.searches>0&&pre>=k.searches;
+      const v=!k.searches?'—':(full?'未采集':(k.consume_rate==null?'—':(k.consume_rate*100).toFixed(1)+'%'));
+      const s=full?`窗口全在 CLI 埋点前(${k.consume_tracked_from} 起采集) · ${pre} 次检索无 reader 记录`
+        :`${k.consumed_total} 读 / ${k.returned_total} 返回${pre?` · 含 ${pre} 次埋点前检索(下界)`:''}`;
+      return [`<span title="口径: 被 kb_get(MCP)或 kb show(CLI)读全文的条目数 ÷ 检索返回条目总数。低值=检索到摘要后多未读全文, 需配合零命中榜判断是摘要够用还是摘要不足以判相关性。CLI 侧自 ${k.consume_tracked_from} 起埋点, 更早窗口的读数不可见">返回→消费率 ⓘ</span>`, v, s];})(),
+    [`<span title="口径: 窗口内全部 L2(search)事件 returned_chars 之和(检索面累计吐给调用方的字符量); L2 的机器载体是 kb/index.jsonl(INDEX.md 只是人读投影)。分母是本库全库字符, 换个说法=相当于通读全库几次">知识库自身开销 ⓘ</span>`,
+      fmt(k.overhead_chars)+' 字',
+      blChars?`检索累计 · 本库全库 ${fmt(blChars)} 字(≈${blRatio.toFixed(2)}×)`:'检索返回字符累计'],
     [`<span title="口径: search 事件 duration_ms 的 P95(第95百分位); 样本 n=${d.latency.n||0}">P95 耗时 ⓘ</span>`,
       d.latency.p95_ms==null?'—':d.latency.p95_ms+'ms',
       `P50 ${d.latency.p50_ms??'—'}ms · 均值 ${d.latency.avg_ms??'—'}ms · n=${d.latency.n}`],
@@ -750,11 +760,35 @@ async function loadStats(){
   // 合成事件", 两句互相拆台。冷启动态退让成一行极简标注, caller 明细进 title,
   // 想看细节仍走"看原始口径"。
   const noteMain=detTxt||(d.synthetic_callers||[]).join(', ');
+  // 事件级隔离清单(traces/synthetic-ids.json): 处理"真实 caller 名被夹具复用"的
+  // 混合污染(整 caller 剔会误伤真实数据)。与上面的 caller 级剔噪分开标注, 各自
+  // 给出条数——猜的(启发式)与登记的(清单)混成一个数就无法自查。
+  const nq=d.quarantine_count||0, qtot=d.quarantine_total||0;
+  const qdet=(d.quarantine_detail||[]).map(x=>
+    `${x.why} ${x.searches}检索/${x.gets}读`).join(' · ');
   $('synNote').innerHTML=RAW
     ?`<div class="s" style="margin-top:8px;font-size:11.5px;color:var(--warn)">⚠ 原始口径(raw=1): 含测试合成事件, 榜单/比率仅供对照 · <a href="${esc(rawHref())}">回到剔噪口径</a>`
       +(det.length?`<div style="margin-top:4px;color:var(--mu)">若下面某行看着像真实仓(tiny-scan 且 max_scan 接近 2), 就是判据误伤, 需回 CLI 调判据: ${esc(detTxt)}</div>`:'')
+      +(qtot?`<div style="margin-top:4px;color:var(--mu)">隔离清单本应跳过 ${qtot} 条(本口径未生效): ${esc(qdet)}</div>`:'')
       +`</div>`
-    :(ns?`<div class="s" style="margin-top:8px;font-size:11.5px;color:var(--mu)" title="全账本累计剔除 ${ntot} 条${detTxt?'：'+detTxt:''}">已剔除测试合成事件 ${ns} 条${cold?'':`(${esc(noteMain)})`} · <a href="${esc(rawHref())}">看原始口径</a></div>`:'');
+    :((ns||nq)?`<div class="s" style="margin-top:8px;font-size:11.5px;color:var(--mu)" title="全账本累计: caller 启发式 ${ntot} 条 · 隔离清单 ${qtot} 条${detTxt?'；'+detTxt:''}${qdet?'；'+qdet:''}">`
+      +`${ns?`已剔除测试合成 caller ${ns} 条${cold?'':`(${esc(noteMain)})`}`:''}`
+      +`${ns&&nq?' · ':''}`
+      +`${nq?`已隔离登记夹具事件 ${nq} 条`+`(${esc(qdet)})`:''}`
+      +` · <a href="${esc(rawHref())}">看原始口径</a></div>`:'');
+  // 层级读取口径(2026-11-13): 三级披露此前只有 L3(kb show/kb_get)有事件, L1/L2
+  // 全靠 KPI 反推。现在事件自带 level/surface: L1=AGENTS.md 由宿主(IDE/agent)
+  // 装进系统提示, kb 进程不参与 → 永远没有事件, 如实标"不可观测"而不是 0;
+  // L2=检索面(机器载体 kb/index.jsonl, INDEX.md 只是人读投影); L3=条目正文。
+  // meta_only 与 KPI"知识库自身开销"同源, 两者差额=继续读了全文的检索。
+  const lr=k.layer_reads||{}, l2=lr.l2||{}, l3=lr.l3||{};
+  const mo=k.meta_only||{}, mf=k.meta_to_full||{}, lts=k.layer_tracking_since||'';
+  $('layerNote').innerHTML=`<div class="s" style="margin-top:6px;font-size:11.5px;color:var(--mu)" title="L1 常驻入口 AGENTS.md 由宿主(IDE/agent 框架)装载进系统提示, kb 进程不参与读取 → 永远没有事件, 这是不可观测, 不是 0。L2 的机器面是 kb/index.jsonl(kb/INDEX.md 只是人读投影), 每次 kb search/kb_search 记一条; L3 是条目正文, 每次 kb show/kb_get 记一条。meta_only.chars 与上方'知识库自身开销'同源, 差额=继续读了全文的检索。">`
+    +`层级读取: L1 常驻(宿主装载, 不可观测) · L2 ${fmt(l2.events||0)} 次检索/${fmt(l2.chars||0)} 字(${esc(l2.surface||'index.jsonl')})`
+    +` · L3 ${fmt(l3.events||0)} 次读(${fmt(l3.ok_events||0)} 成功)/${fmt(l3.chars||0)} 字`
+    +` · 只看元数据 ${fmt(mo.searches||0)} 次(${fmt(mo.chars||0)} 字) · 续读全文 ${fmt(mf.searches||0)} 次`
+    +((l2.declared||0)<(l2.events||0)?` · 显式层级字段 ${fmt(l2.declared||0)}/${fmt(l2.events||0)}${lts?`(旧事件按 kind 归类, ${lts} 起才写)`:''}`:'')
+    +`</div>`;
   // A4: 零命中榜用满服务端给的 10 条(此前 slice(0,5)): TOP5 恰好全"已消化"时,
   // 榜单一片绿反而把第 6-10 名的真缺口藏起来——正是 FR-3.5 补库回路要抓的东西。
   const top=d.top_consumed.slice(0,10), zh=d.zero_hits.slice(0,10);
@@ -1074,13 +1108,15 @@ function playSpider(ev){              // SVG 弹层回放: 桥不就绪/失败�
   txt(W-30,37,`TRACE ${f.trace_id||'-'} · ${nHit} HITS`,SP.mu,10,'end');
   txt(30,66,`query: ${f.query||'-'}`,SP.tx,17);
   txt(30,83,`${f.caller||''} · ${f.duration_ms??'?'}ms · EVERY SEARCH, ONE WEB`,SP.accent,10);
-  // 右侧路由分箱(spider_export.ROUTES 四色): 项目层/通用层/外接源/已读
+  // 右侧路由分箱(与 spider_export.ROUTES 同源, 公开版对端只认 code/model/you):
+  // 外接源命中并入通用层, 靠 label 的"外接 <源>:"前缀区分
   const projRepo=(f.layers||[])[0]?.repo;
-  const BINS=[['code','项目层','#42D6A4'],['model','通用层','#F28A76'],['ext','外接源','#F34A87'],['you','已读','#F0CA57']];
+  const BINS=[['code','项目层','#42D6A4'],['model','通用层','#F28A76'],['you','已读','#F0CA57']];
   const items=f.returned.slice(0,14).map((id,i)=>{
     const d=f.details[id]||{};const isRead=(f.read||[]).includes(id);
-    const route=isRead?'you':(d.repo==='ext'||String(id).startsWith('ext:'))?'ext'
-      :(d.repo&&d.repo!==projRepo?'model':'code');
+    const isExt=(d.repo==='ext'||String(id).startsWith('ext:'));
+    const route=isRead?'you':(isExt?'model'
+      :(d.repo&&d.repo!==projRepo?'model':'code'));
     return {id,route,label:hitLabel(id,d,i)};});
   const bx=792,bw=140,bh=76,bgap=10,btop=100;
   const binMid=BINS.map((b,i)=>btop+i*(bh+bgap)+bh/2);
@@ -1254,23 +1290,28 @@ async function loadWeek(){
     const snaps=(d.snapshots||[]).slice(-12);      // 最多 12 周, 老快照留在账本不挤面板
     if(snaps.length<2){box.innerHTML=
       '<div style="color:var(--mu);font-size:12px;padding:6px 0">周快照不足 2 个, 趋势暂不绘制(每周一自动生成, 或手动 kb trace snapshot 回补)</div>';return;}
-    const pctLine=(key,color)=>{                 // 0~1 比率 → y 坐标折线
-      const pts=snaps.map((s,i)=>s[key]==null?null:
+    // 消费率折线在埋点起点前的周次断开: 那时 CLI 读全文无 get 事件, 画成 0 会被
+    // 读成"0 消费"。断线 + 下方一行说明才是"没记录"与"没消费"的正确区分。
+    const pctLine=(key,color,skip)=>{            // 0~1 比率 → y 坐标折线
+      const pts=snaps.map((s,i)=>(skip&&skip(s))||s[key]==null?null:
         [8+56*i/(snaps.length-1),86-70*s[key]].join(','));
       const ok=pts.filter(p=>p);
       if(ok.length<2)return '';
       return `<polyline fill="none" stroke="${color}" stroke-width="1.6" points="${ok.join(' ')}"/>`;};
+    const untracked=snaps.filter(s=>s.consume_tracked===false).length;
+    const csFrom=d.consume_tracked_from||'';
     const mx=Math.max(1,...snaps.map(s=>s.searches||0));
     const bars=snaps.map((s,i)=>{
       const h=Math.round(64*(s.searches||0)/mx);
       const x=8+56*i/(snaps.length-1);
       return `<rect x="${(x-2.4).toFixed(1)}" y="${(86-h).toFixed(1)}" width="4.8" height="${Math.max(1,h)}" fill="var(--trendoff)" opacity="0.5"><title>${esc(s.week)} · ${s.searches||0} 次检索</title></rect>`;}).join('');
     box.innerHTML=`<div style="min-width:340px"><svg viewBox="0 0 68 96" style="width:100%;height:130px" preserveAspectRatio="none">`
-      +bars+pctLine('hit_rate','var(--ok)')+pctLine('consume_rate','var(--link)')
+      +bars+pctLine('hit_rate','var(--ok)')+pctLine('consume_rate','var(--link)',s=>s.consume_tracked===false)
       +pctLine('digest_rate','var(--warn)')+`</svg>`
       +`<div style="display:flex;justify-content:space-between;font:9px Consolas,monospace;color:var(--mu)">`
-      +snaps.map(s=>`<span${s.cold_start?' style="color:var(--warn)" title="冷启动周(有效检索日 <7 天), 比率不稳"':''}>${esc(String(s.week).slice(5))}</span>`).join('')+`</div>`
+      +snaps.map(s=>`<span${s.cold_start?' style="color:var(--warn)" title="冷启动周(有效检索日 <7 天), 比率不稳"':''}${s.consume_tracked===false?' title="该周在消费埋点前: CLI 读全文无记录, 消费率不绘制"':(s.consume_partial?' title="跨埋点起点的一周: 早于起点的检索无 reader 记录, 消费率为下界"':'')}>${esc(String(s.week).slice(5))}${s.consume_tracked===false?'°':(s.consume_partial?'†':'')}</span>`).join('')+`</div>`
       +`<div class="s" style="font-size:11px;color:var(--mu)">━ <span style="color:var(--ok)">命中率</span> · ━ <span style="color:var(--link)">消费率</span> · ━ <span style="color:var(--warn)">消化率</span> · ▮ 检索量(悬停看精确值)</div>`
+      +(untracked?`<div class="s" style="font-size:11px;color:var(--mu)">° ${untracked} 周在消费埋点前(${esc(csFrom)} 起采集), 消费率未记录而非 0 · 这些周次不绘制该线</div>`:'')
       +(d.warns&&d.warns.length?`<div style="font-size:11px;color:var(--warn)">⚠ 快照告警 ${d.warns.length} 条(坏文件已跳过)</div>`:'')
       +`</div>`;
   }catch(e){box.innerHTML=`<div style="color:var(--warn);font-size:12px;padding:4px 0">⚠ ${esc(fetchErr(e))}</div>`;}

@@ -10,6 +10,13 @@ kb serve 的 REST/SSE 全部经本模块出数; 客户端与 CLI 只做展示不
               按比例摊额); search 事件缺 returned_chars 或 get 缺 chars → 该次跳过。
               ⚠ 估算指标, 展示必须带"估算"标识, 禁止包装成精确承诺。
 - 自身开销   : Σ returned_chars(全部 search 事件, 缺失记 0 并计入 unknown_count)
+- 层级读取   : L1=AGENTS.md 由宿主装载进系统提示, kb 进程不参与 → 无事件、恒不可观测
+              (如实出 `observable: false`, 不用 0 冒充"没人读"); L2=每次 search
+              (机器面 kb/index.jsonl, INDEX.md 只是人读投影); L3=每次 get(条目正文)。
+              事件自 2026-11-13 起带显式 level/surface, 旧事件按 kind 兜底归类。
+- 只看元数据 : 有返回、但同 trace_id 未读任何返回条目的检索(meta_only)的
+              次数/字符数; meta_only + meta_to_full = 有返回的检索数, 两者字符
+              之和不超过 overhead_chars(差额是零命中事件), 可与既有 KPI 对账。
 - 零命中榜   : returned 为空的 search 按 query 频次倒序; 同 caller 后续同 query 或
               suggest 词命中 → 标 digested(已消化)。
 """
@@ -21,7 +28,16 @@ import re
 # _ts_key 单一事源在 trace.ts_key(第十九轮 §37 上移); 曾在此留有一份逐行相同
 # 的本地 def 遮蔽了导入(ruff F811 抓获, 第二十九轮清理)——两份"同源"实现
 # 迟早漂移, 删除副本让导入真正生效。
+from .trace import SURFACE_GET, SURFACE_SEARCH
 from .trace import ts_key as _ts_key
+
+# 消费侧埋点起点: CLI `kb show` 从这天起才写 get 事件(此前只有 MCP `kb_get`)。
+# 早于该日的窗口里"读全文"是不可见的 → 消费率只能是**下界**, 不是"没人读"。
+# 面板据此把纯历史窗口显示为"未采集", 部分跨越时标"含 N 次埋点前检索"。
+CONSUME_TRACKING_SINCE = "2026-11-13"
+# 层级/surface 显式字段的埋点起点(与消费埋点同日): 更早的事件没有 level/surface,
+# 聚合按 kind 兜底归类; 面板据此说明"显式层级字段 N/M"而不是假装全都有。
+LAYER_TRACKING_SINCE = "2026-11-13"
 
 
 def _within(ev: dict, since: str | None, until: str | None) -> bool:
@@ -113,6 +129,93 @@ def denoise(searches: list[dict], gets: list[dict]) -> tuple[list, list, int, se
     cs = [s for s in searches if s.get("caller_repo") not in bad]
     cg = [g for g in gets if g.get("caller_repo") not in bad]
     return cs, cg, (len(searches) - len(cs)) + (len(gets) - len(cg)), bad
+
+
+def _rule_hits(ev: dict, rule: dict) -> bool:
+    """单条隔离规则是否命中该事件(条件 AND; 语义见 trace.load_quarantine)。"""
+    kind = ev.get("kind")
+    if rule.get("kinds") and kind not in rule["kinds"]:
+        return False
+    if rule.get("caller_repo") is not None and \
+            ev.get("caller_repo") != rule["caller_repo"]:
+        return False
+    day = str(ev.get("ts", ""))[:10]
+    if rule.get("since") and day < str(rule["since"]):
+        return False
+    if rule.get("until") and day > str(rule["until"]):
+        return False
+    ids = rule.get("ids")
+    if ids is not None:
+        want = {i for i in ids if isinstance(i, str)} if isinstance(ids, list) else set()
+        got = {ev["id"]} if isinstance(ev.get("id"), str) else set()
+        got |= {i for i in (ev.get("returned") or []) if isinstance(i, str)}
+        if not (want & got):
+            return False
+    if "max_scanned" in rule:
+        if kind != "search":
+            return False
+        ls = ev.get("layers") or []
+        mx = max((int(ly.get("scanned") or 0) for ly in ls if isinstance(ly, dict)),
+                 default=-1)
+        if mx < 0:            # 无层信息: 不判(缺层≠小扫描, 见 not_executed)
+            return False
+        try:
+            if mx > int(rule["max_scanned"]):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def quarantine_events(searches: list[dict], gets: list[dict],
+                      rules: list[dict] | None = None) -> tuple[list, list, dict]:
+    """按显式清单(及写时 `synthetic` 标记)隔离事件, 返回 (searches, gets, 审计)。
+
+    与 `synthetic_callers` 的分工: 后者只能整 caller 剔, 遇到 `caller_repo=docs`
+    这种"真实仓名被 conftest 夹具复用"的混合 caller 必然二选一地误伤; 清单是
+    事件级(按 id / 扫描规模 / 日期), 只剔登记过的历史夹具事件。
+
+    三处口径一致: 命中规则的事件从聚合输入里移除, 但**不删不改账本**(raw=1
+    仍能看全量); 审计按规则给出各自条数, 面板据此显示"隔离 N 条(理由)"。
+    """
+    rules = [r for r in (rules or []) if isinstance(r, dict)]
+    # 无规则也要走一遍: 写时标记(synthetic=true)不依赖清单文件存在。
+    per = [{"why": r.get("why", ""), "searches": 0, "gets": 0,
+            "evidence": r.get("evidence", "")} for r in rules]
+    flagged = {"why": "synthetic-flag(写时标记)", "searches": 0, "gets": 0,
+               "evidence": "append_event 在 pytest 会话内自动打 synthetic=true"}
+    out_s: list[dict] = []
+    out_g: list[dict] = []
+    for batch, dst, key in ((searches, out_s, "searches"),
+                            (gets, out_g, "gets")):
+        for ev in batch:
+            hit = next((i for i, r in enumerate(rules) if _rule_hits(ev, r)), None)
+            if hit is not None:
+                per[hit][key] += 1
+            elif ev.get("synthetic") is True:
+                flagged[key] += 1
+            else:
+                dst.append(ev)
+    detail = [p for p in per if p["searches"] or p["gets"]]
+    if flagged["searches"] or flagged["gets"]:
+        detail.append(flagged)
+    return out_s, out_g, {"dropped": sum(p["searches"] + p["gets"] for p in detail),
+                          "detail": detail, "flagged": flagged["searches"] + flagged["gets"]}
+
+
+def denoise_full(searches: list[dict], gets: list[dict],
+                 rules: list[dict] | None = None) -> tuple[list, list, dict]:
+    """两级剔噪一次做完: ① caller 级启发式 ② 事件级清单/写时标记。
+
+    返回 (searches, gets, audit), audit 把两级条数分开给——面板要能说清"剔了多少"
+    里哪些是猜的(caller 启发式)、哪些是登记的(隔离清单), 混成一个数就没法自查。
+    """
+    cs, cg, n, bad = denoise(searches, gets)
+    qs, qg, qa = quarantine_events(cs, cg, rules)
+    return qs, qg, {"caller_dropped": n, "callers": sorted(bad),
+                    "quarantine_dropped": qa["dropped"],
+                    "quarantine_detail": qa["detail"],
+                    "dropped": n + qa["dropped"]}
 
 
 
@@ -255,6 +358,28 @@ def aggregate(searches: list[dict], gets: list[dict], *,
     hit = [s for s in S if s.get("returned")]
     returned_total = sum(len(s.get("returned", [])) for s in S)
     consumed = _consumed_ids(S, G)
+    overhead_chars = sum(int(s.get("returned_chars") or 0) for s in S)
+
+    # 层级读取/只看元数据: 判定与消费率同源(同 trace_id 且有 ok 的 get), 只是从
+    # "条目"上卷到"这次检索"。有返回但一次全文都没读 = 只停留在 L2(元数据),
+    # 显式出数后不必再从 returned_chars 反推; 两侧之和 = 有返回的检索数。
+    by_tid = _gets_by_trace(G)
+
+    def _read_after(s: dict) -> bool:
+        got = by_tid.get(s.get("trace_id") or "")
+        return bool(got) and any(i in got for i in s.get("returned", []))
+
+    meta_only = [s for s in hit if not _read_after(s)]
+    to_full = [s for s in hit if _read_after(s)]
+    l3_ok = [g for g in G if g.get("ok")]
+    l3_chars = sum(int(g["chars"]) for g in l3_ok
+                   if isinstance(g.get("chars"), (int, float)))
+
+    def _rc(evs: list[dict]) -> int:
+        return sum(int(x.get("returned_chars") or 0) for x in evs)
+
+    def _ret(evs: list[dict]) -> int:
+        return sum(len(x.get("returned", [])) for x in evs)
 
     # 估算节省: 消费 get 的全文 chars − 对应 search 返回的摘要 chars 摊额(按条目均摊)
     saved_chars = 0
@@ -283,6 +408,11 @@ def aggregate(searches: list[dict], gets: list[dict], *,
         d["searches"] += 1
         d["hits"] += 1 if s.get("returned") else 0
 
+    # 消费率可采集性: 窗口内落在 CLI 埋点起点之前的检索数是不可观测的 reader 流量。
+    # 全在之前 → tracked=False(指标应显示"未采集"而不是 0.0%); 部分重叠 → 值是下界。
+    pre_tracking = sum(1 for s in S
+                       if str(s.get("ts", ""))[:10] < CONSUME_TRACKING_SINCE)
+
     return {
         "window": {"since": since, "until": until},
         "searches": n,
@@ -291,9 +421,38 @@ def aggregate(searches: list[dict], gets: list[dict], *,
         "returned_total": returned_total,
         "consumed_total": len(consumed),
         "consume_rate": round(len(consumed) / returned_total, 4) if returned_total else None,
+        # 消费率可采集性(CLI kb show 埋点前无 reader 记录): tracked=False 表示本窗口
+        # 的消费率完全没被观测过, UI 必须显示"未采集"; pre_tracking_searches>0 且
+        # tracked=True 表示部分覆盖, 数值只是下界。
+        "consume_tracked_from": CONSUME_TRACKING_SINCE,
+        "consume_tracked": bool(n) and pre_tracking == 0,
+        "pre_tracking_searches": pre_tracking,
+        "get_events": len(G),           # 窗口内 get 事件数(消费侧原始计数, 便于对账)
+        # 层级读取(三级披露): L1 无服务面 → 恒 0 且 observable=false; L2 每次 search,
+        # L3 每次 get(ok_events 是成功读到的次数)。declared 是带显式 surface 的事件数,
+        # 与 events 的差额说明有多少旧事件靠 kind 兜底(自 LAYER_TRACKING_SINCE 起才有)。
+        "layer_reads": {
+            "l1": {"events": 0, "observable": False, "surface": "AGENTS.md",
+                   "note": "宿主装载, kb 进程不参与, 无读取事件"},
+            "l2": {"events": n, "chars": overhead_chars, "surface": SURFACE_SEARCH,
+                   "declared": sum(1 for s in S
+                                   if s.get("surface") == SURFACE_SEARCH)},
+            "l3": {"events": len(G), "ok_events": len(l3_ok), "chars": l3_chars,
+                   "surface": SURFACE_GET,
+                   "declared": sum(1 for g in G
+                                   if g.get("surface") == SURFACE_GET)},
+        },
+        "layer_tracking_since": LAYER_TRACKING_SINCE,
+        # 只看元数据 vs 续读全文: 按"这次检索有没有被同 trace 读走任一条目"切分,
+        # 与消费率同源判定。字符数取各自事件的 returned_chars, 相加 + 零命中事件
+        # 的 returned_chars = overhead_chars(可与"知识库自身开销"对账)。
+        "meta_only": {"searches": len(meta_only), "chars": _rc(meta_only),
+                      "returned": _ret(meta_only)},
+        "meta_to_full": {"searches": len(to_full), "chars": _rc(to_full),
+                         "returned": _ret(to_full)},
         "saved_chars_est": saved_chars,
         "saved_unknown_count": saved_unknown,  # schema=1 老事件无 chars → 保守不计
-        "overhead_chars": sum(int(s.get("returned_chars") or 0) for s in S),
+        "overhead_chars": overhead_chars,
         "by_caller": by_caller,
         "by_day": [dict(day=k, **v) for k, v in sorted(by_day.items())],
         # 冷启动门槛(PRD 开放问题3): 连续数据 <7 天不出命中率趋势, 只出绝对计数

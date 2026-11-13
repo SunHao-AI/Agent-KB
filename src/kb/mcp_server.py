@@ -38,8 +38,8 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
         """检索知识库(项目层优先, 再通用层, 再外接源)。只返回元数据+摘要+路径, 不返回正文。
         draft 条目永不返回。命中后再用 kb_get 读全文。
         检索语义: 查询按空白分词, 默认每词须命中 title/tags/keywords/summary(AND);
-        AND 零命中且词数≥2 时自动降级放行命中≥2 词的条目(返回附 match_mode=partial
-        标记)。keywords 为正文派生词(报错串/函数名/配置键可直接搜)。中文连写自动按
+        AND 零命中且词数≥2 时自动降级放行命中≥2 词的条目(口径见 trace 的
+        match_mode)。keywords 为正文派生词(报错串/函数名/配置键可直接搜)。中文连写自动按
         2-gram 覆盖率匹配, 但仍建议 2-4 字短词。命中按相关性排序(hit_fields
         说明命中在哪个字段)。
         外接源命中 id 形如 source://<源>/<原生id>(source 字段标来源), 同样用 kb_get 读。

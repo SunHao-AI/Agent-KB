@@ -198,6 +198,15 @@ trace 落盘到本仓 `traces/YYYY-MM-DD.jsonl`(入 git, 只含元数据与摘�
 `KB_INGEST_URL` / `KB_INGEST_TOKEN`(上报侧)、`KB_SOURCES`(外接知识源, 如 `tdbm`)、
 `KB_SPIDER_HOME`(prompt-spider-ui 克隆根)。优先级均为**环境变量 > ~/.kb/config.toml**。
 
+### 登录与令牌
+
+`kb serve` 的令牌解析顺序: `--token` > `KB_SERVE_TOKEN` > `~/.kb/config.toml`
+的 `[serve] token`。三者都没有时本机免鉴权(单人态)。
+
+打开面板若显示登录卡, 输入同一令牌即可; 勾选"记住我 30 天"(默认不勾选)后关闭
+浏览器不必重输(cookie 为 HttpOnly, JS 读不到)。顶部"退出"只撤销当前会话, 不影响
+其他设备。连续输错 5 次会限流 60 秒。
+
 ## 10. 常见问题
 
 | 现象 | 原因与处置 |

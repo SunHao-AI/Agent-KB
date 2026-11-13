@@ -126,6 +126,20 @@ kb trace report                               # 零命中周报(高频待消化�
 `KB_SERVE_TOKEN` / `KB_INGEST_URL` 团队态令牌与上报口。指标口径唯一实现 serve,
 面板只做展示; 命中率/零命中榜的改进回路是 `kb trace report`(见 PRD FR-3.5)。
 
+鉴权令牌可用三种方式提供(优先级从高到低): `kb serve --token`、环境变量
+`KB_SERVE_TOKEN`、用户级配置 `~/.kb/config.toml`:
+
+```toml
+[serve]
+token = "你的令牌"
+```
+
+配置里只需写一次, `kb serve` / `kb web` 都会读取。直接打开面板(不带 `?token=`)
+会看到登录卡, 可勾选"记住我 30 天"(默认不勾选); 页头"退出"只撤销当前会话,
+不影响其他设备。连续输错 5 次会限流 60 秒。cookie 为 HttpOnly + SameSite=Lax,
+令牌不进浏览器存储。局域网共享请只在可信内网使用: HTTP 明文传输, 跨不可信网络
+需前置 HTTPS 反向代理。
+
 ### 团队常开态与令牌分发(PRD FR-2.5)
 
 单人态开箱即用(仅 127.0.0.1, 无鉴权, 本机即边界); 团队态是配置升级而非架构切换。

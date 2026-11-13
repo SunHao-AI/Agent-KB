@@ -2209,6 +2209,73 @@ accepted/verified(evidence=受控探针+8 连跑)。
 **沉淀**: 命中 `kb-20261023-463c` 追加"§76/§77 flaky 免费选题+净化深度下钻"
 合并新发现段(两判据同根: 审计既有防线的边界在哪停住)。
 
+## §78 第六十一轮: 部分命中降级面(AND-first+Partial Fallback 对抗探针全通过, 无缺陷)
+
+**选题**: SDD spec `docs/superpowers/specs/2026-11-13-search-partial-hit-design.md`
+刚落地的"部分命中降级"是最新且尚无走查覆盖的代码面——search.evaluate 的 AND-first
+语义(AND 非空走旧路径零改动; AND 零命中才降级, 门槛 `min_hit=max(2,ceil(词数/3))`,
+打 `match_mode:"partial"`), 及降级在 layers 双层/mcp 文案/trace 逐层透传三个下游的
+形态。
+
+**探针实测(28 项对抗断言, 0 缺陷)**: 覆盖降级触发与不触发的边界(AND 非空严禁带
+match_mode 键、partial 候选计入 rejected.query 死因)、min_hit 两档(2 词门槛=2、
+6 词门槛=2 的比例档)、title×3 权重排序在降级通道保持、红线1(draft 不进检索)在
+第二通道同样由 visible 谓词守住、token 去重、partial×filter 全灭态漏斗恒等式
+`filter+query+matched==scanned` 不破、CJK 2-gram 碎碰(<60% 覆盖)不放行、limit
+契约(0/-1 零名额如实 hint 不报错)、双层各自独立降级+逐层取满 limit、mcp 报告
+`[partial 命中: …]` 文案与 matched rank 自洽。全部 PASS。
+
+**探针自纠两处(§54"先审探针自身"纪律的实践)**: 首跑 2 FAIL 均定罪探针而非产品——
+① 数据集缺陷: 初版 rec 条目命中全部 3 个查询词, AND 永不为空, 降级分支根本不触发;
+② 断言过强: 断言 suggest 非空, 但 tiny 词表下 difflib 确无近似候选(best-effort 空
+列表是合法态), 改为断言键存在+另设拼写变体 `covergae` 用例验证 suggest 真通道。
+
+**判据**: **对抗降级分支的探针数据集, 任何条目都不得命中全部查询词**——否则 AND
+非空, 测试从未走进被测分支, "全绿"是假的。泛化: 给"仅在 X 为空时才执行的 fallback
+代码"设计用例时, 先验证用例确实让 X 为空(可用"降级标志键是否出现"自证)。
+
+**回归**: 无产品改动; 探针(28 断言)跑完即删。pytest 全量 **500 全绿**(基线未动);
+ruff F,E9 通过。
+
+**沉淀**: `kb search` 去重无命中; 判据("fallback 用例须自证进了分支")为探针设计
+方法论, 未达独立入库门槛(无产品根因), 以本节留档。
+
+## §79 第六十二轮: COV_TARGET 启发式 glob 未匹配跑偏(0a8dc48 同族第二失明态)
+
+**选题**: 昨日 `0a8dc48` 刚修 COV_TARGET 的 basename 同名歧义(仓根 `kb/` 与
+`src/kb/` 同名时须输出全路径 `src/kb`), 该启发式尚未被走查穷尽——把母本探测段
+(L267-285)逐字复制成 sh 探针, 构造 8 种仓型形状实测。
+
+**D-70 src 下无子目录时输出字面量 `src/*`(实锤+修复, 中)**: 7 种仓型符合预期
+(backend/app/src 包/扁平仓→`.`/多包取字典序首/egg-info与__pycache__跳过/同名歧义
+回归锚), 第 8 态翻车: `src/` 下只有散落 .py 无子目录时, `for d in src/*/` 的 glob
+**无匹配**, POSIX sh 不报错而是**迭代字面量** `src/*`, basename 得 `*`, COV_TARGET
+输出 `src/*` → 门禁 pytest 段 `--cov="src/*"` 实测双警告:
+`Module src/* was never imported` + `No data was collected`(与 0a8dc48 修的假警告
+同族: 都是"覆盖率静默没测到东西但门禁照绿")。修复一行:
+`[ -d "$d" ] || continue  # glob 未匹配: sh 会迭代字面量`, 落 `[ -n "$COV_TARGET" ]
+|| COV_TARGET="src"` 兜底。母本已改, install-gate.ps1 已重跑分发。
+
+**判据**: **对目录 glob 的 for 循环默认假设"必有匹配"是 shell 启发式的第三类失明
+态**(0a8dc48 修的是 basename 同名歧义, 本轮修的是 glob 未匹配字面量——同一条探测
+链的两种"输出看着像路径、实则是垃圾"形态)——凡 shell 探测产出的值会拼进工具参数,
+消费前必须验证其真为目录/文件(`-d`/`-f`), 别只验非空。旁证: 0a8dc48 修完只回归了
+"有子目录"的仓型, 没穷尽"无子目录"——**修一个启发式时要枚举其全部输入形状**, 不
+是只测触发缺陷的那一种。
+
+**回归**: 新增 `tests/test_gate_cov_target.py` +8 用例(手法对齐
+test_gate_base_anchor.py: 从母本按标记行切片提取代码段跑 sh, 标记漂移即
+pytest.fail 提醒同步; 八仓型形状断言, 其中"src 无子目录→src 兜底"为本缺陷回归锚);
+定向 12 passed, pytest 全量 **500 全绿**(10 warnings 为既有 asyncio 警告); ruff
+F,E9 通过。环境观察: 本轮测试运行遭遇大量随机崩溃(StackOverflow -1073741571 /
+PowerShell OOM / sandbox backend failed / git push exit 128), **同命令裸重跑即全
+绿**——Windows 下偶发批量失败先重跑排除环境抖动再定罪(§76 flaky 纪律的镜像: 这次
+连崩溃型失败也可能是抖动)。
+
+**沉淀**: `kb search` 去重(coverage 假警告/glob 字面量/启发式多组查询)均零命中,
+`docs/kb/` 亦无既有条目; 判据(sh glob 未匹配字面量+启发式修复须穷尽输入形状)
+有普适根因可验证, 但先以本节留档, 待同类第二例再评估独立入库。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

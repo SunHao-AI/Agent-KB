@@ -275,6 +275,7 @@ elif [ -d app ]; then
     COV_TARGET="app"
 elif [ -d src ]; then
     COV_TARGET=$(for d in src/*/; do
+        [ -d "$d" ] || continue  # glob 未匹配(src 下无子目录): sh 会迭代字面量 src/*, 防跑偏
         b=$(basename "$d")
         case "$b" in *.egg-info|__pycache__) continue ;; esac
         echo "src/$b"; break

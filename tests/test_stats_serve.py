@@ -1929,6 +1929,98 @@ def test_login_body_too_large(tmp_path):
         srv.server_close()
 
 
+def _get_status_hd(url, token=None, cookie=None):
+    """GET 并把非 2xx 也折成 (status, headers), 供限流用例读 Retry-After。"""
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    if cookie:
+        req.add_header("Cookie", cookie)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, dict(r.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers)
+
+
+def test_query_token_failures_rate_limited(tmp_path):
+    """旧 ?token= 通道也必须计入失败限流: 否则绕过 POST /api/session 无限猜解。
+
+    语义与登录端点一致: 前 5 次 401 并计数, 第 6 次起 429 + Retry-After;
+    限流生效期间连正确令牌也先被拦(先判限流再比令牌)。
+    """
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(5):
+            st, _ = _get_status_hd(f"{base}/api/stats?token=bad")
+            assert st == 401
+        st, hd = _get_status_hd(f"{base}/api/stats?token=bad")
+        assert st == 429 and int(hd.get("Retry-After", "0")) > 0
+        st, _ = _get_status_hd(f"{base}/api/stats?token=s3cret")
+        assert st == 429
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_bearer_failures_rate_limited(tmp_path):
+    """Bearer 通道与 query 通道共用同一按 IP 失败计数。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(5):
+            st, _ = _get_status_hd(f"{base}/api/stats", token="bad")
+            assert st == 401
+        st, hd = _get_status_hd(f"{base}/api/stats", token="bad")
+        assert st == 429 and int(hd.get("Retry-After", "0")) > 0
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_ticket_failures_rate_limited(tmp_path):
+    """GET /api/session?ticket= 的错票也计入失败限流(前 5 次 403, 第 6 次 429)。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(5):
+            st, _ = _get_status_hd(f"{base}/api/session?ticket=bad")
+            assert st == 403
+        st, hd = _get_status_hd(f"{base}/api/session?ticket=bad")
+        assert st == 429 and int(hd.get("Retry-After", "0")) > 0
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_anonymous_requests_do_not_trip_login_limit(tmp_path):
+    """无凭据的匿名请求不计数: 过期 cookie 的面板 2s 轮询不该把 IP 锁死。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(10):
+            st, _ = _get_status_hd(f"{base}/api/stats")
+            assert st == 401
+        st, _ = _get_status_hd(f"{base}/api/session")
+        assert st == 403  # 空 ticket 同样不计数
+        st, _ = _get_status_hd(f"{base}/api/stats")
+        assert st == 401
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_valid_token_resets_failure_count(tmp_path):
+    """任一通道验证成功即清零: 4 次失败 → 成功 → 再 5 次失败仍应 401 而非 429。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(4):
+            assert _get_status_hd(f"{base}/api/stats?token=bad")[0] == 401
+        assert _get_status_hd(f"{base}/api/stats?token=s3cret")[0] == 200
+        for _ in range(5):
+            assert _get_status_hd(f"{base}/api/stats?token=bad")[0] == 401
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_healthz_reports_auth_flag(tmp_path):
     srv, base = _serve(tmp_path, token="s3cret")
     try:

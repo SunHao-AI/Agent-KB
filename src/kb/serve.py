@@ -305,6 +305,9 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"),
                    "application/json; charset=utf-8", extra=extra)
 
+    def _ip(self) -> str:
+        return self.client_address[0] if self.client_address else "?"
+
     def _authorized(self) -> bool:
         srv = self.server  # type: ignore[attr-defined]
         tok = srv.token
@@ -323,7 +326,29 @@ class _Handler(BaseHTTPRequestHandler):
             got = got[7:]
         elif not got:  # SSE(EventSource)不能带自定义头 → query 传 token(兜底路径)
             got = parse_qs(urlparse(self.path).query).get("token", [""])[0]
-        return _same_secret(got, tok)
+        self._auth_retry = 0
+        if not got:
+            # 无凭据(匿名轮询/过期 cookie)不计失败: 否则面板 2s 轮询会把本机 IP
+            # 锁死, 用户连登录卡都打不开。只有"猜了令牌"才算一次失败。
+            return False
+        wait = self._login_wait(srv, self._ip())
+        if wait:
+            self._auth_retry = wait
+            return False
+        if _same_secret(got, tok):
+            self._clear_login_fail(srv, self._ip())
+            return True
+        self._record_login_fail(srv, self._ip())
+        return False
+
+    def _auth_deny(self) -> None:
+        """鉴权失败的统一出口: 限流中回 429(+Retry-After), 否则 401。"""
+        wait = getattr(self, "_auth_retry", 0)
+        if wait:
+            self._json({"error": "too many attempts"}, 429,
+                       extra={"Retry-After": str(wait)})
+        else:
+            self._json({"error": "unauthorized"}, 401)
 
     def do_POST(self) -> None:  # noqa: N802
         srv = self.server  # type: ignore[attr-defined]
@@ -354,7 +379,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
             return
         if not self._authorized():
-            self._json({"error": "unauthorized"}, 401)
+            self._auth_deny()
             return
         if n <= 0 or n > 64 * 1024:
             self._json({"error": "bad body"}, 400)
@@ -471,6 +496,11 @@ class _Handler(BaseHTTPRequestHandler):
             if len(srv.login_fail) > _LOGIN_MAX_IPS:
                 srv.login_fail.pop(next(iter(srv.login_fail)), None)
 
+    def _clear_login_fail(self, srv, ip: str) -> None:
+        """令牌验证成功即清零: 一次正确登录/请求即可解除本机 IP 的限流。"""
+        with srv.login_lock:
+            srv.login_fail.pop(ip, None)
+
     def _logout(self) -> None:
         """撤销当前 cookie 的票据(spec §4.2): 只影响本会话, 其他设备不动。"""
         srv = self.server  # type: ignore[attr-defined]
@@ -505,9 +535,20 @@ class _Handler(BaseHTTPRequestHandler):
             # serve 多标签共用 token, 一次性会破坏重开/多标签; ticket 可交换的
             # 能力本就以持有 token 为前提, 不新增重放面。
             tokq = parse_qs(urlparse(self.path).query).get("ticket", [""])[0]
+            ip = self._ip()
+            if srv.token:
+                wait = self._login_wait(srv, ip)
+                if wait:
+                    self._json({"error": "too many attempts"}, 429,
+                               extra={"Retry-After": str(wait)})
+                    return
             if not srv.token or not _same_secret(tokq, srv.token):
+                # 非空 ticket 才计失败: 面板缺参探测不该把 IP 锁死
+                if srv.token and tokq:
+                    self._record_login_fail(srv, ip)
                 self._json({"error": "bad ticket"}, 403)
                 return
+            self._clear_login_fail(srv, ip)
             import secrets as _secrets
             t = _secrets.token_urlsafe(32)
             # 满池淘汰单张而非全清: 全清会让所有设备/标签页同时静默掉线
@@ -518,7 +559,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "Set-Cookie": f"kb_tk={t}; Path=/; HttpOnly; SameSite=Lax"})
             return
         if not self._authorized():
-            self._json({"error": "unauthorized"}, 401)
+            self._auth_deny()
             return
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         # since/until 入口校验(§58, CLI --since 同族): 字符串比较式日期过滤对

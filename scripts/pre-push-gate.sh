@@ -265,6 +265,10 @@ ART
 fi
 
 # coverage 被测包: 目录启发式 backend/ -> app/ -> src/<pkg>/ -> 仓根; 排除 egg-info 等构建产物
+# 必须是**相对路径全串**(src/<pkg>), 不能只取 basename: Agent-KB 仓根同时有 markdown 知识库
+# kb/ 与 Python 包 src/kb/, `--cov=kb` 会解析到前者(零 .py)→ coverage 报
+# "No data was collected" + pytest-cov "Failed to generate report", 门禁每次刷一条假警告
+# (2026-11-13 实测)。
 if [ -d backend ]; then
     COV_TARGET="backend"
 elif [ -d app ]; then
@@ -273,7 +277,7 @@ elif [ -d src ]; then
     COV_TARGET=$(for d in src/*/; do
         b=$(basename "$d")
         case "$b" in *.egg-info|__pycache__) continue ;; esac
-        echo "$b"; break
+        echo "src/$b"; break
     done)
     [ -n "$COV_TARGET" ] || COV_TARGET="src"
 else

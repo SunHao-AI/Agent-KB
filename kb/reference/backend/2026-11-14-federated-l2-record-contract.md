@@ -15,15 +15,12 @@ tags:
 - origin
 - uri
 - external-source
-- promote-to:stack
-- needs-scope-review
-- promoted
 - auto-reviewed
 source:
   project: agent-kb
   ref: docs/superpowers/specs/2026-11-14-l2-summary-federation-contract-design.md#2
 created: '2026-11-14'
-scope: project
+scope: stack
 status: accepted
 confidence: verified
 updated: '2026-11-14'

@@ -568,3 +568,41 @@ def test_search_sidecar_missing_key_record_degrades(tmp_path, capsys):
     assert rep == {"scanned": 0, "rejected": {"filter": 0, "query": 0},
                    "matched": []}
     assert "warning" in capsys.readouterr().err
+
+
+from kb.repowiki import get_card_by_id
+
+
+def test_get_card_by_id_roundtrip(tmp_path):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    export_repowiki(docs, write=True)
+    text = get_card_by_id(docs, "repowiki://zh/docker_infra/architecture_design")
+    assert text is not None and text.startswith(repowiki.TOOL_MARKER)
+    assert "kb-20261114-c001" in text
+    assert get_card_by_id(docs, "repowiki://zh/root/overview") == "原生概述内容。\n"
+
+
+def test_get_card_by_id_bad_inputs(tmp_path):
+    _full_tree(tmp_path)
+    docs = tmp_path / "docs"
+    assert get_card_by_id(docs, "kb-20261114-c001") is None  # 非 repowiki id
+    assert get_card_by_id(docs, "repowiki://zh/root/no_such_card") is None
+    assert get_card_by_id(docs, "repowiki://en/root/overview") is None  # 无 en 目录
+
+
+def test_cli_show_repowiki_card(tmp_path, capsys):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    export_repowiki(docs, write=True)
+    rc = _dispatch(["show", "--repo", str(docs),
+                    "repowiki://zh/root/overview"])
+    assert rc == 0
+    assert capsys.readouterr().out == "原生概述内容。\n"
+
+
+def test_cli_show_repowiki_not_found(tmp_path, capsys):
+    _full_tree(tmp_path)
+    docs = tmp_path / "docs"
+    assert _dispatch(["show", "--repo", str(docs),
+                      "repowiki://zh/root/overview"]) == 1

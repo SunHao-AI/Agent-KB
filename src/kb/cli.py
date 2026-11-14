@@ -21,7 +21,8 @@ from kb.new_entry import create_entry
 from kb.promote import promote
 from kb.query import due_review, get_entry, needs_scope, related, stat
 from kb.repowiki import (build_sidecar, export_repowiki, find_repowiki_root,
-                         make_repowiki_layer)
+                         get_card_by_id, make_repowiki_layer,
+                         REPOWIKI_ID_PREFIX)
 
 
 def _date_arg(v: str) -> str:
@@ -400,6 +401,14 @@ def _dispatch(argv: list[str] | None = None) -> int:
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "show":
+        if args.id.startswith(REPOWIKI_ID_PREFIX):
+            text = get_card_by_id(repo, args.id)
+            if text is None:
+                print(f"not found: {args.id}", file=sys.stderr)
+                return 1
+            # 原文逐字节输出(卡文件自带结尾换行), print() 会多加一个换行
+            print(text, end="")
+            return 0
         if args.agent_kb:
             got = get_layered([repo] + [Path(p) for p in args.agent_kb], args.id)
             text, layer = got if got else (None, None)

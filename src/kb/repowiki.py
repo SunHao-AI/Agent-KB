@@ -406,6 +406,29 @@ def search_sidecar(repo: Path, *, query: str | None = None
                     "matched": []}
 
 
+def get_card_by_id(repo: Path, card_id: str) -> str | None:
+    """repowiki://<locale>/<module_path>/<card> → 卡原文 markdown。"""
+    if not card_id.startswith(REPOWIKI_ID_PREFIX):
+        return None
+    rest = card_id[len(REPOWIKI_ID_PREFIX):]
+    locale, _, tail = rest.partition("/")
+    module_path, _, card = tail.rpartition("/")
+    if not locale or not module_path or card not in CARD_FILES:
+        return None
+    root = find_repowiki_root(Path(repo))
+    if root is None:
+        return None
+    try:
+        loaded = load_module_tree(root, locale)
+    except ValueError:
+        return None
+    if loaded is None:
+        return None
+    modules, locale_dir = loaded
+    f = module_dir(locale_dir, modules, module_path) / CARD_FILES[card]
+    return f.read_text(encoding="utf-8") if f.exists() else None
+
+
 def make_repowiki_layer(repo: Path):
     """三层检索中层(project kb → repowiki → agent-kb), 供 layers between 注入。
 

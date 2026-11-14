@@ -59,11 +59,16 @@ sections/dedup_key/related/updated/repo)之上**新增两字段**:
 `derive_schema()` 的 properties 加(文档 schema 同步):
 
 ```json
-"summary": { "type": "string", "minLength": 10, "maxLength": 300 }
+"summary": { "anyOf": [
+  { "const": "" },
+  { "type": "string", "minLength": 10, "maxLength": 300 }
+] }
 ```
 
-**不进 required**。长度下限 10 防"填了等于没填", 上限 300 对齐 OG 惯例并给
-结论句留空间(120 太短写不下"条件+结论+动作")。
+**不进 required**; "空 = 缺失"([entry.py](../../src/kb/entry.py) `Entry.summary()`
+判断 `fm.get("summary")` strip 后非空): 空串显式豁免(模板 `summary: ""` 占位与
+人工清空都合法), 1–9 字符与 >300 字符为 schema 硬错误。长度下限 10 防"填了等于
+没填", 上限 300 对齐 OG 惯例并给结论句留空间(120 太短写不下"条件+结论+动作")。
 
 ### 3.2 Entry.summary() 单点收口
 

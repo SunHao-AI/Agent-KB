@@ -83,6 +83,10 @@ def _probe(repo: Path, ref_lines: str) -> tuple[str, str, int]:
     env["PREPUSH_GATE_PROBE"] = "base"
     r = subprocess.run(
         [sh, str(GATE)], input=ref_lines, capture_output=True, text=True,
+        # 母本脚本的中文 WARN 是 UTF-8 字节: 不写 encoding 时 text=True 按控制台码页
+        # 解码, 中文 Windows(GBK)下 _readerthread 抛 UnicodeDecodeError → r.stderr=None
+        # → 下面 "xxx" in err 报成 TypeError 而非真断言(2026-11-14 门禁实跑拦下两条)。
+        encoding="utf-8", errors="replace",
         cwd=str(repo), env=env,
     )
     return r.stdout, r.stderr, r.returncode

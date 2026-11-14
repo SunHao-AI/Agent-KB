@@ -2276,6 +2276,46 @@ PowerShell OOM / sandbox backend failed / git push exit 128), **同命令裸重�
 `docs/kb/` 亦无既有条目; 判据(sh glob 未匹配字面量+启发式修复须穷尽输入形状)
 有普适根因可验证, 但先以本节留档, 待同类第二例再评估独立入库。
 
+## §80 第六十三轮: resolve_base 不可达 remote_sha 兜底五面失明(§79 判据延伸)
+
+**选题**: §79 判据"修一个启发式要枚举其全部输入形状"的机械延伸——把 gate 母本
+(`scripts/pre-push-gate.sh`, 539 行)其余启发式段做同样的形状穷尽。通读后从
+resolve_base 切入: I-9 只回归过"remote_sha 可达"的常规推送, 而 hook 拿到的
+remote_sha 来自**推送时的远端通告**, 本地对象库不保证有该对象——force-push 后
+旧 tip 被 gc、新克隆/浅克隆未同步时都是这个形状。
+
+**D-71 remote_sha 本地不可达 → 整套门禁假绿放行(实锤+修复, 高)**: 探针复刻
+真实形状(bare origin 上 main 被孤儿历史覆盖推, 本地从未 fetch 该对象, cat-file
+rc≠0), 直接跑母本自带 `PREPUSH_GATE_PROBE=base` 诊断出口: 修复前
+`merge-base || rb_b=$rb_remote` 兜底**原样吐出不可达 sha**, 探针下游以母本收集段
+同款命令实测 `git diff base..tip` rc=128 `fatal: bad object` 且**零输出**——被
+`|| continue` / 空判定静默吞掉, 增量 lint、mypy 棘轮、kb 门禁、前端门禁、全量
+pytest(空 diff → py_touched 不置位)**五面全部跳过** = 零门禁假绿放行, 与 I-9
+修的"base=local_sha → diff 空"是同族不同触发态。修复(母本 resolve_base):
+merge-base 失败先 `git cat-file -e "$rb_remote^{commit}"` 验可达——可达(孤儿
+分支覆盖推、旧 tip 仍在本地)才退回旧 tip(偏严可用, 保留原兜底合法用途); 不可达
+则落入既有锚点链(锚点缺再退空树全量判定)并打 WARN 让退化可见。install-gate.ps1
+已重跑分发(hook 与母本同步)。
+
+**判据**: **"上游通告的标识符"≠"本地可解引用对象"——外部系统(git hook 的
+remote_sha、消息队列里的对象 id、CI 传参的 commit)给你的 sha/id 只是**字符串**,
+任何 `|| 兜底退回原值` 的写法在退回前必须验可解引用(cat-file/HEAD 探测), 否则
+下游"失败即跳过"的宽容守卫会把坏输入放大成**静默全跳过**。与 §79 同属"启发式
+输出看着正常、实则垃圾", 但输入源从文件系统形状换成**跨进程边界**, 且这次的
+爆炸半径是整套门禁。旁证: 探针首跑连踩两处自身错误(ls-remote 列序反、Windows
+TEMP 目录残留), 均先修探针再定罪, 结论才可信。
+
+**回归**: `tests/test_gate_base_anchor.py` +2 用例共 6 个——D-71 主用例(不可达
+旧 tip → base 落锚点链非该 sha + WARN + diff rc=0)、对照组(可达孤儿 tip 仍退
+旧 tip, 兜底合法用途不被修复打断); 手法直接复用母本探针出口, 零切片零复制逻辑。
+pytest 全量 **502 全绿**(10 warnings 为既有 asyncio 警告); ruff F,E9 通过。
+
+**沉淀**: 去重命中 `docs/kb/pitfall/testing/2026-11-13-pre-push.md`(kb-20261113-3259)
+——但那条讲的是测试环境变量泄漏, 与本轮门禁 base 解析失明不同题, 不追加;
+`kb/` 通用层亦无"外部 sha 可解引用校验"条目。缺陷修复本体在代码+测试注释已
+自解释; 判据普适性强(任何消费外部标识符的兜底路径), 维持"文档留档+待第二例
+入库"策略, 与 §79 同一评估队列。
+
 ## 走查方法论教训(§18 自我纠错, 保留原样)
 
 曾误报"Esc/✕ 关不掉浮层"——`#rp` 元素常驻 DOM, 关闭仅移除

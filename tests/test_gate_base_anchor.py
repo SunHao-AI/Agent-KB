@@ -11,6 +11,9 @@
   2. 有 origin/HEAD → 优先 HEAD
   3. 常规推送（remote_sha 非 0）→ 行为与修复前一致
   4. 无任何 origin/* → base 退化为空树（偏严）且打 WARN
+  5. D-71: remote_sha 在本地不可达（force-push 后 gc / 浅克隆）→ 不得退回该
+     sha（下游 diff 全 rc!=0 被静默吞 = 五面失明），改走锚点/空树 + WARN
+  6. D-71 对照：旧 tip 可达但无共同祖先（孤儿分支覆盖推）→ 仍退回旧 tip（偏严可用）
 
 sh.exe 或 git 缺失时整模块 skip（CI 与非 Windows 环境不假失败）。
 """
@@ -165,3 +168,69 @@ def test_no_remote_falls_back_to_empty_tree_with_warn(tmp_path: Path):
     assert f"base={head}" not in out
     assert "anchor=<none>" in out, out
     assert "退化为全树" in err, err
+
+
+def _orphan_ref(tmp_path: Path, origin: Path, name: str, force: bool = False) -> str:
+    """往 origin 塞一个与 main 无共同祖先的孤儿分支并返回其 sha（模拟覆盖推历史）。"""
+    orph = tmp_path / "orphan"
+    orph.mkdir()
+    _git(orph, "init", "-b", "orphan", "-q")
+    sha = _commit(orph, "orphan.txt")
+    args = ["push", "-q", str(origin), f"orphan:{name}"]
+    if force:
+        args.insert(1, "--force")
+    _git(orph, *args)
+    return sha
+
+
+def test_force_push_unreachable_remote_sha_not_used_as_base(repo: dict, tmp_path: Path):
+    """D-71 回归：remote_sha 本地不可达时，base 绝不能退回该 sha。
+
+    场景复刻(2026-11-14 探针实测): 远端 main 被孤儿历史覆盖推，而本地从未 fetch
+    过该历史(新克隆/浅克隆/未同步视角一致——git 给 hook 的 remote_sha 来自推送时
+    的远端通告，**不保证**本地对象库有该对象)。修复前 resolve_base 的 merge-base
+    兜底 `|| rb_b=$rb_remote` 直接吐出不可达 sha → 下游每条 `git diff base..tip`
+    rc!=0 且零输出，被 `|| continue` / 空判定静默吞掉 → 增量 lint、mypy、kb、
+    前端、全量 pytest **五面全部失明**(假绿放行)。
+    修复后: cat-file 验可达，不可达则落锚点链——本 fixture 有 origin/main，
+    base 应为 merge-base(feature, origin/main)=main tip；并打 WARN 可见退化。
+    """
+    work, origin = repo["dir"], tmp_path / "origin.git"
+    orphan_sha = _orphan_ref(tmp_path, origin, "main", force=True)
+    # 刻意不 fetch: 复刻"远端 sha 在本地不可达"的对象库状态
+    r = subprocess.run(
+        ["git", "-C", str(work), "cat-file", "-e", f"{orphan_sha}^{{commit}}"],
+        capture_output=True, env=_clean_env())
+    assert r.returncode != 0, "前置条件不成立: 旧 tip 应不可达"
+
+    local = _git(work, "rev-parse", "feature")
+    out, err, rc = _probe(work, (
+        f"refs/heads/feature {local} refs/heads/main {orphan_sha}\n"))
+    assert rc == 0
+    assert f"base={orphan_sha}" not in out, "base 退回不可达 sha = D-71 未修好"
+    assert f"base={repo['main']}" in out, out
+    assert "本地不可达" in err, err
+    assert f"base={local}" not in out, "base 退化成本地 tip = diff 必空, 失明未除"
+    # 失明已除: 修复后的 base 让母本收集段的 diff 正常执行(rc=0 而非 bad object)
+    d = subprocess.run(
+        ["git", "-C", str(work), "diff", "--name-only", repo["main"], local, "--", "*.py"],
+        capture_output=True, text=True, env=_clean_env())
+    assert d.returncode == 0, d.stderr
+
+
+def test_force_push_reachable_orphan_tip_still_used_as_base(repo: dict, tmp_path: Path):
+    """D-71 对照组：旧 tip 本地可达但无共同祖先 → base 仍退回旧 tip（偏严可用）。
+
+    这是 resolve_base 兜底 `|| rb_b=$rb_remote` 的**合法用途**（孤儿分支覆盖推，
+    旧 tip 还在本地对象库）——修复加 cat-file 验可达时不能把这个分支打断：
+    若把它一并落空树，diff 范围同样正确但多扫全历史 blob，且与注释语义不符。
+    """
+    work, origin = repo["dir"], tmp_path / "origin.git"
+    orphan_sha = _orphan_ref(tmp_path, origin, "side")   # 可达的孤儿分支 tip
+    _git(work, "fetch", "-q", "origin")
+    local = _git(work, "rev-parse", "feature")
+    out, err, rc = _probe(work, (
+        f"refs/heads/feature {local} refs/heads/side {orphan_sha}\n"))
+    assert rc == 0
+    assert f"base={orphan_sha}" in out, out
+    assert "本地不可达" not in err, err

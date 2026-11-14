@@ -81,17 +81,32 @@ fi
 # 输出: 本次增量 base 的 sha。
 resolve_base() {
     rb_local="$1"; rb_remote="$2"
+    rb_b=""
     if [ -n "$rb_remote" ] && [ "$rb_remote" != "$ZERO" ]; then
-        # 常规推送: force-push 后旧 tip 可能已不可达, merge-base 兜底再退回旧 tip
-        rb_b=$(git merge-base "$rb_remote" "$rb_local" 2>/dev/null) || rb_b="$rb_remote"
-        printf '%s' "$rb_b"
-        return 0
+        # 常规推送: merge-base 失败只有两种可能 —— (a) 旧 tip 可达但与本地 tip 无
+        # 共同祖先(孤儿分支覆盖推): 退回旧 tip, diff 得全量变更, 偏严可用;
+        # (b) 旧 tip 在本地对象库**不可达**(force-push 后对象被 gc / 新克隆、
+        # 浅克隆上推): 直接退回 $rb_remote 会让下游每条 `git diff base..tip`
+        # rc!=0 且零输出, 被 `|| continue` / 空判定静默吞掉 → 增量 lint、mypy、
+        # kb、前端、全量 pytest 五面**全部失明**(2026-11-14 探针实测: rc=128
+        # "fatal: bad object")。故退回前先 cat-file 验可达; 不可达则落入下方
+        # 锚点链(锚点缺再退空树全量判定), 并打 WARN 让退化可见。
+        if rb_b=$(git merge-base "$rb_remote" "$rb_local" 2>/dev/null); then
+            :
+        elif git cat-file -e "${rb_remote}^{commit}" 2>/dev/null; then
+            rb_b="$rb_remote"
+        else
+            echo "pre-push-gate: WARN - 远端旧 tip ${rb_remote:0:12} 本地不可达" >&2
+            echo "  (force-push 后对象已 gc / 浅克隆?), 增量基准改用锚点或全树(偏严)" >&2
+        fi
     fi
-    if [ -n "$GATE_ANCHOR" ]; then
-        rb_b=$(git merge-base "$rb_local" "$GATE_ANCHOR" 2>/dev/null) \
-            || rb_b=$(git rev-parse "$GATE_ANCHOR" 2>/dev/null) || rb_b="$FULL_TREE"
-    else
-        rb_b="$FULL_TREE"
+    if [ -z "$rb_b" ]; then
+        if [ -n "$GATE_ANCHOR" ]; then
+            rb_b=$(git merge-base "$rb_local" "$GATE_ANCHOR" 2>/dev/null) \
+                || rb_b=$(git rev-parse "$GATE_ANCHOR" 2>/dev/null) || rb_b="$FULL_TREE"
+        else
+            rb_b="$FULL_TREE"
+        fi
     fi
     printf '%s' "$rb_b"
 }

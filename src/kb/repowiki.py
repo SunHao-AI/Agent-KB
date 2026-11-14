@@ -290,7 +290,9 @@ def build_sidecar(repo: Path, repowiki_root: Path | None = None) -> Path | None:
     """扫描 repowiki 全部语言目录 → 侧车 kb/index.repowiki.jsonl(L2 检索面)。
 
     无 repowiki 根 → None(静默); 某语言目录 _index.yaml 坏/schema 漂移 → 打
-    stderr warning 并跳过该目录(其余语言照常)——侧车是增强面, 不阻断 index 主流程。
+    stderr warning 并跳过该目录(其余语言照常); 模块级损坏(_module.yaml 语法坏/
+    顶层非 mapping/kk_cards 或 meta 非 mapping) → 打 stderr warning 并跳过该模块
+    (其余模块照常)——侧车是增强面, 不阻断 index 主流程。
     全部语言目录均无果(无记录)时不写空侧车, 返回 None。
     """
     repo = Path(repo)
@@ -313,35 +315,38 @@ def build_sidecar(repo: Path, repowiki_root: Path | None = None) -> Path | None:
             meta = modules[module_path]
             try:
                 mdir = module_dir(locale_dir, modules, module_path)
-            except ValueError as exc:
+                card_titles: dict = {}
+                myaml = mdir / "_module.yaml"
+                if myaml.exists():
+                    data = yaml.safe_load(myaml.read_text(encoding="utf-8")) or {}
+                    card_titles = data.get("kk_cards") or {}
+                for card, fname in CARD_FILES.items():
+                    f = mdir / fname
+                    if not f.exists():
+                        continue
+                    text = f.read_text(encoding="utf-8")
+                    body = "\n".join(
+                        ln for ln in text.splitlines()
+                        if ln.strip() and not ln.strip().startswith("#")
+                        and ln.strip() != TOOL_MARKER).strip()
+                    summary = _first_sentence(body)[:120] if body else ""
+                    title = (card_titles.get(card) or {}).get("title") \
+                        or meta.get("title", "")
+                    records.append({
+                        "kind": "repowiki_card",
+                        "id": f"{REPOWIKI_ID_PREFIX}{lang_dir.name}/"
+                              f"{module_path}/{card}",
+                        "module_path": module_path, "card": card, "title": title,
+                        "summary": summary,
+                        "path": Path(os.path.relpath(f, repo)).as_posix(),
+                        "locale": lang_dir.name,
+                    })
+            except (ValueError, yaml.YAMLError, AttributeError) as exc:
+                # 模块级损坏(YAML 语法坏/顶层非 mapping/kk_cards 非 mapping/
+                # _index.yaml meta 非 mapping)只跳过该模块: 侧车是增强面,
+                # 不阻断 index 主流程。
                 print(f"warning: repowiki sidecar: {exc}", file=sys.stderr)
                 continue
-            card_titles: dict = {}
-            myaml = mdir / "_module.yaml"
-            if myaml.exists():
-                data = yaml.safe_load(myaml.read_text(encoding="utf-8")) or {}
-                card_titles = data.get("kk_cards") or {}
-            for card, fname in CARD_FILES.items():
-                f = mdir / fname
-                if not f.exists():
-                    continue
-                text = f.read_text(encoding="utf-8")
-                body = "\n".join(
-                    ln for ln in text.splitlines()
-                    if ln.strip() and not ln.strip().startswith("#")
-                    and ln.strip() != TOOL_MARKER).strip()
-                summary = _first_sentence(body)[:120] if body else ""
-                title = (card_titles.get(card) or {}).get("title") \
-                    or meta.get("title", "")
-                records.append({
-                    "kind": "repowiki_card",
-                    "id": f"{REPOWIKI_ID_PREFIX}{lang_dir.name}/"
-                          f"{module_path}/{card}",
-                    "module_path": module_path, "card": card, "title": title,
-                    "summary": summary,
-                    "path": Path(os.path.relpath(f, repo)).as_posix(),
-                    "locale": lang_dir.name,
-                })
     if not records:
         return None
     out = repo / "kb" / SIDECAR_NAME

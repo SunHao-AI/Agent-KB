@@ -70,9 +70,9 @@ def test_lint_rejects_module_non_string(tmp_path):
     assert any("module" in e for e in errs)
 
 
-def _tree(root: Path, *, schema_version: int = 1) -> Path:
+def _tree(root: Path, *, schema_version: int = 1, lang: str = "zh") -> Path:
     """最小 repowiki 导出: root 模块 + docker_infra 子模块。"""
-    zh = root / ".qoder" / "repowiki" / "knowledge" / "zh"
+    zh = root / ".qoder" / "repowiki" / "knowledge" / lang
     rdir = zh / "演示仓 demo"
     ddir = rdir / "Docker 基础设施与开发编排"
     ddir.mkdir(parents=True, exist_ok=True)
@@ -407,3 +407,60 @@ def test_cli_index_builds_sidecar(tmp_path, capsys):
     assert rc == 0
     assert "index.repowiki.jsonl" in capsys.readouterr().out
     assert (docs / "kb" / "index.repowiki.jsonl").exists()
+
+
+def _sidecar_ids(docs: Path) -> set:
+    side = build_sidecar(docs)
+    assert side is not None, "侧车应写出(存在未损坏模块)"
+    return {json.loads(x)["id"]
+            for x in side.read_text(encoding="utf-8").splitlines() if x.strip()}
+
+
+def test_build_sidecar_bad_module_yaml_syntax_skips_module(tmp_path, capsys):
+    zh = _tree(tmp_path)
+    en = _tree(tmp_path, lang="en")
+    (zh / "演示仓 demo" / "概述.md").write_text("原生概述内容。\n", encoding="utf-8")
+    (en / "演示仓 demo" / "概述.md").write_text("native overview.\n",
+                                               encoding="utf-8")
+    # docker_infra 的 _module.yaml YAML 语法坏(yaml.YAMLError, 非 ValueError)
+    (zh / "演示仓 demo" / "Docker 基础设施与开发编排" / "_module.yaml"
+     ).write_text("kk_cards: [unclosed", encoding="utf-8")
+    docs = tmp_path / "docs"
+    (docs / "kb").mkdir(parents=True)
+    ids = _sidecar_ids(docs)
+    # 其他语言与同语言其他模块照常索引, 损坏模块不炸 kb index
+    assert "repowiki://en/root/overview" in ids
+    assert "repowiki://zh/root/overview" in ids
+    assert not any(i.startswith("repowiki://zh/docker_infra/") for i in ids)
+    assert "warning" in capsys.readouterr().err
+
+
+def test_build_sidecar_non_mapping_module_yaml_skips_module(tmp_path, capsys):
+    zh = _tree(tmp_path)
+    (zh / "演示仓 demo" / "概述.md").write_text("原生概述内容。\n", encoding="utf-8")
+    # _module.yaml 顶层是 list: data.get 抛 AttributeError
+    (zh / "演示仓 demo" / "Docker 基础设施与开发编排" / "_module.yaml"
+     ).write_text("- just\n- a\n- list\n", encoding="utf-8")
+    docs = tmp_path / "docs"
+    (docs / "kb").mkdir(parents=True)
+    ids = _sidecar_ids(docs)
+    assert "repowiki://zh/root/overview" in ids
+    assert not any(i.startswith("repowiki://zh/docker_infra/") for i in ids)
+    assert "warning" in capsys.readouterr().err
+
+
+def test_build_sidecar_non_dict_module_meta_skips_module(tmp_path, capsys):
+    zh = _tree(tmp_path)
+    (zh / "演示仓 demo" / "概述.md").write_text("原生概述内容。\n", encoding="utf-8")
+    # _index.yaml 里 docker_infra 的 meta 非 mapping
+    idx = yaml.safe_load((zh / "_index.yaml").read_text(encoding="utf-8"))
+    idx["modules"]["docker_infra"] = "not-a-mapping"
+    (zh / "_index.yaml").write_text(yaml.safe_dump(idx, allow_unicode=True,
+                                                  sort_keys=False),
+                                    encoding="utf-8")
+    docs = tmp_path / "docs"
+    (docs / "kb").mkdir(parents=True)
+    ids = _sidecar_ids(docs)
+    assert "repowiki://zh/root/overview" in ids
+    assert not any(i.startswith("repowiki://zh/docker_infra/") for i in ids)
+    assert "warning" in capsys.readouterr().err

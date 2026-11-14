@@ -132,6 +132,7 @@ def _check_severity(severity: str | None) -> None:
 
 def create_draft(repo, *, type: str, domain: str, title: str, body: str | None = None,
                  tags: list[str] | None = None, severity: str | None = None,
+                 summary: str | None = None,
                  agent_kbs: tuple = (), today: dt.date | None = None) -> Entry:
     """Agent 唯一写入口: 强制 draft/speculative/project + 查重拒建."""
     _check_severity(severity)
@@ -146,7 +147,7 @@ def create_draft(repo, *, type: str, domain: str, title: str, body: str | None =
         raise DuplicateCandidate(hits)
     e = create_entry(Path(repo), type=type, domain=domain, scope="project",
                      title=title, generated=True, today=today)
-    if body or tags or severity:
+    if body or tags or severity or summary:
         cur = parse_entry(e.path)
         if body:
             cur.body = f"\n# {title}\n\n{_strip_h1_lines(body).strip()}\n"
@@ -154,6 +155,9 @@ def create_draft(repo, *, type: str, domain: str, title: str, body: str | None =
             cur.fm["tags"] = list(tags)
         if severity:
             cur.fm["severity"] = severity
+        # 空串跳过=保持缺失(与 body/tags 同口径): 新建场景没有"清空既有值"的语义
+        if summary:
+            cur.fm["summary"] = summary
         write_text_lf(e.path, dump_entry(cur))
         e = parse_entry(e.path)
     _reindex(repo)  # §44: 新建 draft 要进 index.draft.jsonl——get_entry/kb_get/related
@@ -217,6 +221,7 @@ _EDITABLE = ("draft", "proposed", "accepted")
 
 def update_entry(repo, id: str, *, title: str | None = None, body: str | None = None,
                  tags: list[str] | None = None, severity: str | None = None,
+                 summary: str | None = None,
                  today: dt.date | None = None) -> Entry:
     """编辑本项目条目正文/元数据。
 
@@ -243,6 +248,13 @@ def update_entry(repo, id: str, *, title: str | None = None, body: str | None = 
         fm["tags"] = list(tags)
     if severity:
         fm["severity"] = severity
+    if summary is not None:
+        # kb_update 传空串 = 清空显式结论(回退派生兜底), 与既有 title/tags 的
+        # "传了才覆盖"一致; 删除用 pop 而非置空串, 保持"键不存在=缺失"的 lint 判据
+        if summary:
+            fm["summary"] = summary
+        else:
+            fm.pop("summary", None)
     if status == "accepted":
         d = (today or dt.date.today()).isoformat()
         fm["status"] = "proposed"

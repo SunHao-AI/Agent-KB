@@ -2,6 +2,7 @@ import datetime as dt
 import pytest
 from kb.gate import update_entry, review, set_scope, export_entry, GateViolation
 from kb.entry import parse_entry
+from kb.new_entry import create_entry
 from conftest import make_entry
 
 TODAY = dt.date(2026, 10, 14)
@@ -87,6 +88,21 @@ def test_update_body_with_h1_is_stripped_not_duplicated(tmp_repo):
     # 幂等: 剥过的正文再传一次不增不减
     e2 = update_entry(tmp_repo, "kb-20261014-h1st", body=e.body, today=TODAY)
     assert e2.body == e.body
+
+
+def test_update_entry_summary_set_and_clear(tmp_repo):
+    """kb_update 传空串 = 清空 summary(pop 键); 不传 = 不碰。返回落盘后的 Entry。"""
+    e = create_entry(tmp_repo, type="pitfall", domain="frontend", scope="project",
+                     title="更新摘要", generated=False, today=TODAY,
+                     summary="旧结论一句, 覆盖更新场景。")
+    e2 = update_entry(tmp_repo, e.fm["id"], summary="新结论一句, 覆盖更新场景。")
+    assert e2.fm["summary"] == "新结论一句, 覆盖更新场景。"
+    assert parse_entry(e.path).fm["summary"] == "新结论一句, 覆盖更新场景。"
+    update_entry(tmp_repo, e.fm["id"])                        # 不传不动
+    assert parse_entry(e.path).fm["summary"] == "新结论一句, 覆盖更新场景。"
+    e3 = update_entry(tmp_repo, e.fm["id"], summary="")       # 空串 = 清空
+    assert "summary" not in e3.fm
+    assert "summary" not in parse_entry(e.path).fm
 
 
 @pytest.mark.parametrize("frm,conf,to,ok", [

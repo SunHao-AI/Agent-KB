@@ -72,7 +72,8 @@ def _unique_id(repo_root: Path, today: dt.date, taken: set[str]) -> str:
 
 
 def create_entry(repo_root: Path, type: str, domain: str, scope: str,
-                 title: str, generated: bool, today: dt.date) -> Entry:
+                 title: str, generated: bool, today: dt.date,
+                 summary: str | None = None) -> Entry:
     tax = load_taxonomy()
     if type not in tax["types"]:
         raise ValueError(f"unknown type: {type}")
@@ -88,6 +89,9 @@ def create_entry(repo_root: Path, type: str, domain: str, scope: str,
         "status": "draft" if generated else "proposed",
         "confidence": "speculative" if generated else "probable",
         "created": today.isoformat(),
+        # 显式 L2 结论句(spec 2026-11-14): None=未提供不写键; ""=显式清空(schema 豁免);
+        # 1-9 字符可落盘但 lint 双报(schema+可读性), 调用方自慎。
+        **({"summary": summary} if summary is not None else {}),
         "updated": today.isoformat(),
     }
     if "severity" in tax["types"][type].get("requires", []):

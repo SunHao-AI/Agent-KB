@@ -588,6 +588,7 @@ def test_get_card_by_id_bad_inputs(tmp_path):
     docs = tmp_path / "docs"
     assert get_card_by_id(docs, "kb-20261114-c001") is None  # 非 repowiki id
     assert get_card_by_id(docs, "repowiki://zh/root/no_such_card") is None
+    assert get_card_by_id(docs, "repowiki://zh/no_such_module/overview") is None
     assert get_card_by_id(docs, "repowiki://en/root/overview") is None  # 无 en 目录
 
 
@@ -606,3 +607,16 @@ def test_cli_show_repowiki_not_found(tmp_path, capsys):
     docs = tmp_path / "docs"
     assert _dispatch(["show", "--repo", str(docs),
                       "repowiki://zh/root/overview"]) == 1
+    capsys.readouterr()
+
+
+def test_cli_show_repowiki_bad_module(tmp_path, capsys):
+    _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    # 拼错模块名: ValueError 不得泄露内部错误文案, 按 not found 语义输出
+    assert _dispatch(["show", "--repo", str(docs),
+                      "repowiki://zh/no_such_module/overview"]) == 1
+    err = capsys.readouterr().err
+    assert "not found: repowiki://zh/no_such_module/overview" in err
+    assert "模块树缺" not in err and "dir_name" not in err
+    assert "ValueError" not in err

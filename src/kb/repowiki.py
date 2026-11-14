@@ -425,8 +425,14 @@ def get_card_by_id(repo: Path, card_id: str) -> str | None:
     if loaded is None:
         return None
     modules, locale_dir = loaded
-    f = module_dir(locale_dir, modules, module_path) / CARD_FILES[card]
-    return f.read_text(encoding="utf-8") if f.exists() else None
+    try:
+        # module_dir 对未知模块段 raise ValueError; read_text 对坏 UTF-8
+        # 抛 UnicodeDecodeError(ValueError 子类)——两者一并静默降级为
+        # None(= 该卡不可读), 不泄露内部错误文案, CLI 统一走 not found。
+        f = module_dir(locale_dir, modules, module_path) / CARD_FILES[card]
+        return f.read_text(encoding="utf-8") if f.exists() else None
+    except ValueError:
+        return None
 
 
 def make_repowiki_layer(repo: Path):

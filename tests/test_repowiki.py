@@ -537,3 +537,34 @@ def test_cli_search_includes_repowiki_layer(tmp_path, capsys):
     rows = json.loads(capsys.readouterr().out)
     assert rows[0]["kind"] == "repowiki_card"
     assert rows[0]["id"] == "repowiki://zh/root/overview"
+
+
+def test_cli_search_corrupt_sidecar_degrades_to_two_layers(tmp_path, capsys):
+    docs, agent = _layer_setup(tmp_path)
+    side = docs / "kb" / "index.repowiki.jsonl"
+    lines = side.read_text(encoding="utf-8").splitlines()
+    lines[0] = "{ not valid json"
+    side.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (agent / "kb" / "index.jsonl").write_text("", encoding="utf-8")
+    rc = _dispatch(["search", "--repo", str(docs),
+                    "--agent-kb", str(agent), "--query", "原生概述"])
+    assert rc == 0  # 损坏侧车不击穿 kb search
+    captured = capsys.readouterr()
+    rows = json.loads(captured.out)
+    assert all(r.get("kind") != "repowiki_card" for r in rows)
+    assert "warning" in captured.err
+
+
+def test_search_sidecar_missing_key_record_degrades(tmp_path, capsys):
+    docs = tmp_path / "docs"
+    (docs / "kb").mkdir(parents=True)
+    (docs / "kb" / "index.repowiki.jsonl").write_text(
+        json.dumps({"kind": "repowiki_card", "id": "repowiki://zh/a/overview",
+                    "module_path": "a", "card": "overview",
+                    # 缺 title/summary 键
+                    }) + "\n", encoding="utf-8")
+    rows, rep = search_sidecar(docs, query="原生概述")
+    assert rows == []
+    assert rep == {"scanned": 0, "rejected": {"filter": 0, "query": 0},
+                   "matched": []}
+    assert "warning" in capsys.readouterr().err

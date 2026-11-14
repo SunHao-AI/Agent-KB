@@ -368,31 +368,42 @@ def search_sidecar(repo: Path, *, query: str | None = None
     if not jl.exists():
         return [], {"scanned": 0, "rejected": {"filter": 0, "query": 0},
                     "matched": []}
-    recs = [json.loads(x) for x in jl.read_text(encoding="utf-8").splitlines()
-            if x.strip()]
-    tokens = query.lower().split() if query else []
-    matched: list[dict] = []
-    n_no_hit = 0
-    for rec in recs:
-        fields: list[str] = []
-        spans: list[list[int]] = []
-        if tokens:
-            parts = [("title", rec["title"].lower()),
-                     ("summary", rec["summary"].lower()),
-                     ("module", rec["module_path"].lower()),
-                     ("card", rec["card"].lower())]
-            fields, spans, hit_tokens = _hit(parts, tokens)
-            if hit_tokens != set(tokens):
-                n_no_hit += 1
-                continue
-        matched.append({**rec, "hit_fields": fields, "hit_spans": spans,
-                        "score": 1.0})
-    report = {"scanned": len(recs),
-              "rejected": {"filter": 0, "query": n_no_hit},
-              "matched": [{"id": r["id"], "hit_fields": r["hit_fields"],
-                           "hit_spans": r["hit_spans"], "score": 1.0,
-                           "rank": i + 1} for i, r in enumerate(matched)]}
-    return matched, report
+    try:
+        recs = [json.loads(x) for x in
+                jl.read_text(encoding="utf-8").splitlines() if x.strip()]
+        tokens = query.lower().split() if query else []
+        matched: list[dict] = []
+        n_no_hit = 0
+        for rec in recs:
+            fields: list[str] = []
+            spans: list[list[int]] = []
+            if tokens:
+                parts = [("title", rec["title"].lower()),
+                         ("summary", rec["summary"].lower()),
+                         ("module", rec["module_path"].lower()),
+                         ("card", rec["card"].lower())]
+                fields, spans, hit_tokens = _hit(parts, tokens)
+                if hit_tokens != set(tokens):
+                    n_no_hit += 1
+                    continue
+            matched.append({**rec, "hit_fields": fields, "hit_spans": spans,
+                            "score": 1.0})
+        report = {"scanned": len(recs),
+                  "rejected": {"filter": 0, "query": n_no_hit},
+                  "matched": [{"id": r["id"], "hit_fields": r["hit_fields"],
+                               "hit_spans": r["hit_spans"], "score": 1.0,
+                               "rank": i + 1} for i, r in enumerate(matched)]}
+        return matched, report
+    except (ValueError, UnicodeDecodeError, KeyError, TypeError,
+            AttributeError) as exc:
+        # 语义选择: 整层静默降级而非跳过坏行——侧车任一行非法 JSON/坏
+        # UTF-8, 或记录缺 title/summary/module_path/card 键(值非 str 由
+        # AttributeError 兜底), 说明侧车结构已漂移, 部分结果不可信, 故不
+        # 做部分消费; 与 build_sidecar 模块级容错同口径, 增强面绝不击穿
+        # kb search 主流程(降级为两层)。
+        print(f"warning: repowiki sidecar: {exc}", file=sys.stderr)
+        return [], {"scanned": 0, "rejected": {"filter": 0, "query": 0},
+                    "matched": []}
 
 
 def make_repowiki_layer(repo: Path):

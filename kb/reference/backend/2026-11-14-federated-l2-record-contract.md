@@ -15,10 +15,10 @@ tags:
 - origin
 - uri
 - external-source
-- auto-reviewed
 - promote-to:stack
 - needs-scope-review
 - promoted
+- auto-reviewed
 source:
   project: agent-kb
   ref: docs/superpowers/specs/2026-11-14-l2-summary-federation-contract-design.md#2
@@ -30,10 +30,15 @@ updated: '2026-11-14'
 summary: 外部异构源接入只需产出含 origin/uri 的 index.jsonl 行；本地条目恒为 origin=local、uri=null，检索与
   lint 面零改动。
 review_by: '2027-11-14'
+revision:
+  reason: content-edited
+  from_status: accepted
+  at: '2026-11-14'
 verified_by: agent
 verification:
-  evidence: tests/test_federation_contract.py 与 tests/test_index.py::test_records_carry_federation_fields
-    实测通过(2026-11-14)
+  evidence: '终审 F4 措辞修正: 正文 grep 实测全仓除 index.py 注入点外无 origin 消费点, stats.source_of
+    仍按 source:// 前缀判源; 补注过渡态说明。tests/test_index.py + tests/test_federation_contract.py
+    全绿(2026-11-14)'
   reviewed_at: '2026-11-14'
 ---
 
@@ -60,6 +65,9 @@ path/summary/keywords/sections/dedup_key/related/updated/repo)之上新增两字
 - **适配器唯一义务**: 产出该形状的 JSONL 行。外部条目**不进** front-matter/lint/六段骨架
   体系; `sections`/`keywords` 等派生字段对外部源可为空。
 - 消费方(检索/面板)按 `origin != "local"` 即视为外接, 不猜前缀。
+  **本期实现状态**: 该判定是契约声明, 尚无消费点读 `origin`(全仓仅 `index._records`
+  注入); 在位的判源仍是 `stats.source_of()` 按 `source://` **前缀**归类。两套判据并存
+  属过渡态, 消费侧切到 `origin` 待首个 connector 落地时一并做。
 - 索引重建零漂移: 存量条目重建后除 `origin`/`uri` 两字段外逐字节不变。
 - 本地行两字段的注入点在 `src/kb/index.py` `_records`(本仓唯一的记录生产者注入点)。
 

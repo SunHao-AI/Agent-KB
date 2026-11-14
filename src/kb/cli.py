@@ -251,6 +251,11 @@ def _dispatch(argv: list[str] | None = None) -> int:
             # 否则 `kb new` 返回路径后立刻 `kb show <id>` 报 not found
             from kb.gate import _reindex
             _reindex(repo)
+        # spec 2026-11-14 §3.4: 只提示不强制(强制违背 draft→终审既有节奏)。走 stderr——
+        # stdout 是裸路径, 被 `kb new | xargs kb show` 式管道与既有断言依赖。
+        if not args.summary:
+            print("note: 未传 --summary, L2 摘要将退回正文派生(检索面质量更低); "
+                  "建议补一句结论: 条件+结论+动作(10-300 字)", file=sys.stderr)
         print(e.path)
         return 0
     if args.cmd == "review":

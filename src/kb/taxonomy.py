@@ -33,6 +33,10 @@ def derive_schema(tax: dict) -> dict:
     props = {
         "id": {"type": "string", "pattern": _ID_PATTERN},
         "title": {"type": "string", "minLength": 1},
+        # L2 结论句(spec 2026-11-14 §3.1): 可选; 空串=缺失显式豁免(模板 `summary: ""`
+        # 占位与人工清空都合法), 非空限 10-300——下限防"填了等于没填", 上限对齐 OG 惯例。
+        "summary": {"anyOf": [{"const": ""},
+                              {"type": "string", "minLength": 10, "maxLength": 300}]},
         "type": {"type": "string", "enum": types},
         "domain": {
             "type": "array", "minItems": 1,

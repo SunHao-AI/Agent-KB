@@ -22,6 +22,12 @@
       "type": "string",
       "minLength": 1
     },
+    "summary": {
+      "anyOf": [
+        { "const": "" },
+        { "type": "string", "minLength": 10, "maxLength": 300 }
+      ]
+    },
     "type": {
       "type": "string",
       "enum": [

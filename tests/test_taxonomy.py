@@ -90,3 +90,16 @@ def test_committed_schema_matches_derivation():
     derived = derive_schema(load_taxonomy())
     assert committed == derived
     assert "dedup_key" not in committed["properties"]
+
+
+def test_derive_schema_summary_field():
+    """summary 非必填; 空串豁免(模板占位); 1-9 与 >300 为 schema 硬错误。"""
+    schema = derive_schema(_load_repo_taxonomy())
+    v = jsonschema.Draft202012Validator(schema)
+    # _fm() 默认 pitfall 不带 severity, 这里只考察 summary, 用 reference 隔离条件必填
+    assert v.is_valid(_fm(type="reference"))                   # 非必填
+    assert v.is_valid(_fm(type="reference", summary=""))       # 空串豁免
+    assert v.is_valid(_fm(type="reference", summary="连接池上限过低会拖垮高并发接口。"))
+    assert not v.is_valid(_fm(type="reference", summary="短"))  # 1-9 硬错误
+    assert not v.is_valid(_fm(type="reference", summary="字" * 301))  # >300 硬错误
+    assert not v.is_valid(_fm(type="reference", summary=123))  # 非字符串

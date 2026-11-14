@@ -157,8 +157,8 @@ managed 卡（`architecture_design`/`unique_setup_and_commands`）落盘前做�
 
 | 风险 | 缓解 |
 | --- | --- |
-| **Qoder 导入对自造 UUID（`kk_module_id`/卡 id）的容忍度未知**（官方文档未说明按 ID 还是按结构匹配） | **待实测**（2026-11-15）：导出器已落地，Qoder IDE 人工导入验证为唯一剩余检查点；若不容忍，降级为"文件格式兼容 + Qoder 任务直接读文件"，文档标注限制 |
-| 导入语义=**替换当前对应内容**；本工具仅写两类 managed 卡，原生卡不受写影响，但 Qoder 侧导入的替换粒度未知（可能整模块替换） | spec 与本节明示；managed 卡覆盖前警告 + `--force` 门。**已实测（2026-11-15，dry-run）**：对 flysee_video_web 真库跑导出，33 个 managed 卡目标已有 Qoder 原生内容（Qoder 云端管线自身生成全部五类卡，含本工具 designated 的两类）——覆盖保护按设计拦截，需 `--force` 才会覆盖 Qoder 原生卡；替换粒度仍待 Qoder 导入实测回填 |
+| **Qoder 导入对自造 UUID（`kk_module_id`/卡 id）的容忍度未知**（官方文档未说明按 ID 还是按结构匹配） | **仍未实测**（2026-11-15 复核）：导入动作从未真实执行（IDE 界面确认无导入记录）。工具面取证（repowiki MCP 15 工具）：① 磁盘导出**不会**自动进入卡存储——`read_knowledge` 读回原生内容，`cards.v1.db`/`wiki.v1.db` 及 WAL 中本工具标记零命中，与工具描述"Manual edits do not export files"互证：文件与存储双轨，导入是唯一同步通道；② 工具面 `write_knowledge`/`edit_knowledge` 被 `cards_edit_unavailable` 门禁拒（card run 在应用侧记 partial_failure，manifest 本体 succeeded），无法用作导入替身。**非阻塞**：桥的反向面（sidecar + 三层检索 + `repowiki://` 读卡）不依赖导入，已在真库全链路验证；导入耐受性留作人工 1 分钟检查点 |
+| 导入语义=**替换当前对应内容**；本工具仅写两类 managed 卡，原生卡不受写影响，但 Qoder 侧导入的替换粒度未知（可能整模块替换） | spec 与本节明示；managed 卡覆盖前警告 + `--force` 门。**已实测（2026-11-15，dry-run）**：对 flysee_video_web 真库跑导出，33 个 managed 卡目标已有 Qoder 原生内容（Qoder 云端管线自身生成全部五类卡，含本工具 designated 的两类）——覆盖保护按设计拦截，需 `--force` 才会覆盖 Qoder 原生卡；替换粒度待导入实测回填（同上行，导入未执行） |
 | Qoder 格式漂移 | `schema_version` 守卫（§5.3） |
 
 ## 7. 测试

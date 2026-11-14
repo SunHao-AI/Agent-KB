@@ -450,7 +450,8 @@ if [ -n "$(printf '%s\n' "$kb_tips" | sed '/^$/d')" ]; then
             # 逐个校验存在的 kb 库(载体目录:lint scope)。Agent-KB 仓有两个库:
             # 根 kb/(agent-kb) 与 docs/kb/(project); 业务仓只有后者。
             # --repo-name 不参与猜测: repo 字段是**生成时**写进索引的值(业务仓
-            # 用仓名, Agent-KB docs 库用 "docs"), 猜错 --check 恒 stale 误报 →
+            # 用仓名, Agent-KB docs 库用逻辑仓名 "Agent-KB" 而非载体目录名 "docs"),
+            # 猜错 --check 恒 stale 误报 →
             # 直接从被推 tip 的 index.jsonl 首行自取, 与被检内容同源。
             kb_fail=0
             for lib in "docs:project" ".:agent-kb"; do

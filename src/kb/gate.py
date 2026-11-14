@@ -250,7 +250,9 @@ def update_entry(repo, id: str, *, title: str | None = None, body: str | None = 
         fm["severity"] = severity
     if summary is not None:
         # kb_update 传空串 = 清空显式结论(回退派生兜底), 与既有 title/tags 的
-        # "传了才覆盖"一致; 删除用 pop 而非置空串, 保持"键不存在=缺失"的 lint 判据
+        # "传了才覆盖"一致。用 pop 而非置空串: 空串与缺失在 lint(按值判)、
+        # Entry.summary、query.stat 三处同义, 但落盘留空串会让 front-matter 里
+        # 多一个语义为"无"的键, 不如直接没有干净。
         if summary:
             fm["summary"] = summary
         else:

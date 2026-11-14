@@ -113,18 +113,19 @@ def lint_repo(repo_root: Path, scope: str = "project",
         type_sections = tax["types"].get(e.fm.get("type"), {}).get("sections", [])
         for msg in _placeholder_warnings(e, type_sections):
             errors.append(f"warning: {rid}: {msg}")
-        # summary 渐进守护(spec 2026-11-14 §3.3): 缺失只看**键存在性**——`summary: ""`
-        # 是模板占位/人工清空, schema 已豁免, 这里绝不能按"值为空"报缺失(三处"空=缺失"
-        # 语义的分工: schema 放行空串、Entry.summary 空值回落派生、lint 只把"键不存在"
-        # 算缺失)。脏值只报非空且 strip 后 <10(schema 的 1-9 硬错误归 schema 校验段管,
+        # summary 渐进守护(spec 2026-11-14 §3.3): 缺失按**值**判(strip 后为空即缺失),
+        # 与另两处"空 = 缺失"同口径——schema 放行空串(占位合法)、Entry.summary 空值回落
+        # 派生、query.stat 也按 strip 后非空计显式覆盖。改成只认"键不存在"曾被认为可以
+        # 豁免模板占位, 实际后果是守护线被自己的模板屏蔽: 8 个模板 front-matter 都带
+        # `summary: ""`, 照模板建档的条目天然带空串键, 永远报不出来(2026-11-14 终审实测)。
+        # 脏值只报非空且 strip 后 <10(schema 的 1-9 硬错误归 schema 校验段管,
         # 这里是给人看的可行动提示, created 任意日期都报)。
-        if "summary" not in e.fm:
+        s = str(e.fm.get("summary") or "").strip()
+        if not s:
             if str(e.fm.get("created", "")) >= SUMMARY_REQUIRED_SINCE:
                 errors.append(f"warning: {rid}: 缺 summary(建议一句结论: 条件+结论+动作, 10-300 字)")
-        else:
-            s = str(e.fm.get("summary") or "").strip()
-            if s and len(s) < 10:
-                errors.append(f"warning: {rid}: summary 仅 {len(s)} 字符, 难承载结论句(建议 10-300)")
+        elif len(s) < 10:
+            errors.append(f"warning: {rid}: summary 仅 {len(s)} 字符, 难承载结论句(建议 10-300)")
     # 指纹冲突检测: 规范化源短于 MIN_FP_LEN 不参检(防测试桩/占位段互撞),
     # 门槛常量唯一事实源在 kb.dedup
     fp_map: dict[str, list[str]] = {}

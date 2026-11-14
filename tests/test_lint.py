@@ -339,8 +339,10 @@ def test_lint_summary_missing_only_for_new_entries(tmp_repo):
     assert not [m for m in msgs if not m.startswith("warning: ")]   # 只加 warning 不进硬闸门
 
 
-def test_lint_summary_present_and_empty_exempt(tmp_repo):
-    """有 summary 不告警; 空串=缺失豁免(与 schema/Entry.summary 同一语义)。"""
+def test_lint_summary_empty_value_counts_as_missing(tmp_repo):
+    """空串 = 缺失(与 schema/Entry.summary/query.stat 同一口径): 新条目照模板留着
+    `summary: ""` 也要告警——否则守护线被模板占位永久屏蔽(2026-11-14 终审 F1)。
+    存量(created 早于守护线)仍豁免。"""
     d = tmp_repo / "kb" / "pitfall" / "frontend"
     d.mkdir(parents=True)
     (d / "p.md").write_text(make_entry(id="kb-20261120-aa03", created="2026-11-20",
@@ -350,8 +352,12 @@ def test_lint_summary_present_and_empty_exempt(tmp_repo):
     (d / "e.md").write_text(make_entry(id="kb-20261120-aa04", created="2026-11-20",
                                        updated="2026-11-20", summary='""'), encoding="utf-8")
                                        # '""' 是 YAML 空串字面量; 裸 "" 会产出 `summary: ` → None
+    (d / "o.md").write_text(make_entry(id="kb-20261012-aa06", created="2026-10-12",
+                                       updated="2026-11-20", summary='""'), encoding="utf-8")
     warns = [m for m in lint_repo(tmp_repo, scope="project") if m.startswith("warning: ")]
-    assert not any("kb-20261120-aa03" in m or "kb-20261120-aa04" in m for m in warns)
+    assert not any("kb-20261120-aa03" in m for m in warns)          # 合规值不打扰
+    assert any("kb-20261120-aa04" in m and "缺 summary" in m for m in warns)
+    assert not any("kb-20261012-aa06" in m for m in warns)          # 存量仍豁免
 
 
 def test_lint_summary_dirty_short_value(tmp_repo):

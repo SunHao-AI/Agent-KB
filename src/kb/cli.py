@@ -63,6 +63,9 @@ def _dispatch(argv: list[str] | None = None) -> int:
     # pitfall/rca 需要 severity(模板默认 medium); 对齐 MCP kb_create, 显式覆盖用本参数
     p_new.add_argument("--severity", default=None,
                        choices=["low", "medium", "high", "critical"])
+    # L2 摘要质量(spec 2026-11-14 §5.1): 显式结论句优先于正文派生兜底,
+    # 检索面的 summary 权重依赖这里能传进来
+    p_new.add_argument("--summary", default=None)
 
     p_lint = sub.add_parser("lint", parents=[common])
     # choices 严格校验, 拼错立即 exit 2 而非静默关闭落位检查
@@ -234,11 +237,12 @@ def _dispatch(argv: list[str] | None = None) -> int:
                 print("note: generated entries are always scope=project", file=sys.stderr)
             body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else None
             e = create_draft(repo, type=args.type, domain=args.domain, title=args.title,
-                             body=body, severity=args.severity,
+                             body=body, severity=args.severity, summary=args.summary,
                              agent_kbs=tuple(Path(p) for p in args.agent_kb))
         else:
             e = create_entry(repo, type=args.type, domain=args.domain, scope=args.scope,
-                             title=args.title, generated=False, today=dt.date.today())
+                             title=args.title, generated=False, today=dt.date.today(),
+                             summary=args.summary)
             if args.severity:
                 cur = parse_entry(e.path)
                 cur.fm["severity"] = args.severity

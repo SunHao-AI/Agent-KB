@@ -143,12 +143,14 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
 
     @mcp.tool()
     def kb_create(type: str, domain: str, title: str, body: str,
-                  tags: list[str] | None = None, severity: str | None = None) -> str:
+                  tags: list[str] | None = None, severity: str | None = None,
+                  summary: str | None = None) -> str:
         """沉淀新知识。强制 status=draft / confidence=speculative / scope=project。
-        查重命中会失败并返回候选 id, 此时应改用 kb_update。单次仅允许 1 条。"""
+        查重命中会失败并返回候选 id, 此时应改用 kb_update。单次仅允许 1 条。
+        summary 传一句话结论句, 缺省时退回正文派生(检索面质量更低)。"""
         try:
             e = create_draft(repo, type=type, domain=domain, title=title,
-                             body=body, tags=tags, severity=severity,
+                             body=body, tags=tags, severity=severity, summary=summary,
                              agent_kbs=tuple(kbs))
         except DuplicateCandidate as exc:
             raise ValueError("duplicate candidates: "
@@ -159,15 +161,18 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
 
     @mcp.tool()
     def kb_update(id: str, title: str | None = None, body: str | None = None,
-                  tags: list[str] | None = None, severity: str | None = None) -> str:
+                  tags: list[str] | None = None, severity: str | None = None,
+                  summary: str | None = None) -> str:
         """更新**本项目条目**正文/元数据。
 
         draft/proposed 直接改; accepted 改完自动降级 proposed 并清掉终审留痕
         (结论已被改动, 必须重审), 审计痕迹写进 revision;
         deprecated/superseded 终态拒绝编辑。scope 与 status 本身不在此入口,
-        状态流转走 kb_review, scope 上提只能人工 CLI。"""
+        状态流转走 kb_review, scope 上提只能人工 CLI。
+        summary 传一句话结论句, 缺省时退回正文派生(检索面质量更低)。"""
         try:
-            e = update_entry(repo, id, title=title, body=body, tags=tags, severity=severity)
+            e = update_entry(repo, id, title=title, body=body, tags=tags, severity=severity,
+                             summary=summary)
         except FileNotFoundError:
             raise ValueError(f"not found in project layer: {id}") from None
         return _json({**e.fm, "path": str(e.path)})

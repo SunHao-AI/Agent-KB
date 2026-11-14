@@ -104,6 +104,11 @@ def _records(repo_root: Path, repo_name: str):
             "sections": e.sections_text(),
             "dedup_key": fingerprint(e),
             "related": fm.get("related", []),
+            # 联邦 L2 记录契约(spec 2026-11-14 §1): origin/uri 是本文件唯一的记录
+            # 生产者注入点——外部源(feishu/notion/wiki/tencentdb…)只需产出同形状
+            # JSONL 行; 外部 id 用 `source://<connector>/<原生id>`(对齐 stats.source_of
+            # 既有命名空间), 归一 origin=`ext:<connector>`。本地恒 local/null。
+            "origin": "local", "uri": None,
             "updated": fm.get("updated", ""), "repo": repo_name,
         }
         (draft if fm.get("status") == "draft" else live).append(rec)

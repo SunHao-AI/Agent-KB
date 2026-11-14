@@ -104,3 +104,24 @@ def test_resolve_repo_name_falls_back_only_without_index(tmp_repo):
     assert resolve_repo_name(tmp_repo) == tmp_repo.name.lower()
     (tmp_repo / "kb" / "index.jsonl").write_text("", encoding="utf-8")
     assert resolve_repo_name(tmp_repo) == tmp_repo.name.lower()
+
+
+def test_records_carry_federation_fields(tmp_repo):
+    """联邦 L2 记录契约(spec 2026-11-14 §1): 本地记录恒 origin=local, uri=null。"""
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261114-aaaa", status="accepted"),
+                            encoding="utf-8")
+    (d / "w.md").write_text(make_entry(id="kb-20261114-bbbb", status="draft"),
+                            encoding="utf-8")
+    build_indexes(tmp_repo, repo_name="demo")
+    for name in ("index.jsonl", "index.draft.jsonl"):
+        rows = [json.loads(ln) for ln in
+                (tmp_repo / "kb" / name).read_text(encoding="utf-8").splitlines()]
+        assert rows and all(r["origin"] == "local" and r["uri"] is None for r in rows)
+    # 检索面透传零破坏: search 行含新字段仍命中(联邦适配器只需产出同形状行)
+    # (brief 原文 query="Vite" 在本 fixture 下零命中——make_entry 默认 title=demo,
+    # 正文无 Vite; 查询词改为命中 fixture 实际内容, 断言意图不变)
+    from kb.search import search
+    hits = search(tmp_repo, query="demo", limit=5)
+    assert hits and hits[0]["origin"] == "local"

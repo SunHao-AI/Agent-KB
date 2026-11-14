@@ -1,0 +1,378 @@
+{
+  "schema": 1,
+  "week": "2026-W46",
+  "since": "2026-11-09",
+  "until": "2026-11-15",
+  "generated_at": "2026-11-13T11:48:19+08:00",
+  "metrics": {
+    "window": {
+      "since": "2026-11-09",
+      "until": "2026-11-15"
+    },
+    "searches": 242,
+    "not_executed_count": 0,
+    "hit_rate": 0.3512,
+    "returned_total": 250,
+    "consumed_total": 1,
+    "consume_rate": 0.004,
+    "consume_tracked_from": "2026-11-13",
+    "consume_tracked": false,
+    "pre_tracking_searches": 236,
+    "get_events": 1,
+    "saved_chars_est": 943,
+    "saved_unknown_count": 0,
+    "overhead_chars": 442257,
+    "by_caller": {
+      "agent-kb": {
+        "searches": 48,
+        "hits": 5,
+        "last_ts": "2026-11-13T11:13:00+08:00"
+      },
+      "flysee_video_web": {
+        "searches": 2,
+        "hits": 0,
+        "last_ts": "2026-11-13T02:05:13+08:00"
+      },
+      "flysee-video-setting": {
+        "searches": 188,
+        "hits": 80,
+        "last_ts": "2026-11-13T02:04:59+08:00"
+      },
+      "flysee_video_algorithm": {
+        "searches": 4,
+        "hits": 0,
+        "last_ts": "2026-11-12T18:35:49+08:00"
+      }
+    },
+    "by_day": [
+      {
+        "day": "2026-11-09",
+        "searches": 95,
+        "hits": 30
+      },
+      {
+        "day": "2026-11-10",
+        "searches": 68,
+        "hits": 23
+      },
+      {
+        "day": "2026-11-11",
+        "searches": 52,
+        "hits": 30
+      },
+      {
+        "day": "2026-11-12",
+        "searches": 21,
+        "hits": 1
+      },
+      {
+        "day": "2026-11-13",
+        "searches": 6,
+        "hits": 1
+      }
+    ],
+    "cold_start": true
+  },
+  "latency": {
+    "n": 242,
+    "p50_ms": 31,
+    "p95_ms": 200,
+    "avg_ms": 62,
+    "max_ms": 921
+  },
+  "zero_hit": {
+    "board": [
+      {
+        "query": "pyarmor",
+        "count": 3,
+        "caller": "flysee_video_algorithm",
+        "last_ts": "2026-11-12T18:35:49+08:00",
+        "digested": false
+      },
+      {
+        "query": "setting 启动 环境变量 uvicorn env 注入",
+        "count": 2,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T17:07:03+08:00",
+        "digested": false
+      },
+      {
+        "query": "启动代际 认领 startup_guard",
+        "count": 2,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-11T23:55:39+08:00",
+        "digested": false
+      },
+      {
+        "query": "sync 同步 -check 门禁",
+        "count": 2,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-10T15:42:26+08:00",
+        "digested": true
+      },
+      {
+        "query": "发布单",
+        "count": 2,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-10T13:37:04+08:00",
+        "digested": true
+      },
+      {
+        "query": "zzz-nonexistent-kb-topic-9931",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-13T11:13:00+08:00",
+        "digested": false
+      },
+      {
+        "query": "offline 离线升级 导入 staging upload tar 清除",
+        "count": 1,
+        "caller": "flysee_video_web",
+        "last_ts": "2026-11-13T02:05:13+08:00",
+        "digested": false
+      },
+      {
+        "query": "离线导入 offline staging 上传 tar 被清 _clear_staging",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-13T02:04:59+08:00",
+        "digested": false
+      },
+      {
+        "query": "ssh tunnel port forward teardown ownership",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-13T00:12:52+08:00",
+        "digested": false
+      },
+      {
+        "query": "升级包 造包 tar path 隧道 token",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-13T00:12:36+08:00",
+        "digested": false
+      },
+      {
+        "query": "pre-push 测试面 wip 不一致 stash 隔离",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T22:34:08+08:00",
+        "digested": false
+      },
+      {
+        "query": "pyarmor runtime nameerror bootstrap",
+        "count": 1,
+        "caller": "flysee_video_web",
+        "last_ts": "2026-11-12T19:10:31+08:00",
+        "digested": false
+      },
+      {
+        "query": "pyarmor 混淆 secure 交叉",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T18:36:07+08:00",
+        "digested": false
+      },
+      {
+        "query": "pyarmor 交叉混淆 linux.x86_64 runtime",
+        "count": 1,
+        "caller": "flysee_video_algorithm",
+        "last_ts": "2026-11-12T18:35:32+08:00",
+        "digested": false
+      },
+      {
+        "query": "activation code client credentials rate limit",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-12T17:15:16+08:00",
+        "digested": false
+      },
+      {
+        "query": "客户端创建 激活码 activation generate-credentials 限流",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T17:15:14+08:00",
+        "digested": false
+      },
+      {
+        "query": "pwd_initial 初始密码 env 注入",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T15:42:17+08:00",
+        "digested": false
+      },
+      {
+        "query": "authsettings env_file none .env 嵌套 os.environ pwd_initial",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T15:41:06+08:00",
+        "digested": false
+      },
+      {
+        "query": "pydantic-settings nested env_file dotenv load_dotenv",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-12T15:41:06+08:00",
+        "digested": false
+      },
+      {
+        "query": "auth init 渲染 seed docker init ddl 全新库 migrations",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T15:39:18+08:00",
+        "digested": false
+      },
+      {
+        "query": "pyarmor.cli.core.linux 版本 8.1 venv 交叉混淆",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-12T14:56:06+08:00",
+        "digested": false
+      },
+      {
+        "query": "a机 git branch 为空 dubious ownership safe.directory 基线",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T14:53:55+08:00",
+        "digested": false
+      },
+      {
+        "query": "pyarmor 注册 名额 兜底 加密",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T14:17:07+08:00",
+        "digested": false
+      },
+      {
+        "query": "端到端 串链 升级",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T08:47:18+08:00",
+        "digested": false
+      },
+      {
+        "query": "bom 双重编码 pwsh",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T08:47:18+08:00",
+        "digested": false
+      },
+      {
+        "query": "dev 工作区 集成测试 破坏",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-12T08:47:17+08:00",
+        "digested": false
+      },
+      {
+        "query": "真客户端 client_config 工作区",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-12T08:47:17+08:00",
+        "digested": false
+      },
+      {
+        "query": "startup_guard 跨进程锁 o_excl",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-11T23:55:40+08:00",
+        "digested": false
+      },
+      {
+        "query": "pre-push gate test face orphan branch",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-11T16:30:46+08:00",
+        "digested": false
+      },
+      {
+        "query": "pre-push 测试面一致性 产物分支 release 无法推送",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-11T16:30:45+08:00",
+        "digested": false
+      }
+    ],
+    "digested": 2,
+    "digest_rate": 0.0667
+  },
+  "callers": [
+    {
+      "caller": "flysee-video-setting",
+      "searches": 188,
+      "hit_rate": 0.4255,
+      "last_ts": "2026-11-13T02:04:59+08:00",
+      "stale": false,
+      "by_source": {
+        "project": 245
+      },
+      "ext": []
+    },
+    {
+      "caller": "agent-kb",
+      "searches": 48,
+      "hit_rate": 0.1042,
+      "last_ts": "2026-11-13T11:13:00+08:00",
+      "stale": false,
+      "by_source": {
+        "project": 5
+      },
+      "ext": []
+    },
+    {
+      "caller": "flysee_video_algorithm",
+      "searches": 4,
+      "hit_rate": 0.0,
+      "last_ts": "2026-11-12T18:35:49+08:00",
+      "stale": false,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "flysee_video_web",
+      "searches": 2,
+      "hit_rate": 0.0,
+      "last_ts": "2026-11-13T02:05:13+08:00",
+      "stale": false,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "docs",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-11-07T16:13:20+08:00",
+      "stale": false,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": ".agent-kb",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-11-01T17:07:50+08:00",
+      "stale": false,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "tencentdb-agent-memory",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-10-20T18:26:25+08:00",
+      "stale": true,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "kb-demo",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-10-15T16:34:42+08:00",
+      "stale": true,
+      "by_source": {},
+      "ext": []
+    }
+  ],
+  "warns": []
+}

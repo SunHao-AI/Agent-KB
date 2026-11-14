@@ -1,0 +1,381 @@
+{
+  "schema": 1,
+  "week": "2026-W44",
+  "since": "2026-10-26",
+  "until": "2026-11-01",
+  "generated_at": "2026-11-13T11:48:16+08:00",
+  "metrics": {
+    "window": {
+      "since": "2026-10-26",
+      "until": "2026-11-01"
+    },
+    "searches": 512,
+    "not_executed_count": 70,
+    "hit_rate": 0.4395,
+    "returned_total": 799,
+    "consumed_total": 0,
+    "consume_rate": 0.0,
+    "consume_tracked_from": "2026-11-13",
+    "consume_tracked": false,
+    "pre_tracking_searches": 512,
+    "get_events": 0,
+    "saved_chars_est": 0,
+    "saved_unknown_count": 0,
+    "overhead_chars": 1158924,
+    "by_caller": {
+      "docs": {
+        "searches": 218,
+        "hits": 85,
+        "last_ts": "2026-11-01T19:08:49+08:00"
+      },
+      ".agent-kb": {
+        "searches": 55,
+        "hits": 14,
+        "last_ts": "2026-11-01T17:07:50+08:00"
+      },
+      "agent-kb": {
+        "searches": 239,
+        "hits": 126,
+        "last_ts": "2026-11-01T16:18:44+08:00"
+      }
+    },
+    "by_day": [
+      {
+        "day": "2026-10-26",
+        "searches": 17,
+        "hits": 6
+      },
+      {
+        "day": "2026-10-27",
+        "searches": 15,
+        "hits": 1
+      },
+      {
+        "day": "2026-10-28",
+        "searches": 63,
+        "hits": 9
+      },
+      {
+        "day": "2026-10-29",
+        "searches": 95,
+        "hits": 38
+      },
+      {
+        "day": "2026-10-30",
+        "searches": 49,
+        "hits": 20
+      },
+      {
+        "day": "2026-11-01",
+        "searches": 273,
+        "hits": 151
+      }
+    ],
+    "cold_start": true
+  },
+  "latency": {
+    "n": 582,
+    "p50_ms": 19,
+    "p95_ms": 109,
+    "avg_ms": 34,
+    "max_ms": 815
+  },
+  "zero_hit": {
+    "board": [
+      {
+        "query": "连接池 耗尽",
+        "count": 7,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:18:35+08:00",
+        "digested": false
+      },
+      {
+        "query": "数据库连接不够用 并发一高接口就大量报错",
+        "count": 4,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:06:28+08:00",
+        "digested": false
+      },
+      {
+        "query": "中间件 顺序 屏蔽",
+        "count": 3,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:09:16+08:00",
+        "digested": false
+      },
+      {
+        "query": "queuepool limit of size 5 overflow 10 reached",
+        "count": 3,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:06:38+08:00",
+        "digested": false
+      },
+      {
+        "query": "pre-push 门禁 repo 名同源",
+        "count": 3,
+        "caller": "docs",
+        "last_ts": "2026-10-29T18:40:47+08:00",
+        "digested": false
+      },
+      {
+        "query": "submodule 索引",
+        "count": 2,
+        "caller": ".agent-kb",
+        "last_ts": "2026-11-01T17:07:50+08:00",
+        "digested": false
+      },
+      {
+        "query": "连接池 超时 并发 接口",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:18:34+08:00",
+        "digested": false
+      },
+      {
+        "query": "cannot open shared object file",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:10:20+08:00",
+        "digested": false
+      },
+      {
+        "query": "钩子 拦截 提交",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:08:20+08:00",
+        "digested": false
+      },
+      {
+        "query": "浏览器控制台报 cors 没有允许来源",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:07:26+08:00",
+        "digested": false
+      },
+      {
+        "query": "跨域请求报错 后端明明返回了错误码 前端却只看到网络错误",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:07:24+08:00",
+        "digested": false
+      },
+      {
+        "query": "uvicorn reload 之后后端假死 所有接口都不响应",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:07:13+08:00",
+        "digested": false
+      },
+      {
+        "query": "后端服务卡死无法退出 一直等待连接关闭",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:07:12+08:00",
+        "digested": false
+      },
+      {
+        "query": "pre-commit 钩子 中文乱码",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:07:03+08:00",
+        "digested": false
+      },
+      {
+        "query": "git 提交老是被拦下来 怎么跳过检查",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:07:01+08:00",
+        "digested": false
+      },
+      {
+        "query": "powershell 脚本里中文注释导致脚本跑不起来",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:07:00+08:00",
+        "digested": false
+      },
+      {
+        "query": "excel 打开导出的表格 汉字全变成乱码问号",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:06:51+08:00",
+        "digested": false
+      },
+      {
+        "query": "页面一片空白 刷新一下又好了",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:06:43+08:00",
+        "digested": false
+      },
+      {
+        "query": "接口特别慢 并发上不去",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-01T16:05:04+08:00",
+        "digested": false
+      },
+      {
+        "query": "pre-push 门禁",
+        "count": 2,
+        "caller": "docs",
+        "last_ts": "2026-10-29T18:37:58+08:00",
+        "digested": false
+      },
+      {
+        "query": "index --check repo-name stale",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-10-29T18:37:44+08:00",
+        "digested": false
+      },
+      {
+        "query": "zone resolver",
+        "count": 2,
+        "caller": "docs",
+        "last_ts": "2026-10-29T14:59:14+08:00",
+        "digested": false
+      },
+      {
+        "query": "nginx upstream 502",
+        "count": 2,
+        "caller": "docs",
+        "last_ts": "2026-10-29T14:59:14+08:00",
+        "digested": false
+      },
+      {
+        "query": "一票否决",
+        "count": 1,
+        "caller": "docs",
+        "last_ts": "2026-11-01T17:12:34+08:00",
+        "digested": false
+      },
+      {
+        "query": "gitlink",
+        "count": 1,
+        "caller": "docs",
+        "last_ts": "2026-11-01T17:08:01+08:00",
+        "digested": false
+      },
+      {
+        "query": "索引",
+        "count": 1,
+        "caller": "docs",
+        "last_ts": "2026-11-01T17:07:58+08:00",
+        "digested": false
+      },
+      {
+        "query": "索引 漂移 门禁",
+        "count": 1,
+        "caller": ".agent-kb",
+        "last_ts": "2026-11-01T17:07:49+08:00",
+        "digested": false
+      },
+      {
+        "query": "repo_name 推导",
+        "count": 1,
+        "caller": "docs",
+        "last_ts": "2026-11-01T17:07:47+08:00",
+        "digested": false
+      },
+      {
+        "query": "repo_name 目录名",
+        "count": 1,
+        "caller": ".agent-kb",
+        "last_ts": "2026-11-01T17:07:47+08:00",
+        "digested": false
+      },
+      {
+        "query": "通用层 索引 漂移",
+        "count": 1,
+        "caller": "docs",
+        "last_ts": "2026-11-01T17:07:46+08:00",
+        "digested": false
+      }
+    ],
+    "digested": 0,
+    "digest_rate": 0.0
+  },
+  "callers": [
+    {
+      "caller": "agent-kb",
+      "searches": 239,
+      "hit_rate": 0.5272,
+      "last_ts": "2026-11-13T11:13:00+08:00",
+      "stale": false,
+      "by_source": {
+        "project": 610
+      },
+      "ext": []
+    },
+    {
+      "caller": "docs",
+      "searches": 218,
+      "hit_rate": 0.3899,
+      "last_ts": "2026-11-07T16:13:20+08:00",
+      "stale": false,
+      "by_source": {
+        "project": 156,
+        "stack": 5
+      },
+      "ext": []
+    },
+    {
+      "caller": ".agent-kb",
+      "searches": 55,
+      "hit_rate": 0.2545,
+      "last_ts": "2026-11-01T17:07:50+08:00",
+      "stale": false,
+      "by_source": {
+        "project": 28
+      },
+      "ext": []
+    },
+    {
+      "caller": "flysee_video_web",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-11-13T02:05:13+08:00",
+      "stale": false,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "flysee-video-setting",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-11-13T02:04:59+08:00",
+      "stale": false,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "flysee_video_algorithm",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-11-12T18:35:49+08:00",
+      "stale": false,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "tencentdb-agent-memory",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-10-20T18:26:25+08:00",
+      "stale": true,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "kb-demo",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-10-15T16:34:42+08:00",
+      "stale": true,
+      "by_source": {},
+      "ext": []
+    }
+  ],
+  "warns": []
+}

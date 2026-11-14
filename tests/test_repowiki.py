@@ -147,6 +147,11 @@ def test_load_module_tree_schema_guard(tmp_path):
         repowiki.load_module_tree(tmp_path / ".qoder" / "repowiki", "zh")
 
 
+def test_module_yaml_update_rejects_non_mapping_existing(tmp_path):
+    with pytest.raises(ValueError, match="非 mapping"):
+        repowiki._module_yaml_update(tmp_path / "m", "root", "根", ["not", "a", "dict"])
+
+
 def test_module_dir_walks_dir_names(tmp_path):
     zh = _tree(tmp_path)
     modules, locale_dir = repowiki.load_module_tree(
@@ -235,6 +240,9 @@ def test_export_write_renders_managed_cards(tmp_path):
     assert "**条目kb-20261114-c001**" in card and "kb-20261114-c001" in card
     how = (ddir / "特殊配置与命令.md").read_text(encoding="utf-8")
     assert "操作指引 (howto)" in how and "kb-20261114-c002" in how
+    # type→卡路由互斥: 架构设计卡不含 howto 节, 特殊配置与命令卡不含 pitfall 节
+    assert "操作指引" not in card
+    assert "已知陷阱" not in how
     # 原生卡不被触碰
     assert (rdir / "概述.md").read_text(encoding="utf-8") == "原生概述内容。\n"
 

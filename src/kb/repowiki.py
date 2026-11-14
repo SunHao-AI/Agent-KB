@@ -136,12 +136,16 @@ def group_entries(repo_root: Path) -> tuple[dict[str, list], list[str]]:
     return by_module, unassigned
 
 
-def render_card(entries: list, type_card: dict[str, str]) -> str:
-    """managed 卡正文: TOOL_MARKER 指纹 + 按 type 分节的条目投影(标题+summary+id)。"""
+def render_card(entries: list, type_card: dict[str, str], card: str) -> str:
+    """managed 卡正文: TOOL_MARKER 指纹 + 按 type 分节的条目投影(标题+summary+id)。
+
+    只收 type_card 路由到本卡(card)的条目; 路由不到的 type 不进本卡。
+    """
     by_type: dict[str, list] = {}
     for e in entries:
-        if type_card.get(e.fm.get("type", "")):
-            by_type.setdefault(e.fm["type"], []).append(e)
+        t = e.fm.get("type", "")
+        if type_card.get(t) == card:
+            by_type.setdefault(t, []).append(e)
     if not by_type:
         return TOOL_MARKER + "\n\n（本模块暂无相关沉淀）\n"
     order = list(type_card)
@@ -177,6 +181,9 @@ def _load_modules_yaml(path: Path) -> dict:
 def _module_yaml_update(mdir: Path, module_path: str, title: str,
                         existing: dict | None) -> str:
     """overlay 保留原生 kk_cards/kk_module_id; managed 卡换确定性 UUID。"""
+    if existing is not None and not isinstance(existing, dict):
+        raise ValueError(
+            f"{mdir}/_module.yaml: 根非 mapping(YAML 合法但结构不符), 拒绝覆写")
     data = dict(existing or {})
     data.setdefault("schema_version", SCHEMA_VERSION)
     data["module_path"] = module_path
@@ -250,7 +257,7 @@ def export_repowiki(repo: Path, *, lang: str = "zh",
         plan.append((my_path,
                      _module_yaml_update(mdir, module_path, title, existing_my)))
         for card in MANAGED_CARDS:
-            content = render_card(entries, tc)
+            content = render_card(entries, tc, card)
             f = mdir / CARD_FILES[card]
             if f.exists() and TOOL_MARKER not in f.read_text(encoding="utf-8"):
                 warnings.append(
@@ -273,6 +280,4 @@ def export_repowiki(repo: Path, *, lang: str = "zh",
     report = {"mode": mode, "out": str(root),
               ("written" if write else "planned"): rel,
               "unassigned": sorted(unassigned), "warnings": warnings}
-    if not write and warnings:
-        report["warnings"] = warnings
     return report

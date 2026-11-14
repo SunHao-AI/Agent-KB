@@ -125,6 +125,13 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
         repowiki 卡 id 形如 repowiki://<lang>/<module_path>/<card>)。"""
         if id.startswith(REPOWIKI_ID_PREFIX):
             text = get_card_by_id(repo, id)
+            # 与 CLI show 同口径: 卡读取是 L3 消费, 不入账则 meta_only 失真。
+            if kbtrace.trace_enabled():
+                kbtrace.append_event(kbtrace.build_get_event(
+                    trace_id=kbtrace.latest_search_id(name, entry_id=id),
+                    source="mcp", caller_repo=name,
+                    id=id, layer="repowiki", ok=text is not None,
+                    chars=len(text) if text is not None else None))
             if text is None:
                 raise ValueError(f"not found: {id}")
             return text

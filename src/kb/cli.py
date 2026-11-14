@@ -403,6 +403,15 @@ def _dispatch(argv: list[str] | None = None) -> int:
     if args.cmd == "show":
         if args.id.startswith(REPOWIKI_ID_PREFIX):
             text = get_card_by_id(repo, args.id)
+            # 卡读取同样是 L3 消费: 早返回若不入账, 面板 meta_only 会把"已读全文"
+            # 的检索算成"只看元数据", 与 repowiki:// 消费口径不符。stdout 逐字节不变。
+            if kbtrace.trace_enabled():
+                caller = resolve_repo_name(repo).lower()
+                kbtrace.append_event(kbtrace.build_get_event(
+                    trace_id=kbtrace.latest_search_id(caller, entry_id=args.id),
+                    source="cli", caller_repo=caller, id=args.id,
+                    layer="repowiki", ok=text is not None,
+                    chars=len(text) if text is not None else None))
             if text is None:
                 print(f"not found: {args.id}", file=sys.stderr)
                 return 1

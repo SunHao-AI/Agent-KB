@@ -105,12 +105,26 @@ def load_module_tree(repowiki_root: Path, lang: str) -> tuple[dict, Path] | None
     return modules, locale_dir
 
 
+def _module_child(locale_dir: Path, out: Path, name: str) -> Path:
+    """拼一级 dir_name 并守住知识树边界。
+
+    dir_name 来自 YAML(可被外部导入的 _index.yaml 携带), `../../evil` 或绝对路径
+    会把产物写到树外; 报告的 relative_to(root) 要到写盘之后才炸, 那时文件已落地,
+    故在拼接处拦——任何写都不发生。
+    """
+    cand = Path(os.path.normpath(os.path.join(str(out), str(name))))
+    base = os.path.normpath(str(locale_dir))
+    if not str(cand).startswith(base + os.sep):
+        raise ValueError(f"dir_name 越出知识树: {name!r}")
+    return cand
+
+
 def module_dir(locale_dir: Path, modules: dict, module_path: str) -> Path:
     """module_path('root' 或 'a/b') → 磁盘目录; 逐级取 dir_name, 未知段报错。"""
     root_meta = modules.get("root")
     if root_meta is None or "dir_name" not in root_meta:
         raise ValueError("模块树缺 root.dir_name")
-    out = Path(locale_dir) / root_meta["dir_name"]
+    out = _module_child(locale_dir, Path(locale_dir), root_meta["dir_name"])
     if module_path == "root":
         return out
     prefix = ""
@@ -119,7 +133,7 @@ def module_dir(locale_dir: Path, modules: dict, module_path: str) -> Path:
         meta = modules.get(prefix)
         if meta is None or "dir_name" not in meta:
             raise ValueError(f"模块树缺 {prefix}.dir_name")
-        out = out / meta["dir_name"]
+        out = _module_child(locale_dir, out, meta["dir_name"])
     return out
 
 
@@ -241,6 +255,10 @@ def export_repowiki(repo: Path, *, lang: str = "zh",
                     "modules": modules_map}
 
     by_module, unassigned = group_entries(repo)
+    # 条目 module 指向树里没有的模块 = 静默丢数据: 既不进任何卡, 也不属 unassigned
+    # (那只管完全没写 module 的条目)。必须显式报出来, 否则导出"成功"而条目凭空消失。
+    orphan_modules = {m: sorted(e.fm["id"] for e in by_module[m])
+                      for m in set(by_module) - set(modules_map)}
     commit, branch = git_head(project_root_of(repo))
     idx_data["commit"] = commit
     idx_data["branch"] = branch
@@ -249,6 +267,10 @@ def export_repowiki(repo: Path, *, lang: str = "zh",
 
     plan: list[tuple[Path, str]] = []
     warnings: list[str] = []
+    for m in sorted(orphan_modules):
+        warnings.append(
+            f"模块 {m} 不在模块树中, 其 {len(orphan_modules[m])} 条条目未导出: "
+            f"{', '.join(orphan_modules[m])}(修正条目 module 或补 _index.yaml 模块)")
     for module_path in sorted(modules_map):
         meta = modules_map[module_path]
         title = meta.get("title", module_path)
@@ -257,7 +279,13 @@ def export_repowiki(repo: Path, *, lang: str = "zh",
         existing_my: dict | None = None
         my_path = mdir / "_module.yaml"
         if my_path.exists():
-            existing_my = yaml.safe_load(my_path.read_text(encoding="utf-8")) or {}
+            try:
+                loaded_my = yaml.safe_load(my_path.read_text(encoding="utf-8"))
+            except yaml.YAMLError as e:
+                raise ValueError(f"{my_path}: YAML 解析失败: {e}") from e
+            if loaded_my is not None and not isinstance(loaded_my, dict):
+                raise ValueError(f"{my_path}: 根非 mapping(YAML 合法但结构不符)")
+            existing_my = loaded_my or {}
         plan.append((my_path,
                      _module_yaml_update(mdir, module_path, title, existing_my)))
         for card in MANAGED_CARDS:
@@ -283,7 +311,8 @@ def export_repowiki(repo: Path, *, lang: str = "zh",
     rel = sorted(str(p.relative_to(root)) for p, _ in plan)
     report = {"mode": mode, "out": str(root),
               ("written" if write else "planned"): rel,
-              "unassigned": sorted(unassigned), "warnings": warnings}
+              "unassigned": sorted(unassigned),
+              "orphan_modules": orphan_modules, "warnings": warnings}
     return report
 
 

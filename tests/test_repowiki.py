@@ -1,12 +1,22 @@
 # tests/test_repowiki.py
+import json
+import os
 import uuid
 from pathlib import Path
 
 import pytest
 import yaml
+from mcp.shared.memory import create_connected_server_and_client_session
 
 from kb import repowiki
+from kb import trace as kbtrace
+from kb.cli import _dispatch, main
+from kb.index import build_indexes
+from kb.layers import search_layers_report
 from kb.lint import lint_repo
+from kb.mcp_server import build_server
+from kb.repowiki import (build_sidecar, export_repowiki, get_card_by_id,
+                         make_repowiki_layer, search_sidecar)
 
 
 def test_card_files_covers_five_cards():
@@ -182,9 +192,6 @@ def test_load_module_tree_bad_yaml_raises_value_error(tmp_path):
         repowiki.load_module_tree(tmp_path / ".qoder" / "repowiki", "zh")
 
 
-from kb.repowiki import export_repowiki
-
-
 def _mod_yaml(path: Path, module_path: str, title: str, kk_module_id: str) -> None:
     (path / "_module.yaml").write_text(yaml.safe_dump(
         {"schema_version": 1, "module_path": module_path, "title": title,
@@ -333,10 +340,6 @@ def test_export_schema_drift_is_fatal(tmp_path):
         export_repowiki(docs, out=tmp_path / ".qoder" / "repowiki")
 
 
-import json
-from kb.cli import _dispatch
-
-
 def test_cli_repowiki_export_dry_run(tmp_path, capsys):
     _full_tree(tmp_path)
     docs = _docs_with_entries(tmp_path)
@@ -357,10 +360,6 @@ def test_cli_repowiki_export_write_and_conflict_exit(tmp_path, capsys):
     assert _dispatch(["repowiki", "export", "--repo", str(docs),
                       "--write"]) == 1
     capsys.readouterr()
-
-
-import os
-from kb.repowiki import build_sidecar
 
 
 def test_build_sidecar_indexes_all_card_files(tmp_path, capsys):
@@ -466,11 +465,6 @@ def test_build_sidecar_non_dict_module_meta_skips_module(tmp_path, capsys):
     assert "warning" in capsys.readouterr().err
 
 
-from kb.layers import search_layers_report
-from kb.repowiki import make_repowiki_layer, search_sidecar
-from kb.index import build_indexes
-
-
 def _layer_setup(tmp_path):
     """项目层命中 + repowiki 层命中 + agent-kb 层命中, 验证优先级与截断。"""
     root, zh, rdir, ddir = _full_tree(tmp_path)
@@ -570,9 +564,6 @@ def test_search_sidecar_missing_key_record_degrades(tmp_path, capsys):
     assert "warning" in capsys.readouterr().err
 
 
-from kb.repowiki import get_card_by_id
-
-
 def test_get_card_by_id_roundtrip(tmp_path):
     root, zh, rdir, ddir = _full_tree(tmp_path)
     docs = _docs_with_entries(tmp_path)
@@ -610,18 +601,12 @@ def test_cli_show_repowiki_not_found(tmp_path, capsys):
     capsys.readouterr()
 
 
-from mcp.shared.memory import create_connected_server_and_client_session
-
-from kb.mcp_server import build_server
-
-
 async def _mcp_call(server, name, args):
     async with create_connected_server_and_client_session(server) as client:
         res = await client.call_tool(name, args)
         text = res.content[0].text
         return res.isError, (json.loads(text) if text.startswith(("{", "["))
                              else text)
-
 
 
 @pytest.mark.asyncio
@@ -633,7 +618,6 @@ async def test_mcp_search_three_layers(tmp_path):
     assert err is False
     assert out[0]["kind"] == "repowiki_card"
     assert out[0]["id"] == "repowiki://zh/root/overview"
-
 
 
 @pytest.mark.asyncio
@@ -648,7 +632,6 @@ async def test_mcp_get_repowiki_card(tmp_path):
     assert "kb-20261114-c001" in out
 
 
-
 @pytest.mark.asyncio
 async def test_mcp_get_repowiki_not_found(tmp_path):
     _full_tree(tmp_path)
@@ -658,7 +641,6 @@ async def test_mcp_get_repowiki_not_found(tmp_path):
         srv, "kb_get", {"id": "repowiki://zh/no_such_module/overview"})
     assert err is True
     assert "not found: repowiki://zh/no_such_module/overview" in out
-
 
 
 @pytest.mark.asyncio
@@ -684,3 +666,177 @@ def test_cli_show_repowiki_bad_module(tmp_path, capsys):
     assert "not found: repowiki://zh/no_such_module/overview" in err
     assert "模块树缺" not in err and "dir_name" not in err
     assert "ValueError" not in err
+
+
+def _trace_events(root: Path) -> list[dict]:
+    out = []
+    for f in sorted((root / "traces").glob("*.jsonl")):
+        for ln in f.read_text(encoding="utf-8").splitlines():
+            e = json.loads(ln)
+            if e.get("kind") != "meta":
+                out.append(e)
+    return out
+
+
+def _trace_env(tmp_path, monkeypatch):
+    """埋点落盘指向 tmp 内的假 kb_root(pytest 沙箱外一律拒写), 隔离真实 traces/。"""
+    root = tmp_path / "agent-kb"
+    root.mkdir()
+    monkeypatch.setattr(kbtrace, "kb_root", lambda: root)
+    monkeypatch.setenv("KB_TRACE", "1")
+    return root
+
+
+def test_cli_show_repowiki_records_get_event(tmp_path, monkeypatch, capsys):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    export_repowiki(docs, write=True)
+    trace_root = _trace_env(tmp_path, monkeypatch)
+    rc = _dispatch(["show", "--repo", str(docs), "repowiki://zh/root/overview"])
+    out = capsys.readouterr().out
+    assert rc == 0 and out == "原生概述内容。\n"   # stdout 逐字节不变
+    ev = _trace_events(trace_root)[0]
+    assert ev["kind"] == "get" and ev["source"] == "cli"
+    assert ev["level"] == 3 and ev["layer"] == "repowiki"
+    assert ev["ok"] is True
+    assert ev["id"] == "repowiki://zh/root/overview"
+    assert ev["chars"] == len("原生概述内容。\n")
+
+
+def test_cli_show_repowiki_missing_records_failed_get(tmp_path, monkeypatch, capsys):
+    _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    trace_root = _trace_env(tmp_path, monkeypatch)
+    assert _dispatch(["show", "--repo", str(docs),
+                      "repowiki://zh/no_such_module/overview"]) == 1
+    capsys.readouterr()
+    ev = _trace_events(trace_root)[0]
+    assert ev["kind"] == "get" and ev["ok"] is False
+    assert ev["layer"] == "repowiki" and "chars" not in ev
+
+
+def test_cli_show_repowiki_trace_off_writes_nothing(tmp_path, monkeypatch, capsys):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    export_repowiki(docs, write=True)
+    trace_root = _trace_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("KB_TRACE")
+    assert _dispatch(["show", "--repo", str(docs),
+                      "repowiki://zh/root/overview"]) == 0
+    capsys.readouterr()
+    assert not (trace_root / "traces").exists()
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_repowiki_records_get_event(tmp_path, monkeypatch):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    export_repowiki(docs, write=True)
+    trace_root = _trace_env(tmp_path, monkeypatch)
+    srv = build_server(docs, repo_name="demo")
+    err, out = await _mcp_call(
+        srv, "kb_get", {"id": "repowiki://zh/root/overview"})
+    assert err is False
+    ev = _trace_events(trace_root)[0]
+    assert ev["kind"] == "get" and ev["source"] == "mcp"
+    assert ev["caller_repo"] == "demo" and ev["layer"] == "repowiki"
+    assert ev["ok"] is True and ev["chars"] == len(out)
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_repowiki_missing_records_failed_get(tmp_path, monkeypatch):
+    _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    trace_root = _trace_env(tmp_path, monkeypatch)
+    srv = build_server(docs, repo_name="demo")
+    err, out = await _mcp_call(srv, "kb_get",
+                               {"id": "repowiki://zh/no_such_module/overview"})
+    assert err is True
+    ev = _trace_events(trace_root)[0]
+    assert ev["kind"] == "get" and ev["ok"] is False and "chars" not in ev
+
+
+def test_export_orphan_module_is_reported(tmp_path):
+    """module 指向树里没有的模块: 既不进卡也不属 unassigned, 必须显式报出。"""
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    _entry(docs, eid="kb-20261114-c009", module="ghost_mod")
+    report = export_repowiki(docs)
+    assert report["orphan_modules"] == {"ghost_mod": ["kb-20261114-c009"]}
+    assert any("ghost_mod" in w and "kb-20261114-c009" in w
+               for w in report["warnings"])
+    assert set(report["unassigned"]) == {"kb-20261114-c003"}
+
+
+def test_export_without_orphan_reports_empty(tmp_path):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    report = export_repowiki(docs)
+    assert report["orphan_modules"] == {}
+    assert report["warnings"] == []
+
+
+def test_export_rejects_corrupt_module_yaml(tmp_path):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    ddir.joinpath("_module.yaml").write_text("kk_cards: [unclosed\n",
+                                             encoding="utf-8")
+    with pytest.raises(ValueError, match="_module.yaml"):
+        export_repowiki(docs)
+
+
+def test_export_rejects_non_mapping_module_yaml(tmp_path):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    ddir.joinpath("_module.yaml").write_text("- not\n- a\n- mapping\n",
+                                             encoding="utf-8")
+    with pytest.raises(ValueError, match="非 mapping"):
+        export_repowiki(docs)
+
+
+def test_export_accepts_empty_module_yaml(tmp_path):
+    """空文件(safe_load → None)仍是合法缺省: 按新建处理, 不当结构不符。"""
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    ddir.joinpath("_module.yaml").write_text("", encoding="utf-8")
+    export_repowiki(docs, write=True)
+    assert yaml.safe_load((ddir / "_module.yaml").read_text(encoding="utf-8"))
+
+
+def test_cli_export_corrupt_module_yaml_exits_1(tmp_path, capsys):
+    """坏 YAML 须经 ValueError 落到 kb error, 而非把 yaml.YAMLError 抛成 traceback。"""
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    ddir.joinpath("_module.yaml").write_text("kk_cards: [unclosed\n",
+                                             encoding="utf-8")
+    assert main(["repowiki", "export", "--repo", str(docs), "--write"]) == 1
+    err = capsys.readouterr().err
+    assert "kb error:" in err and "Traceback" not in err
+
+
+def test_module_dir_rejects_dir_name_escaping_tree(tmp_path):
+    zh = _tree(tmp_path)
+    modules, locale_dir = repowiki.load_module_tree(
+        tmp_path / ".qoder" / "repowiki", "zh")
+    modules["root"]["dir_name"] = "../../evil"
+    with pytest.raises(ValueError, match="越出知识树"):
+        repowiki.module_dir(locale_dir, modules, "root")
+    modules["root"]["dir_name"] = "演示仓 demo"
+    modules["docker_infra"]["dir_name"] = "/absolute/evil"
+    with pytest.raises(ValueError, match="越出知识树"):
+        repowiki.module_dir(locale_dir, modules, "docker_infra")
+
+
+def test_export_escapes_tree_never_writes_outside(tmp_path):
+    """越界 dir_name 必须在任何写之前拦住: 报告阶段才炸等于产物已落在树外。"""
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    idx = zh / "_index.yaml"
+    data = yaml.safe_load(idx.read_text(encoding="utf-8"))
+    data["modules"]["docker_infra"]["dir_name"] = "../../evil"
+    idx.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                   encoding="utf-8")
+    with pytest.raises(ValueError, match="越出知识树"):
+        export_repowiki(docs, write=True)
+    assert not (tmp_path / "evil").exists()
+    assert not (tmp_path.parent / "evil").exists()

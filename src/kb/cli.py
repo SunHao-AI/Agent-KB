@@ -20,6 +20,7 @@ from kb.lint import lint_repo
 from kb.new_entry import create_entry
 from kb.promote import promote
 from kb.query import due_review, get_entry, needs_scope, related, stat
+from kb.repowiki import export_repowiki
 
 
 def _date_arg(v: str) -> str:
@@ -118,6 +119,19 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_ex = sub.add_parser("export", parents=[common])
     p_ex.add_argument("id"); p_ex.add_argument("--to-repo", required=True)
     p_ex.add_argument("--to-scope", required=True, choices=["stack", "universal"])
+
+    # repowiki 桥(spec 2026-11-14): 仿 trace 的组+子命令双层结构(组本身不带 common)
+    p_rw = sub.add_parser("repowiki")
+    rw_sub = p_rw.add_subparsers(dest="rw_cmd", required=True)
+    p_rwe = rw_sub.add_parser("export", parents=[common])
+    p_rwe.add_argument("--lang", default="zh")
+    p_rwe.add_argument("--out", default=None,
+                       help="repowiki 根目录, 默认 <项目根>/.qoder/repowiki")
+    p_rwe.add_argument("--modules", default=None,
+                       help="模块清单 yaml(无已有 _index.yaml 时必填)")
+    p_rwe.add_argument("--write", action="store_true", help="落盘(默认 dry-run)")
+    p_rwe.add_argument("--force", action="store_true",
+                       help="覆盖非本工具生成的 managed 卡")
 
     p_init = sub.add_parser("init", parents=[common])
     p_init.add_argument("--kb-dir", default="docs", help="仓内知识库目录(生成物含 kb/)")
@@ -276,6 +290,19 @@ def _dispatch(argv: list[str] | None = None) -> int:
     if args.cmd == "export":
         print(export_entry(repo, Path(args.to_repo), args.id, to_scope=args.to_scope))
         return 0
+    if args.cmd == "repowiki":
+        if args.rw_cmd == "export":
+            # 测试面经 _dispatch 直调(不经 main 的异常处理器), 冲突/缺文件须在此
+            # 落成 exit 1 而非冒泡(SystemExit 之外的裸异常对脚本消费方同样是非 1 崩溃)
+            try:
+                report = export_repowiki(repo, lang=args.lang, out=args.out,
+                                         modules=args.modules, write=args.write,
+                                         force=args.force)
+            except (ValueError, FileNotFoundError) as exc:
+                print(f"kb error: {exc}", file=sys.stderr)
+                return 1
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
     if args.cmd == "init":
         from kb.bootstrap import init_repo
         ak = Path(args.agent_kb[0]) if args.agent_kb else None

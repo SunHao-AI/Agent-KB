@@ -331,3 +331,29 @@ def test_export_schema_drift_is_fatal(tmp_path):
     docs = tmp_path / "docs"
     with pytest.raises(ValueError, match="schema_version"):
         export_repowiki(docs, out=tmp_path / ".qoder" / "repowiki")
+
+
+import json
+from kb.cli import _dispatch
+
+
+def test_cli_repowiki_export_dry_run(tmp_path, capsys):
+    _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    rc = _dispatch(["repowiki", "export", "--repo", str(docs)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["mode"] == "overlay" and "planned" in out
+
+
+def test_cli_repowiki_export_write_and_conflict_exit(tmp_path, capsys):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    assert _dispatch(["repowiki", "export", "--repo", str(docs),
+                      "--write"]) == 0
+    assert (ddir / "架构设计.md").exists()
+    # 外部内容进入 managed 卡后再导出 → 拒绝, exit 1
+    ddir.joinpath("架构设计.md").write_text("外部写入。\n", encoding="utf-8")
+    assert _dispatch(["repowiki", "export", "--repo", str(docs),
+                      "--write"]) == 1
+    capsys.readouterr()

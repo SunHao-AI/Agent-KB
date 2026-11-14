@@ -78,6 +78,10 @@ CLI：`kb repowiki export --repo docs [--lang zh] [--out <path>] [--modules <yam
   2. `--modules <yaml>` 人工清单（同构 `modules:` 段，从零生成骨架：只写 managed 卡
      与 `_index.yaml`/`_module.yaml`，不生成无条目归属的原生卡文件）；
   3. 两者皆无 → 报错退出，提示先跑 Qoder 生成或提供 `--modules`。
+- 归属报告契约：`unassigned` 收**未写** `module` 的条目 id；`orphan_modules` 收
+  `module` 写错/漂移成树里没有的模块（`{模块名: [条目 id]}`）并同步进 `warnings`。
+  两类都必须可见——只报前者时，拼错模块名的条目既不进卡也不进任何清单，导出
+  报"成功"而条目凭空消失（终审 I-1）。
 
 ### 4.2 卡内容=条目投影
 

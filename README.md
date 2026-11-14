@@ -172,6 +172,20 @@ git 始终是权威账本, ingest 上报只是直播加速通道(幂等按 trace
 上远端, 各仓 submodule pin 会校验到这些 commit, 钩子不再报"未 push commit 不可达"。
 周报/日报类自动化见 `docs/reports/`。
 
+## RepoWiki 桥
+
+把项目知识投影为 Qoder RepoWiki 文件格式，并把 RepoWiki 纳入 kb 检索。
+
+- `kb repowiki export --repo <载体> [--write] [--force]`：按条目 front-matter
+  可选字段 `module: <module_path>` 归属，聚合进 `.qoder/repowiki/knowledge/zh/`
+  的两类 managed 卡（架构设计/特殊配置与命令）。默认 dry-run；overlay 模式
+  保留 Qoder 原生模块树与原生卡，只写 managed 卡。目标卡已有非本工具内容时
+  拒绝写盘并警告，需 `--force`。
+- `kb index` 自动探测 `.qoder/repowiki` 生成侧车 `kb/index.repowiki.jsonl`；
+  `kb search` 变三层（project kb → repowiki → agent-kb），结果带
+  `kind: "repowiki_card"`；`kb show repowiki://<locale>/<module>/<card>`（MCP
+  `kb_get` 同 id）读卡原文。
+
 ## 贡献流程
 
 1. **查重先行**: 新建前 `kb search` 确认没有重复条目; 命中则更新既有条目而非新建。

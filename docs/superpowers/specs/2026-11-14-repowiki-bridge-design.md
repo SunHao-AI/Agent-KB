@@ -157,8 +157,8 @@ managed 卡（`architecture_design`/`unique_setup_and_commands`）落盘前做�
 
 | 风险 | 缓解 |
 | --- | --- |
-| **Qoder 导入对自造 UUID（`kk_module_id`/卡 id）的容忍度未知**（官方文档未说明按 ID 还是按结构匹配） | 导出器第一版落地后立刻真机实测；若不容忍，降级为"文件格式兼容 + Qoder 任务直接读文件"，文档标注限制 |
-| 导入语义=**替换当前对应内容**；本工具仅写两类 managed 卡，原生卡不受写影响，但 Qoder 侧导入的替换粒度未知（可能整模块替换） | spec 与本节明示；managed 卡覆盖前警告 + `--force` 门；实测时确认替换粒度并回填本文档 |
+| **Qoder 导入对自造 UUID（`kk_module_id`/卡 id）的容忍度未知**（官方文档未说明按 ID 还是按结构匹配） | **待实测**（2026-11-15）：导出器已落地，Qoder IDE 人工导入验证为唯一剩余检查点；若不容忍，降级为"文件格式兼容 + Qoder 任务直接读文件"，文档标注限制 |
+| 导入语义=**替换当前对应内容**；本工具仅写两类 managed 卡，原生卡不受写影响，但 Qoder 侧导入的替换粒度未知（可能整模块替换） | spec 与本节明示；managed 卡覆盖前警告 + `--force` 门。**已实测（2026-11-15，dry-run）**：对 flysee_video_web 真库跑导出，33 个 managed 卡目标已有 Qoder 原生内容（Qoder 云端管线自身生成全部五类卡，含本工具 designated 的两类）——覆盖保护按设计拦截，需 `--force` 才会覆盖 Qoder 原生卡；替换粒度仍待 Qoder 导入实测回填 |
 | Qoder 格式漂移 | `schema_version` 守卫（§5.3） |
 
 ## 7. 测试

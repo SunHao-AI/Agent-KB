@@ -7,12 +7,15 @@
 """
 from __future__ import annotations
 
+import datetime as dt
+import subprocess
 import uuid
 from pathlib import Path
 
 import yaml
 
 from kb.entry import iter_entry_paths, parse_entry
+from kb.fskit import write_text_lf
 
 TOOL_MARKER = "<!-- kb-repowiki-export -->"
 SCHEMA_VERSION = 1
@@ -82,7 +85,10 @@ def load_module_tree(repowiki_root: Path, lang: str) -> tuple[dict, Path] | None
     idx = locale_dir / "_index.yaml"
     if not idx.exists():
         return None
-    data = yaml.safe_load(idx.read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(idx.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ValueError(f"{idx}: YAML 解析失败: {e}") from e
     if not isinstance(data, dict):
         raise ValueError(f"{idx}: YAML 根非 mapping")
     if data.get("schema_version", SCHEMA_VERSION) != SCHEMA_VERSION:
@@ -128,3 +134,145 @@ def group_entries(repo_root: Path) -> tuple[dict[str, list], list[str]]:
         else:
             unassigned.append(fm["id"])
     return by_module, unassigned
+
+
+def render_card(entries: list, type_card: dict[str, str]) -> str:
+    """managed 卡正文: TOOL_MARKER 指纹 + 按 type 分节的条目投影(标题+summary+id)。"""
+    by_type: dict[str, list] = {}
+    for e in entries:
+        if type_card.get(e.fm.get("type", "")):
+            by_type.setdefault(e.fm["type"], []).append(e)
+    if not by_type:
+        return TOOL_MARKER + "\n\n（本模块暂无相关沉淀）\n"
+    order = list(type_card)
+    lines = [TOOL_MARKER, ""]
+    for t in sorted(by_type, key=lambda t: order.index(t)):
+        lines.append(f"## {TYPE_SECTION_TITLES.get(t, t)} ({t})")
+        for e in by_type[t]:
+            lines.append(f"- **{e.fm.get('title', '')}** — "
+                         f"{e.summary()}（{e.fm['id']}）")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def git_head(root: Path) -> tuple[str, str]:
+    """(commit, branch); 非 git 目录/命令缺失 → 空串(导出照常, 头字段留空)。"""
+    def _rev(*args: str) -> str:
+        try:
+            out = subprocess.run(["git", "-C", str(root), *args],
+                                 capture_output=True, text=True, timeout=10)
+            return out.stdout.strip() if out.returncode == 0 else ""
+        except OSError:
+            return ""
+    return _rev("rev-parse", "HEAD"), _rev("rev-parse", "--abbrev-ref", "HEAD")
+
+
+def _load_modules_yaml(path: Path) -> dict:
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not isinstance(data.get("modules"), dict):
+        raise ValueError(f"{path}: 需含 modules: 段(同 _index.yaml 形状)")
+    return data["modules"]
+
+
+def _module_yaml_update(mdir: Path, module_path: str, title: str,
+                        existing: dict | None) -> str:
+    """overlay 保留原生 kk_cards/kk_module_id; managed 卡换确定性 UUID。"""
+    data = dict(existing or {})
+    data.setdefault("schema_version", SCHEMA_VERSION)
+    data["module_path"] = module_path
+    data["title"] = data.get("title") or title
+    for k in ("scope", "source_files", "depends_on", "related_to"):
+        data.setdefault(k, [])
+    data["kk_module_id"] = data.get("kk_module_id") or stable_uuid(module_path)
+    cards = dict(data.get("kk_cards") or {})
+    for card in MANAGED_CARDS:
+        cards[card] = {"id": stable_uuid(f"{module_path}:{card}"),
+                       "title": (cards.get(card) or {}).get("title") or title}
+    data["kk_cards"] = cards
+    return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+
+
+def export_repowiki(repo: Path, *, lang: str = "zh",
+                    out: str | Path | None = None,
+                    modules: str | Path | None = None, write: bool = False,
+                    force: bool = False,
+                    type_card: dict[str, str] | None = None) -> dict:
+    """条目 → .qoder/repowiki 投影。默认 dry-run; write=True 才落盘。
+
+    overlay 模式读已有 _index.yaml 模块树(保留原生卡), skeleton 模式由 --modules
+    清单从零建骨架。managed 卡(架构设计/特殊配置与命令)已存在且无本工具标记时
+    视为外部内容: dry-run 记 warning, write 需 --force 否则 ValueError。
+    """
+    repo = Path(repo)
+    tc = {**DEFAULT_TYPE_CARD, **(type_card or {})}
+    root = Path(out) if out else project_root_of(repo) / ".qoder" / "repowiki"
+    locale_dir = root / "knowledge" / lang
+
+    mode = "overlay"
+    try:
+        loaded = load_module_tree(root, lang)
+    except ValueError:
+        raise  # schema 漂移/YAML 坏: 导出侧致命, 不猜
+    if loaded is not None:
+        modules_map, locale_dir = loaded
+        idx_data = yaml.safe_load(
+            (locale_dir / "_index.yaml").read_text(encoding="utf-8"))
+    else:
+        if modules is None:
+            raise FileNotFoundError(
+                f"{locale_dir}: 无已有 _index.yaml, 需 --modules <yaml> 提供模块清单")
+        mode = "skeleton"
+        modules_map = _load_modules_yaml(Path(modules))
+        if "root" not in modules_map:
+            raise ValueError("--modules 清单缺 root 模块")
+        idx_data = {"schema_version": SCHEMA_VERSION,
+                    "locale": "zh-CN" if lang == "zh" else lang,
+                    "modules": modules_map}
+
+    by_module, unassigned = group_entries(repo)
+    commit, branch = git_head(project_root_of(repo))
+    idx_data["commit"] = commit
+    idx_data["branch"] = branch
+    idx_data["exported_at"] = dt.datetime.now(dt.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+
+    plan: list[tuple[Path, str]] = []
+    warnings: list[str] = []
+    for module_path in sorted(modules_map):
+        meta = modules_map[module_path]
+        title = meta.get("title", module_path)
+        entries = by_module.get(module_path, [])
+        mdir = module_dir(locale_dir, modules_map, module_path)
+        existing_my: dict | None = None
+        my_path = mdir / "_module.yaml"
+        if my_path.exists():
+            existing_my = yaml.safe_load(my_path.read_text(encoding="utf-8")) or {}
+        plan.append((my_path,
+                     _module_yaml_update(mdir, module_path, title, existing_my)))
+        for card in MANAGED_CARDS:
+            content = render_card(entries, tc)
+            f = mdir / CARD_FILES[card]
+            if f.exists() and TOOL_MARKER not in f.read_text(encoding="utf-8"):
+                warnings.append(
+                    f"{f}: 已有非本工具生成内容, 导入即替换语义下将被 kb 投影覆盖"
+                    f"(再导出请带 force)")
+                if write and not force:
+                    raise ValueError(
+                        f"{f}: 拒绝覆盖非本工具生成的 managed 卡(需 force)")
+            plan.append((f, content))
+
+    idx_path = locale_dir / "_index.yaml"
+    plan.append((idx_path, yaml.safe_dump(idx_data, allow_unicode=True,
+                                          sort_keys=False)))
+
+    if write:
+        for f, content in plan:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            write_text_lf(f, content)
+    rel = sorted(str(p.relative_to(root)) for p, _ in plan)
+    report = {"mode": mode, "out": str(root),
+              ("written" if write else "planned"): rel,
+              "unassigned": sorted(unassigned), "warnings": warnings}
+    if not write and warnings:
+        report["warnings"] = warnings
+    return report

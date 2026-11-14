@@ -1,7 +1,7 @@
 # L2 摘要质量优化与联邦 L2 记录契约设计
 
 - 日期: 2026-11-14
-- 状态: 待审阅
+- 状态: 已批准(2026-11-14, 含落地前实读取证修正: §3.1 schema 真源=taxonomy.py::derive_schema、§3.2 Entry.summary 现纯派生需新增显式分支、§4 埋点已 compact 零改动)
 - 范围: 范围 1 —— 只改本地面(index/schema/lint/templates/CLI/MCP 提示/stat), 但按联邦契约定死 L2 记录形状; 不写任何外部源适配器
 
 ## 1. 背景与根因
@@ -52,7 +52,11 @@ sections/dedup_key/related/updated/repo)之上**新增两字段**:
 
 ### 3.1 schema
 
-`schema/frontmatter.schema.json` properties 加:
+运行时校验 schema 的**唯一真源**是 `src/kb/taxonomy.py::derive_schema()`(lint 用
+`jsonschema.Draft202012Validator(derive_schema(load_taxonomy()))` 校验);
+`schema/frontmatter.schema.json` 无代码加载, 属文档性文件, 仅同步不改行为。
+
+`derive_schema()` 的 properties 加(文档 schema 同步):
 
 ```json
 "summary": { "type": "string", "minLength": 10, "maxLength": 300 }
@@ -63,10 +67,12 @@ sections/dedup_key/related/updated/repo)之上**新增两字段**:
 
 ### 3.2 Entry.summary() 单点收口
 
-现状([entry.py](../../src/kb/entry.py) `Entry.summary()`): 显式值与派生值统一
-`re.sub(r"\s+", " ", ...)[:120]`。改为:
+现状([entry.py](../../src/kb/entry.py) `Entry.summary()`, 实读取证): **纯派生**——
+按空行分块取第一个有正文的块折叠空白后 `[:limit]`, **没有任何 `fm["summary"]` 分支**
+(显式字段此前根本不被读取)。改为:
 
-- 显式分支: 仅折叠空白, **不再 120 截断**(显式声明即最终消费文案, schema 已限 300);
+- **新增**显式分支(方法首部): `fm.get("summary")` 非空则仅折叠空白返回,
+  **不做 120 截断**(显式声明即最终消费文案, schema 已限 300);
 - 派生兜底分支: **逐字节不变**(首段首句 + limit), 由回归测试锁定。
 
 `build_index`/`INDEX.md`/检索面全部经 `Entry.summary()` 单点取值, 无需感知改动。
@@ -95,10 +101,11 @@ sections/dedup_key/related/updated/repo)之上**新增两字段**:
 - **协议引导不做**: MCP 面 kb_search/kb_get 工具并列已是业界渐进披露标准形态,
   Agent 止步 L2 是理性消费而非引导缺失——引导文案治不了"摘要不值得下钻"。
 
-唯一实修: [cli.py](../../src/kb/cli.py#L353) 埋点 `returned_chars=
-len(json.dumps(res, ensure_ascii=False))` 与 MCP 面对齐为 compact 口径(默认
-separators 即 compact, 现口径含缩进虚高 30–40%, 污染 overhead/meta_only 字符账)。
-stdout 展示(`indent=2` 打印)不变。
+埋点口径实读取证(修正纸面勘察): [cli.py](../../src/kb/cli.py#L353)
+`returned_chars=len(json.dumps(res, ensure_ascii=False))` **本就是 compact 口径**
+(`indent=2` 只出现在 L355 的 stdout 打印, 不进埋点)——与 MCP 面已天然对齐,
+**零改动**。仅加一条回归断言锁定该口径(埋点值 == compact dumps 值), 防未来
+有人把打印口径混进字符账。
 
 ## 5. 观测闭环与测试面(§4 段, 已确认)
 
@@ -134,11 +141,12 @@ front-matter 有无非空 `summary`。落点: [query.py](../../src/kb/query.py) 
 
 | 文件 | 改动 |
 | --- | --- |
-| `schema/frontmatter.schema.json` | +summary 属性(10–300, 非必填) |
-| `src/kb/entry.py` | `Entry.summary()` 显式分支去截断 |
+| `src/kb/taxonomy.py` | `derive_schema()` +summary 属性(10–300, 非必填)——**运行时 schema 真源** |
+| `schema/frontmatter.schema.json` | 文档同步 +summary 属性(无代码加载) |
+| `src/kb/entry.py` | `Entry.summary()` **新增**显式分支(不截断), 派生路径不动 |
 | `src/kb/index.py` | `_records` rec +`origin`/`uri` 两字段 |
 | `src/kb/lint.py` | +SUMMARY_REQUIRED_SINCE warning |
-| `src/kb/cli.py` | L353 埋点 compact 口径 |
+| `src/kb/cli.py` | 零改动(埋点已 compact), 仅回归断言 |
 | `src/kb/mcp_server.py` | kb_create description 提示一句 |
 | `templates/*.md`(8 个) | front-matter +`summary: ""` 占位 |
 | `AGENTS.md` | 一句话指向联邦契约节(§2) |

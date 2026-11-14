@@ -840,3 +840,15 @@ def test_export_escapes_tree_never_writes_outside(tmp_path):
         export_repowiki(docs, write=True)
     assert not (tmp_path / "evil").exists()
     assert not (tmp_path.parent / "evil").exists()
+
+
+def test_skeleton_modules_yaml_corrupt_exits_1(tmp_path, capsys):
+    """--modules 清单同样经 ValueError: 操作者手写坏 YAML 不该看到 traceback。"""
+    docs = tmp_path / "docs"
+    (docs / "kb").mkdir(parents=True)
+    bad = tmp_path / "modules.yaml"
+    bad.write_text("modules: [unclosed\n", encoding="utf-8")
+    assert main(["repowiki", "export", "--repo", str(docs),
+                 "--modules", str(bad)]) == 1
+    err = capsys.readouterr().err
+    assert "kb error:" in err and "Traceback" not in err

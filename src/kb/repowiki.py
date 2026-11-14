@@ -190,7 +190,10 @@ def git_head(root: Path) -> tuple[str, str]:
 
 
 def _load_modules_yaml(path: Path) -> dict:
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ValueError(f"{path}: YAML 解析失败: {e}") from e
     if not isinstance(data, dict) or not isinstance(data.get("modules"), dict):
         raise ValueError(f"{path}: 需含 modules: 段(同 _index.yaml 形状)")
     return data["modules"]

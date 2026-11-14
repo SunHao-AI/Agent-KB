@@ -819,11 +819,11 @@ def test_module_dir_rejects_dir_name_escaping_tree(tmp_path):
     modules, locale_dir = repowiki.load_module_tree(
         tmp_path / ".qoder" / "repowiki", "zh")
     modules["root"]["dir_name"] = "../../evil"
-    with pytest.raises(ValueError, match="越出知识树"):
+    with pytest.raises(ValueError, match="dir_name"):
         repowiki.module_dir(locale_dir, modules, "root")
     modules["root"]["dir_name"] = "演示仓 demo"
     modules["docker_infra"]["dir_name"] = "/absolute/evil"
-    with pytest.raises(ValueError, match="越出知识树"):
+    with pytest.raises(ValueError, match="dir_name"):
         repowiki.module_dir(locale_dir, modules, "docker_infra")
 
 
@@ -836,7 +836,7 @@ def test_export_escapes_tree_never_writes_outside(tmp_path):
     data["modules"]["docker_infra"]["dir_name"] = "../../evil"
     idx.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
                    encoding="utf-8")
-    with pytest.raises(ValueError, match="越出知识树"):
+    with pytest.raises(ValueError, match="dir_name"):
         export_repowiki(docs, write=True)
     assert not (tmp_path / "evil").exists()
     assert not (tmp_path.parent / "evil").exists()
@@ -852,3 +852,42 @@ def test_skeleton_modules_yaml_corrupt_exits_1(tmp_path, capsys):
                  "--modules", str(bad)]) == 1
     err = capsys.readouterr().err
     assert "kb error:" in err and "Traceback" not in err
+
+
+def test_module_dir_multi_level_roundtrip(tmp_path):
+    """多级 module_path 逐级解析: 前缀累加与越界拦在 root 之外的每一级都走一遍。"""
+    zh = _tree(tmp_path)
+    modules, locale_dir = repowiki.load_module_tree(
+        tmp_path / ".qoder" / "repowiki", "zh")
+    modules["docker_infra/build"] = {"dir_name": "Compose 编排", "title": "Compose"}
+    modules["docker_infra/build/compose_v2"] = {"dir_name": "v2", "title": "v2"}
+    assert repowiki.module_dir(locale_dir, modules, "docker_infra/build") == \
+        zh / "演示仓 demo" / "Docker 基础设施与开发编排" / "Compose 编排"
+    deep = zh / "演示仓 demo" / "Docker 基础设施与开发编排" / "Compose 编排" / "v2"
+    assert repowiki.module_dir(locale_dir, modules, "docker_infra/build/compose_v2") \
+        == deep
+    # 深层越界: 第二级之后同样拦得住
+    modules["docker_infra/build/compose_v2"]["dir_name"] = "../../escape"
+    with pytest.raises(ValueError, match="dir_name 非法"):
+        repowiki.module_dir(locale_dir, modules, "docker_infra/build/compose_v2")
+
+
+def test_module_dir_rejects_sibling_dir_name(tmp_path):
+    """`../<同级名>` 归一化后仍在树内: 前缀比对照这类拦不住, 但它会覆写兄弟模块
+    的 _module.yaml 与卡, 所以含 `..` 的 dir_name 一律拒。"""
+    zh = _tree(tmp_path)
+    modules, locale_dir = repowiki.load_module_tree(
+        tmp_path / ".qoder" / "repowiki", "zh")
+    modules["docker_infra"]["dir_name"] = "../演示仓 demo"
+    with pytest.raises(ValueError, match="dir_name 非法"):
+        repowiki.module_dir(locale_dir, modules, "docker_infra")
+
+
+def test_module_dir_allows_dots_in_dir_name(tmp_path):
+    """真名里的点是合法字符(如 v1..2 / 1.0), 只禁作为独立路径段的 `..`。"""
+    zh = _tree(tmp_path)
+    modules, locale_dir = repowiki.load_module_tree(
+        tmp_path / ".qoder" / "repowiki", "zh")
+    modules["docker_infra"]["dir_name"] = "Compose 1.0"
+    assert repowiki.module_dir(locale_dir, modules, "docker_infra") == \
+        zh / "演示仓 demo" / "Compose 1.0"

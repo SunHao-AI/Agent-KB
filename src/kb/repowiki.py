@@ -108,11 +108,16 @@ def load_module_tree(repowiki_root: Path, lang: str) -> tuple[dict, Path] | None
 def _module_child(locale_dir: Path, out: Path, name: str) -> Path:
     """拼一级 dir_name 并守住知识树边界。
 
-    dir_name 来自 YAML(可被外部导入的 _index.yaml 携带), `../../evil` 或绝对路径
-    会把产物写到树外; 报告的 relative_to(root) 要到写盘之后才炸, 那时文件已落地,
-    故在拼接处拦——任何写都不发生。
+    dir_name 来自 YAML(可被外部导入的 _index.yaml 携带), 绝对路径与任何 `..` 段
+    一律拒。只比 normpath 前缀不够: `../<同级名>` 归一化后仍在树内, 过检却指到
+    兄弟模块目录——A 模块的 dir_name 于是能覆写 B 模块的 _module.yaml 与卡。
+    绝对路径与盘符/UNC 由 normpath 后仍留在树外挡住。拦在拼接处而非报告阶段:
+    relative_to(root) 要到写盘之后才炸, 那时文件已落地。
     """
-    cand = Path(os.path.normpath(os.path.join(str(out), str(name))))
+    s = str(name)
+    if ".." in Path(s).parts or Path(s).is_absolute() or s[:1] in ("/", "\\"):
+        raise ValueError(f"dir_name 非法(绝对路径或含 ..): {name!r}")
+    cand = Path(os.path.normpath(os.path.join(str(out), s)))
     base = os.path.normpath(str(locale_dir))
     if not str(cand).startswith(base + os.sep):
         raise ValueError(f"dir_name 越出知识树: {name!r}")

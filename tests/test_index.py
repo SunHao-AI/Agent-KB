@@ -106,6 +106,73 @@ def test_resolve_repo_name_falls_back_only_without_index(tmp_repo):
     assert resolve_repo_name(tmp_repo) == tmp_repo.name.lower()
 
 
+def _strip_field(index_path, key):
+    """从已提交 index.jsonl 逐行删掉某键(模拟 v1 索引: 尚未带该字段)。"""
+    rows = [json.loads(ln) for ln in
+            index_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    for r in rows:
+        r.pop(key, None)
+    index_path.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+        encoding="utf-8")
+
+
+def test_check_tolerates_v1_rows_missing_origin_uri(tmp_repo):
+    """跨仓索引形状版本兼容(spec 2026-11-14 §1): 业务仓钉住的旧 kb 码不注入
+    origin/uri, 但门禁回落到 Agent-KB 主仓新码重算 → 若逐字节比对则 web/algorithm
+    下次触碰 kb 的推送必被 index --check 拦下(2026-11-14 独立实测: web 121 行
+    rc=1)。缺 origin/uri 的 v1 行须视为契约默认值(local/null)而放行, 且无需业务仓
+    重建索引(否则等于强制其用自己钉不住的新形状整体重写)。"""
+    _put(tmp_repo, "kb/pitfall/backend/a.md", make_entry(status="accepted"))
+    build_indexes(tmp_repo, repo_name="flysee_video_web")
+    jl = tmp_repo / "kb" / "index.jsonl"
+    assert check_indexes(tmp_repo, repo_name="flysee_video_web") is True
+    # 删成 v1 形状(无 origin/uri): 仍判新鲜
+    _strip_field(jl, "origin")
+    _strip_field(jl, "uri")
+    assert check_indexes(tmp_repo, repo_name="flysee_video_web") is True
+
+
+def test_check_still_strict_beyond_origin_uri(tmp_repo):
+    """向后兼容只豁免缺 origin/uri: 其余字段漂移、行数不符、origin 值错都仍判 stale,
+    否则等于把整条 --check 门禁掏空。"""
+    _put(tmp_repo, "kb/pitfall/backend/a.md", make_entry(status="accepted"))
+    build_indexes(tmp_repo, repo_name="r")
+    jl = tmp_repo / "kb" / "index.jsonl"
+    # (1) 删 origin/uri → 仍 True(基准, 见上一用例)
+    _strip_field(jl, "origin")
+    _strip_field(jl, "uri")
+    assert check_indexes(tmp_repo, repo_name="r") is True
+    # (2) 在 v1 形状上再加一处真漂移(改 summary) → False
+    rows = [json.loads(ln) for ln in jl.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    rows[0]["summary"] = "被篡改的摘要"
+    jl.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows),
+                  encoding="utf-8")
+    assert check_indexes(tmp_repo, repo_name="r") is False
+    # (3) origin 值错(非 local) → False
+    build_indexes(tmp_repo, repo_name="r")
+    _strip_field(jl, "origin")
+    _strip_field(jl, "uri")
+    rows = [json.loads(ln) for ln in jl.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    rows[0]["origin"] = "ext:feishu"
+    jl.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows),
+                  encoding="utf-8")
+    assert check_indexes(tmp_repo, repo_name="r") is False
+    # (4) 行数不符(v1 少一行条目) → False
+    build_indexes(tmp_repo, repo_name="r")
+    _put(tmp_repo, "kb/pitfall/backend/b.md",
+         make_entry(id="kb-20261012-0002", status="accepted"))
+    assert check_indexes(tmp_repo, repo_name="r") is False
+
+
+def test_check_malformed_jsonl_is_stale_not_crash(tmp_repo):
+    """committed index.jsonl 语法坏(手改/半写) → 判 stale 返 False, 不抛异常。"""
+    _put(tmp_repo, "kb/pitfall/backend/a.md", make_entry(status="accepted"))
+    build_indexes(tmp_repo, repo_name="r")
+    (tmp_repo / "kb" / "index.jsonl").write_text("{ not json\n", encoding="utf-8")
+    assert check_indexes(tmp_repo, repo_name="r") is False
+
+
 def test_records_carry_federation_fields(tmp_repo):
     """联邦 L2 记录契约(spec 2026-11-14 §1): 本地记录恒 origin=local, uri=null。"""
     d = tmp_repo / "kb" / "pitfall" / "frontend"

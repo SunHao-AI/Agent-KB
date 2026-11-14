@@ -144,8 +144,9 @@ front-matter 有无非空 `summary`。落点: [query.py](../../src/kb/query.py) 
 1. **零漂移回归**: 存量库(无显式 summary)重建索引, `kb index --check` 除新增
    `origin`/`uri` 两字段外逐字节零漂移; 派生 summary 路径输出逐字节不变;
 2. **schema 边界**: summary 长度 9/10/300/301 四例进 lint 用例(9/301 红灯);
-3. **lint warning**: `updated` ≥ 2026-11-15 缺 summary 告警、旧条目豁免、
-   warning 不使 `kb lint` 退出码变红;
+3. **lint warning**: `created` ≥ 2026-11-15 缺 summary 告警、旧条目豁免、
+   warning 不使 `kb lint` 退出码变红(非 strict; pre-push 经 `--strict` 升级为硬门禁
+   一事见 §3.3 落地口径修正 + 遗留裁决, 属人的裁决项);
 4. **Entry.summary() 单测**: 显式值仅折叠空白不截断(300 字原文透传)、
    派生路径既有断言不动全绿;
 5. **returned_chars compact 断言**: CLI 埋点值 == `len(json.dumps(res,

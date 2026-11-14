@@ -179,6 +179,45 @@ def resolve_repo_name(repo_root: Path, explicit: str | None = None) -> str:
     return m.group(1) if m else Path(repo_root).resolve().name.lower()
 
 
+def _v1_tolerant_equal(committed_text: str, want_records) -> bool:
+    """比对已提交 index.jsonl 与重算结果, 容忍 v1 行缺 `origin`/`uri`。
+
+    为什么必须容忍(2026-11-14 独立终审实测): 飞视 web / algorithm 两仓 `import kb`
+    失败 → 门禁按 pre-push-gate 的解释器回落改用 **Agent-KB 主仓 venv(新码)** 跑
+    `index --check`; 而这两仓已提交的索引是**各自 submodule 钉住的旧码**产出
+    (web `f44f010` / algorithm `c20b144`, 均不注入 origin/uri, 共 121/47 行)。逐字节
+    比对 → 两仓下次触碰 `docs/kb` 的推送恒被 `index --check` 拦死, 且被引导用**自己
+    钉不住的新形状**整体重写索引(无版本闸门)。缺这两个字段即视为契约默认值
+    (`origin`=local / `uri`=null), 与本仓"重建即可对齐"语义等价。
+
+    豁免范围严格限定为"这两个键缺失": 其余任一字段的差异、行数增减、以及 `origin`
+    显式为别的值都仍判漂移——否则等于把整条 `--check` 门禁掏空。committed 侧语法
+    坏(手改/半写)按漂移处理, 不抛。
+    """
+    want = [dict(r) for r in want_records]
+    got = []
+    try:
+        for ln in committed_text.splitlines():
+            if ln.strip():
+                got.append(json.loads(ln))
+    except json.JSONDecodeError:
+        return False
+    if len(got) != len(want):
+        return False
+    for g, w in zip(got, want):
+        # 键序无关的整体比对(排除两个契约字段), 缺键与异键都会在此暴露。
+        rest_g = {k: v for k, v in g.items() if k not in ("origin", "uri")}
+        rest_w = {k: v for k, v in w.items() if k not in ("origin", "uri")}
+        if rest_g != rest_w:
+            return False
+        # 键在位就必须与契约默认值一致(旧格式重建后仍逐字节严判); 缺键才回落默认值。
+        if g.get("origin", "local") != w.get("origin", "local"):
+            return False
+        if g.get("uri") != w.get("uri"):
+            return False
+    return True
+
+
 def check_indexes(repo_root: Path, repo_name: str = "agent-kb") -> bool:
     """live 面(INDEX.md / index.jsonl)漂移门禁; **故意不比对 index.draft.jsonl**。
 
@@ -188,8 +227,10 @@ def check_indexes(repo_root: Path, repo_name: str = "agent-kb") -> bool:
     """
     live, _draft = _records(repo_root, repo_name)
     root = Path(repo_root) / "kb"
-    want = {root / "INDEX.md": _md(live), root / "index.jsonl": _jsonl(live)}
-    for path, content in want.items():
-        if not path.exists() or path.read_text(encoding="utf-8") != content:
-            return False
-    return True
+    md_path = root / "INDEX.md"
+    jl_path = root / "index.jsonl"
+    if not md_path.exists() or md_path.read_text(encoding="utf-8") != _md(live):
+        return False
+    if not jl_path.exists():
+        return False
+    return _v1_tolerant_equal(jl_path.read_text(encoding="utf-8"), live)

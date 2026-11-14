@@ -166,3 +166,39 @@ def test_sections_text_paragraphs_are_bounded(tmp_path):
 def test_sections_text_empty_without_h2(tmp_path):
     """无 H2 段时返回空串(不抛): 派生面退化但 index 不因单条坏格式中断."""
     assert _sec_entry(tmp_path, "s4", "# t\n\n裸正文没有分段。\n").sections_text() == ""
+
+
+# ---- summary: 显式 front-matter 字段优先(spec 2026-11-14 §3.2) --------------
+
+def test_summary_explicit_preferred_not_truncated(tmp_path):
+    """显式 summary: 优先于派生、折叠空白、不截断; 空串/空白=缺失回落派生。"""
+    from conftest import make_entry
+    long_text = "结" * 200
+    p = tmp_path / "s.md"
+    p.write_text(make_entry(summary="  上线前必须压测 前, 连接池上限需复核。  ")
+                 + "\n## 背景\n\n被压制的派生兜底文案。\n", encoding="utf-8")
+    assert parse_entry(p).summary() == "上线前必须压测 前, 连接池上限需复核。"
+
+    p2 = tmp_path / "l.md"
+    p2.write_text(make_entry(summary=long_text) + "\n## 背景\n\n兜底。\n", encoding="utf-8")
+    assert parse_entry(p2).summary() == long_text          # 200 字不截断
+
+    # YAML 空串/空白字面量: '""' 解析为 ""、'"   "' 解析为 "   "(make_entry 是
+    # f"{k}: {v}" 行拼接, 直接传 "" 会产出裸 `summary:` → None, 语义不同)
+    for blank in ('""', '"   "'):
+        p3 = tmp_path / "b.md"
+        p3.write_text(make_entry(summary=blank)
+                      + "\n## 背景\n\n派生文案。\n", encoding="utf-8")
+        assert parse_entry(p3).summary() == "首段摘要。"    # 空/空白 → 派生兜底
+
+
+def test_summary_derived_fallback_unchanged(tmp_path):
+    """回归锁定 Global Constraints: 无显式字段时输出与旧行为逐字节一致。"""
+    from conftest import make_entry
+    p = tmp_path / "d.md"
+    p.write_text(make_entry(), encoding="utf-8")
+    assert parse_entry(p).summary() == "首段摘要。"        # 默认 body 派生值
+
+    p2 = tmp_path / "d2.md"
+    p2.write_text(make_entry() + "\n## 背景\n\n上线后偶发连接超时。\n", encoding="utf-8")
+    assert parse_entry(p2).summary() == "首段摘要。"      # 追加段不改首个正文块

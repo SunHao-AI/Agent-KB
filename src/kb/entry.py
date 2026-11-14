@@ -99,6 +99,12 @@ class Entry:
         return None
 
     def summary(self, limit: int = 120) -> str:
+        # 显式 summary 优先(spec 2026-11-14 §3.2): "空 = 缺失"——strip 后非空才采信;
+        # 仅折叠空白不截断(schema 已限 300, 显式声明即最终消费文案)。派生兜底路径
+        # 逐字节不变, 存量条目输出与索引零漂移(回归锁定见 tests/test_entry.py)。
+        explicit = str(self.fm.get("summary") or "").strip()
+        if explicit:
+            return re.sub(r"\s+", " ", explicit)
         # 按空行分块, 块内剔除标题行(标题可能与正文同块), 取第一个还有正文的块
         for block in re.split(r"\n\s*\n", self.body):
             lines = [ln for ln in block.splitlines() if not ln.strip().startswith("#")]

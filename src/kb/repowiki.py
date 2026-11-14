@@ -8,13 +8,16 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
 import yaml
 
-from kb.entry import iter_entry_paths, parse_entry
+from kb.entry import _first_sentence, iter_entry_paths, parse_entry
 from kb.fskit import write_text_lf
 
 TOOL_MARKER = "<!-- kb-repowiki-export -->"
@@ -281,3 +284,68 @@ def export_repowiki(repo: Path, *, lang: str = "zh",
               ("written" if write else "planned"): rel,
               "unassigned": sorted(unassigned), "warnings": warnings}
     return report
+
+
+def build_sidecar(repo: Path, repowiki_root: Path | None = None) -> Path | None:
+    """扫描 repowiki 全部语言目录 → 侧车 kb/index.repowiki.jsonl(L2 检索面)。
+
+    无 repowiki 根 → None(静默); 某语言目录 _index.yaml 坏/schema 漂移 → 打
+    stderr warning 并跳过该目录(其余语言照常)——侧车是增强面, 不阻断 index 主流程。
+    全部语言目录均无果(无记录)时不写空侧车, 返回 None。
+    """
+    repo = Path(repo)
+    root = repowiki_root or find_repowiki_root(repo)
+    if root is None or not (root / "knowledge").is_dir():
+        return None
+    records: list[dict] = []
+    for lang_dir in sorted((root / "knowledge").iterdir()):
+        if not lang_dir.is_dir():
+            continue
+        try:
+            loaded = load_module_tree(root, lang_dir.name)
+        except ValueError as exc:
+            print(f"warning: repowiki sidecar: {exc}", file=sys.stderr)
+            continue
+        if loaded is None:
+            continue
+        modules, locale_dir = loaded
+        for module_path in modules:
+            meta = modules[module_path]
+            try:
+                mdir = module_dir(locale_dir, modules, module_path)
+            except ValueError as exc:
+                print(f"warning: repowiki sidecar: {exc}", file=sys.stderr)
+                continue
+            card_titles: dict = {}
+            myaml = mdir / "_module.yaml"
+            if myaml.exists():
+                data = yaml.safe_load(myaml.read_text(encoding="utf-8")) or {}
+                card_titles = data.get("kk_cards") or {}
+            for card, fname in CARD_FILES.items():
+                f = mdir / fname
+                if not f.exists():
+                    continue
+                text = f.read_text(encoding="utf-8")
+                body = "\n".join(
+                    ln for ln in text.splitlines()
+                    if ln.strip() and not ln.strip().startswith("#")
+                    and ln.strip() != TOOL_MARKER).strip()
+                summary = _first_sentence(body)[:120] if body else ""
+                title = (card_titles.get(card) or {}).get("title") \
+                    or meta.get("title", "")
+                records.append({
+                    "kind": "repowiki_card",
+                    "id": f"{REPOWIKI_ID_PREFIX}{lang_dir.name}/"
+                          f"{module_path}/{card}",
+                    "module_path": module_path, "card": card, "title": title,
+                    "summary": summary,
+                    "path": Path(os.path.relpath(f, repo)).as_posix(),
+                    "locale": lang_dir.name,
+                })
+    if not records:
+        return None
+    out = repo / "kb" / SIDECAR_NAME
+    out.parent.mkdir(parents=True, exist_ok=True)
+    write_text_lf(out, "".join(json.dumps(r, ensure_ascii=False) + "\n"
+                               for r in records))
+    return out

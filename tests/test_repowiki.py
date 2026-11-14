@@ -357,3 +357,53 @@ def test_cli_repowiki_export_write_and_conflict_exit(tmp_path, capsys):
     assert _dispatch(["repowiki", "export", "--repo", str(docs),
                       "--write"]) == 1
     capsys.readouterr()
+
+
+import os
+from kb.repowiki import build_sidecar
+
+
+def test_build_sidecar_indexes_all_card_files(tmp_path, capsys):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    export_repowiki(docs, write=True)
+    side = build_sidecar(docs)
+    assert side == docs / "kb" / "index.repowiki.jsonl"
+    recs = [json.loads(x) for x in side.read_text(encoding="utf-8").splitlines()
+            if x.strip()]
+    by_id = {r["id"]: r for r in recs}
+    assert "repowiki://zh/docker_infra/architecture_design" in by_id
+    native = by_id["repowiki://zh/root/overview"]
+    assert native["summary"] == "原生概述内容。"
+    assert native["kind"] == "repowiki_card"
+    # path 相对载体(docs), 同级布局上探
+    assert native["path"].startswith(".." + os.sep) or \
+        native["path"].startswith("../")
+    # L3 可用路径还原原文
+    assert (docs / native["path"]).read_text(encoding="utf-8") == "原生概述内容。\n"
+
+
+def test_build_sidecar_missing_tree_returns_none(tmp_path):
+    docs = tmp_path / "docs"
+    (docs / "kb").mkdir(parents=True)
+    assert build_sidecar(docs) is None
+
+
+def test_build_sidecar_schema_drift_skips_lang(tmp_path, capsys):
+    _tree(tmp_path, schema_version=2)
+    docs = tmp_path / "docs"
+    (docs / "kb").mkdir(parents=True)
+    assert build_sidecar(docs) is None
+    assert "schema_version" in capsys.readouterr().err
+
+
+def test_cli_index_builds_sidecar(tmp_path, capsys):
+    _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    export_repowiki(docs, write=True)
+    from kb.index import build_indexes
+    build_indexes(docs, repo_name="demo")
+    rc = _dispatch(["index", "--repo", str(docs), "--repo-name", "demo"])
+    assert rc == 0
+    assert "index.repowiki.jsonl" in capsys.readouterr().out
+    assert (docs / "kb" / "index.repowiki.jsonl").exists()

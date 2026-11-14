@@ -20,7 +20,7 @@ from kb.lint import lint_repo
 from kb.new_entry import create_entry
 from kb.promote import promote
 from kb.query import due_review, get_entry, needs_scope, related, stat
-from kb.repowiki import export_repowiki
+from kb.repowiki import build_sidecar, export_repowiki
 
 
 def _date_arg(v: str) -> str:
@@ -362,6 +362,10 @@ def _dispatch(argv: list[str] | None = None) -> int:
             return 0 if ok else 1
         md, jl, dj = build_indexes(repo, repo_name=repo_name)
         print(f"wrote {md}\nwrote {jl}\nwrote {dj}")
+        # 侧车是增强面: 无 repowiki 根/全部语言漂移时静默, 不阻断主索引
+        side = build_sidecar(repo)
+        if side:
+            print(f"wrote {side}")
         return 0
     if args.cmd == "search":
         t0 = time.perf_counter()

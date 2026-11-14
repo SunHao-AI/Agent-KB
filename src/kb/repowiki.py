@@ -19,6 +19,7 @@ import yaml
 
 from kb.entry import _first_sentence, iter_entry_paths, parse_entry
 from kb.fskit import write_text_lf
+from kb.search import _hit
 
 TOOL_MARKER = "<!-- kb-repowiki-export -->"
 SCHEMA_VERSION = 1
@@ -354,3 +355,55 @@ def build_sidecar(repo: Path, repowiki_root: Path | None = None) -> Path | None:
     write_text_lf(out, "".join(json.dumps(r, ensure_ascii=False) + "\n"
                                for r in records))
     return out
+
+
+def search_sidecar(repo: Path, *, query: str | None = None
+                   ) -> tuple[list[dict], dict]:
+    """侧车 L2 检索: query 空白分词 AND 匹配 title/summary/module/card。
+
+    恒等式 rejected.filter + rejected.query + len(matched) == scanned。
+    无侧车 → 空结果零扫描(三层检索自然降级)。返回**未截断**行, 截断由 layers 层做。
+    """
+    jl = Path(repo) / "kb" / SIDECAR_NAME
+    if not jl.exists():
+        return [], {"scanned": 0, "rejected": {"filter": 0, "query": 0},
+                    "matched": []}
+    recs = [json.loads(x) for x in jl.read_text(encoding="utf-8").splitlines()
+            if x.strip()]
+    tokens = query.lower().split() if query else []
+    matched: list[dict] = []
+    n_no_hit = 0
+    for rec in recs:
+        fields: list[str] = []
+        spans: list[list[int]] = []
+        if tokens:
+            parts = [("title", rec["title"].lower()),
+                     ("summary", rec["summary"].lower()),
+                     ("module", rec["module_path"].lower()),
+                     ("card", rec["card"].lower())]
+            fields, spans, hit_tokens = _hit(parts, tokens)
+            if hit_tokens != set(tokens):
+                n_no_hit += 1
+                continue
+        matched.append({**rec, "hit_fields": fields, "hit_spans": spans,
+                        "score": 1.0})
+    report = {"scanned": len(recs),
+              "rejected": {"filter": 0, "query": n_no_hit},
+              "matched": [{"id": r["id"], "hit_fields": r["hit_fields"],
+                           "hit_spans": r["hit_spans"], "score": 1.0,
+                           "rank": i + 1} for i, r in enumerate(matched)]}
+    return matched, report
+
+
+def make_repowiki_layer(repo: Path):
+    """三层检索中层(project kb → repowiki → agent-kb), 供 layers between 注入。
+
+    kb 专属过滤器(type/domain/tag)对 repowiki 卡不适用, 本层忽略; 行不限长,
+    截断与 taken/report 归一由 search_layers_report 统一处理。
+    """
+    repo = Path(repo)
+
+    def layer(take: int, *, type=None, domain=None, tag=None, query=None):
+        return search_sidecar(repo, query=query)
+
+    return layer

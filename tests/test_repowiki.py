@@ -464,3 +464,76 @@ def test_build_sidecar_non_dict_module_meta_skips_module(tmp_path, capsys):
     assert "repowiki://zh/root/overview" in ids
     assert not any(i.startswith("repowiki://zh/docker_infra/") for i in ids)
     assert "warning" in capsys.readouterr().err
+
+
+from kb.layers import search_layers_report
+from kb.repowiki import make_repowiki_layer, search_sidecar
+from kb.index import build_indexes
+
+
+def _layer_setup(tmp_path):
+    """项目层命中 + repowiki 层命中 + agent-kb 层命中, 验证优先级与截断。"""
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = tmp_path / "docs"
+    (docs / "kb").mkdir(parents=True)
+    d = docs / "kb" / "howto" / "backend"
+    d.mkdir(parents=True)
+    (d / "x.md").write_text(
+        "---\n" + yaml.safe_dump(
+            {"id": "kb-20261114-d001", "title": "Redis 连接超时排查",
+             "type": "howto", "domain": ["backend"], "scope": "project",
+             "status": "accepted", "confidence": "verified",
+             "created": "2026-11-14", "updated": "2026-11-14",
+             # brief 原夹具无 module 归属(卡片全为占位), 其 priority 测试却要求
+             # query="Redis" 在 repowiki 层有 kind 行——两者矛盾。按测试意图补
+             # module 归属: 条目投影进 docker_infra 的特殊配置与命令卡, repowiki
+             # 层对 "Redis" 才有命中; 全部断言与实现仍逐字沿用 brief。
+             "module": "docker_infra"},
+            allow_unicode=True, sort_keys=False)
+        + "---\n\n# Redis 连接超时排查\n\n正文。\n", encoding="utf-8")
+    build_indexes(docs, repo_name="demo")
+    export_repowiki(docs, write=True)  # 条目归属 docker_infra → howto 卡含标题
+    build_sidecar(docs)
+    agent = tmp_path / "agentkb"
+    (agent / "kb").mkdir(parents=True)
+    return docs, agent
+
+
+def test_search_sidecar_matches_query(tmp_path):
+    docs, _agent = _layer_setup(tmp_path)
+    rows, rep = search_sidecar(docs, query="原生概述")
+    assert [r["id"] for r in rows] == ["repowiki://zh/root/overview"]
+    assert rows[0]["kind"] == "repowiki_card"
+    assert rep["rejected"]["filter"] + rep["rejected"]["query"] \
+        + len(rep["matched"]) == rep["scanned"]
+    assert search_sidecar(docs, query="不存在的词xyz")[0] == []
+
+
+def test_search_layers_three_layer_priority(tmp_path):
+    docs, agent = _layer_setup(tmp_path)
+    between = make_repowiki_layer(docs)
+    rows, reports = search_layers_report(
+        [docs, agent], query="Redis", limit=10, between=between)
+    assert rows[0]["id"] == "kb-20261114-d001"  # 项目层优先
+    assert reports[1]["repo"] == "repowiki"
+    # repowiki 层行带 kind, 且排在 agent-kb 之前
+    kinds = [r.get("kind") for r in rows]
+    assert kinds[0] is None and any(k == "repowiki_card" for k in kinds)
+
+
+def test_search_layers_without_between_unchanged(tmp_path):
+    docs, agent = _layer_setup(tmp_path)
+    rows, reports = search_layers_report([docs, agent], query="Redis", limit=10)
+    assert [r["id"] for r in rows] == ["kb-20261114-d001"]
+    assert len(reports) == 2
+
+
+def test_cli_search_includes_repowiki_layer(tmp_path, capsys):
+    docs, agent = _layer_setup(tmp_path)
+    (agent / "kb" / "index.jsonl").write_text("", encoding="utf-8")
+    rc = _dispatch(["search", "--repo", str(docs),
+                    "--agent-kb", str(agent), "--query", "原生概述"])
+    assert rc == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["kind"] == "repowiki_card"
+    assert rows[0]["id"] == "repowiki://zh/root/overview"

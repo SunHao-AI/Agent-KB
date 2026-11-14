@@ -20,7 +20,8 @@ from kb.lint import lint_repo
 from kb.new_entry import create_entry
 from kb.promote import promote
 from kb.query import due_review, get_entry, needs_scope, related, stat
-from kb.repowiki import build_sidecar, export_repowiki
+from kb.repowiki import (build_sidecar, export_repowiki, find_repowiki_root,
+                         make_repowiki_layer)
 
 
 def _date_arg(v: str) -> str:
@@ -370,10 +371,14 @@ def _dispatch(argv: list[str] | None = None) -> int:
     if args.cmd == "search":
         t0 = time.perf_counter()
         layers_list = [repo] + [Path(p) for p in args.agent_kb]
+        between = None
+        if (repo / "kb" / "index.repowiki.jsonl").exists() \
+                and find_repowiki_root(repo):
+            between = make_repowiki_layer(repo)
         res, reports = search_layers_report(
             layers_list, type=args.type, domain=args.domain, tag=args.tag,
             scope=args.scope, status=args.status, confidence=args.confidence,
-            query=args.query, limit=args.limit)
+            query=args.query, limit=args.limit, between=between)
         if kbtrace.trace_enabled(cli_flag=args.trace_on):
             # caller_repo 与索引 repo 字段同源(resolve_repo_name: 显式 --repo-name →
             # index.jsonl 自取 → 目录名兜底)。旧实现取 `--repo` 载体目录名, 而业务仓

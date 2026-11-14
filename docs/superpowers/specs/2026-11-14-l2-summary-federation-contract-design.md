@@ -46,6 +46,16 @@ sections/dedup_key/related/updated/repo)之上**新增两字段**:
   本期只保证: 本地记录带 `origin:"local", uri:null`, 消费方(检索/面板)按
   `origin != "local"` 即视为外接, 不猜前缀。
 
+> **落地后补充(2026-11-15 实测, 裁决=降级为未实现)**: 上句"适配器唯一义务 = 产出该形状
+> 的 JSONL 行"是**目标契约, 非当前可用的接入路径**。直写行实测三崩: `kb index` 整体
+> 重生成会把外部行**静默清除**; 契约示例的最小外部件(无 `type`/`path`)使 `kb stat` 抛
+> `KeyError:'type'`、`kb show` 抛 `KeyError:'path'`; 且 `check_indexes` 逐条重算比对
+> → 外部行使该仓 `index --check` 恒 stale → 每次推送被门禁拦下。三者中任一未解前勿直写。
+> 真接 connector 前须先在 §2 定案并落地: 索引合并保留外部行 + 消费方对非 local 行容错 +
+> `check_indexes` 跳过非 local 行; 或反向把 `type`/`status`/`domain`/`path` 定为外部行
+> **必填**并给适配器映射规则。当前**无任何 connector 生产者在位**, 故本节不影响现网。
+> 详见 `kb show kb-20261114-b226`「接入前置条件」节。
+
 新增字段的索引重建零漂移要求同 §5(存量条目重建后除这两字段外逐字节不变)。
 
 ## 3. summary 字段与生成链路(§2 段, 已确认)
@@ -84,9 +94,19 @@ sections/dedup_key/related/updated/repo)之上**新增两字段**:
 
 ### 3.3 lint 渐进守护(甲-1)
 
-`lint.py` 新增 **warning**(不红灯、不挂门禁): `created >= SUMMARY_REQUIRED_SINCE`
+`lint.py` 新增 **warning**: `created >= SUMMARY_REQUIRED_SINCE`
 (模块常量, 取 `2026-11-15`, 即本 spec 落地次日)的条目缺显式 `summary` 即告警。
 存量条目(created 早于该线)自然豁免, **不做批量回填**、不做六段抽取预填。
+
+> **门禁口径裁决(2026-11-15, 替代初稿"不红灯、不挂门禁")**: 该规则在 **lint 侧恒为
+> warning**(非 strict `kb lint` 不红灯, CI 面 `.github/workflows/kb-ci.yml` 不带
+> `--strict` 故不拦), 但 **pre-push 门禁跑的是 `kb lint --scope <scope> --strict`**
+> (strict 把 warning 升级为硬错误), 且 baseline 为空/不存在 → **11-15 起新建且缺
+> summary 的条目会拦下推送, 五个仓皆然**(2026-11-15 实测, 非明日预测)。此为**有意接受**:
+> 强制写结论句正是本交付目的, 与 plan 终审"提示+强制闭环"一致; 初稿"不挂门禁"仅描述
+> lint 非 strict 面, 不适用于 pre-push。逃生口 `--update-baseline` 对**未来**条目无效
+> (整行精确匹配, 未来 id 随机不可预写), 不能用来预豁免。若日后要撤强制, 改常量
+> `SUMMARY_REQUIRED_SINCE` 即可(勿摘 `--strict`, 那会连带卸掉另外 3 类事故型守护)。
 
 > **落地口径修正(2026-11-14 终审, 两处偏离初稿均已确认)**
 >
@@ -145,8 +165,8 @@ front-matter 有无非空 `summary`。落点: [query.py](../../src/kb/query.py) 
    `origin`/`uri` 两字段外逐字节零漂移; 派生 summary 路径输出逐字节不变;
 2. **schema 边界**: summary 长度 9/10/300/301 四例进 lint 用例(9/301 红灯);
 3. **lint warning**: `created` ≥ 2026-11-15 缺 summary 告警、旧条目豁免、
-   warning 不使 `kb lint` 退出码变红(非 strict; pre-push 经 `--strict` 升级为硬门禁
-   一事见 §3.3 落地口径修正 + 遗留裁决, 属人的裁决项);
+   warning 不使 `kb lint`(非 strict)退出码变红; pre-push 经 `--strict` 升级为硬门禁,
+   已于 2026-11-15 裁决为有意接受, 见 §3.3「门禁口径裁决」;
 4. **Entry.summary() 单测**: 显式值仅折叠空白不截断(300 字原文透传)、
    派生路径既有断言不动全绿;
 5. **returned_chars compact 断言**: CLI 埋点值 == `len(json.dumps(res,

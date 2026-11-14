@@ -15,12 +15,14 @@ severity: high
 summary: 'spec 未定义''缺失''的义项, 两个任务各自补全: lint 实现成键不存在才告警, 另一任务给全部模板加 summary 空串占位, 合起来照模板建档的条目永不触发守护。两任务各自评审均通过,
   缺陷只在整分支评审暴露; 修法是按值判缺失并用端到端探针替代单元断言'
 review_by: '2027-11-14'
+revision:
+  reason: content-edited
+  from_status: accepted
+  at: '2026-11-14'
 verified_by: agent
 verification:
-  evidence: 'lint_repo 四例探针前后对照实测(2026-11-14): 修复前 created=2026-11-20 且 summary 键不存在
-    → 告警, 同日期 summary="" → 不告警(盲区), 两例 created=2026-11-01 均豁免; 判据改为按值后第 2 例转为告警、其余三例不变。代码出处
-    src/kb/lint.py:123; 对应测试改写为 tests/test_lint.py::test_lint_summary_empty_value_counts_as_missing
-    并补存量空串豁免用例; 全量 517 passed、lint --scope agent-kb --strict 退 0'
+  evidence: '终审 F1/F2 修复实测(四例探针前后对照, 见正文「验证」段)+ 修复已入库 c9d8fa7; 本次仅改参考段: 原引用 git-ignored
+    工作区路径对换机读者断链, 改指版本化交付档案, 结论未变'
   reviewed_at: '2026-11-14'
 ---
 
@@ -116,4 +118,4 @@ elif len(s) < 10:
 - 修复提交: 本仓 `fix(lint): summary 缺失按值判, 不再被模板空串占位屏蔽(终审 F1/F2)`
 - 事实源: `docs/superpowers/specs/2026-11-14-l2-summary-federation-contract-design.md` §3.3
   （已补落地口径修正段）
-- 最终评审报告: `.superpowers/sdd/2026-11-14-l2-summary-federation-contract/final-review-report.md`
+- 最终评审报告: `.superpowers/sdd/…/final-review-report.md`(git-ignored 本机工作区, 换机即断链); 结论要点已固化进版本化的交付档案 `docs/superpowers/plans/2026-11-14-l2-summary-federation-contract-pending-tasks.md`

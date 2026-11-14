@@ -610,6 +610,70 @@ def test_cli_show_repowiki_not_found(tmp_path, capsys):
     capsys.readouterr()
 
 
+from mcp.shared.memory import create_connected_server_and_client_session
+
+from kb.mcp_server import build_server
+
+
+async def _mcp_call(server, name, args):
+    async with create_connected_server_and_client_session(server) as client:
+        res = await client.call_tool(name, args)
+        text = res.content[0].text
+        return res.isError, (json.loads(text) if text.startswith(("{", "["))
+                             else text)
+
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_three_layers(tmp_path):
+    docs, agent = _layer_setup(tmp_path)
+    (agent / "kb" / "index.jsonl").write_text("", encoding="utf-8")
+    srv = build_server(docs, agent_kbs=[agent], repo_name="demo")
+    err, out = await _mcp_call(srv, "kb_search", {"query": "原生概述"})
+    assert err is False
+    assert out[0]["kind"] == "repowiki_card"
+    assert out[0]["id"] == "repowiki://zh/root/overview"
+
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_repowiki_card(tmp_path):
+    root, zh, rdir, ddir = _full_tree(tmp_path)
+    docs = _docs_with_entries(tmp_path)
+    export_repowiki(docs, write=True)
+    srv = build_server(docs, repo_name="demo")
+    err, out = await _mcp_call(
+        srv, "kb_get", {"id": "repowiki://zh/docker_infra/architecture_design"})
+    assert err is False
+    assert "kb-20261114-c001" in out
+
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_repowiki_not_found(tmp_path):
+    _full_tree(tmp_path)
+    docs = tmp_path / "docs"
+    srv = build_server(docs, repo_name="demo")
+    err, out = await _mcp_call(
+        srv, "kb_get", {"id": "repowiki://zh/no_such_module/overview"})
+    assert err is True
+    assert "not found: repowiki://zh/no_such_module/overview" in out
+
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_no_sidecar_two_layers_unchanged(tmp_path):
+    docs, agent = _layer_setup(tmp_path)
+    (docs / "kb" / "index.repowiki.jsonl").unlink()
+    (agent / "kb" / "index.jsonl").write_text("", encoding="utf-8")
+    srv = build_server(docs, agent_kbs=[agent], repo_name="demo")
+    err, out = await _mcp_call(srv, "kb_search", {"query": "原生概述"})
+    assert err is False
+    # 无侧车: 两层零命中 → hint 载荷, 绝无 repowiki 行
+    assert isinstance(out, dict) and out["hits"] == []
+    assert "hint" in out
+
+
 def test_cli_show_repowiki_bad_module(tmp_path, capsys):
     _full_tree(tmp_path)
     docs = _docs_with_entries(tmp_path)

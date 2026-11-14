@@ -11,6 +11,8 @@ from kb import sources
 from kb.gate import (DuplicateCandidate, GateViolation, create_draft, review,
                      update_entry)
 from kb.layers import get_layered, related_layers, search_layers_report
+from kb.repowiki import (REPOWIKI_ID_PREFIX, find_repowiki_root,
+                         get_card_by_id, make_repowiki_layer)
 
 
 def _json(obj) -> str:
@@ -65,8 +67,13 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
                     duration_ms=round((time.perf_counter() - t0) * 1000),
                     returned_chars=len(out)))
             return out
+        between = None
+        if (repo / "kb" / "index.repowiki.jsonl").exists() \
+                and find_repowiki_root(repo):
+            between = make_repowiki_layer(repo)
         rows, reports = search_layers_report(
-            layers, type=type, domain=domain, tag=tag, scope=scope, query=query, limit=limit)
+            layers, type=type, domain=domain, tag=tag, scope=scope, query=query,
+            limit=limit, between=between)
         # FR-6.1 联邦: 外接源摘要先行补位(预算=剩余名额), 任何源故障静默跳过
         ext_rows: list[dict] = []
         ext_health: list[dict] = []
@@ -114,7 +121,13 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
 
     @mcp.tool()
     def kb_get(id: str) -> str:
-        """按 id 读取单条全文 markdown(外接源 id 形如 source://<源>/<原生id>)。"""
+        """按 id 读取单条全文 markdown(外接源 id 形如 source://<源>/<原生id>,
+        repowiki 卡 id 形如 repowiki://<lang>/<module_path>/<card>)。"""
+        if id.startswith(REPOWIKI_ID_PREFIX):
+            text = get_card_by_id(repo, id)
+            if text is None:
+                raise ValueError(f"not found: {id}")
+            return text
         got = None
         if id.startswith("source://"):
             for c in connectors:

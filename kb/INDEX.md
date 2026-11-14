@@ -209,3 +209,4 @@
 - [沉淀门控硬编码 scope=project 与 Agent-KB 仓 lint 位置规则互斥，本仓新建条目必使 CI 变红且 Agent 无法自修](pitfall/process/2026-11-11-scope-project-agent-kb-lint-ci-agent.md) · pitfall · process · accepted · Agent-KB 的沉淀门控规定：Agent 新建条目只可能得到 `scope: project`（`kb new --generated` 与 MCP `kb_create` 硬编码，CLI 还会提示 "generated entries
 - [跨仓/跨语言算法契约必须用固定测试向量互验，不能各测各的](pitfall/security/2026-09-19-pitfall-5128.md) · pitfall · security · accepted · security 2026-09-19（T-14 kid / T-17 canonical_json / T-20 media sign） **规则**：所有跨仓密码学契约固定「字面量测试向量」两侧硬编码互验： - kid = PEM 全文
 - [多词检索词被整串匹配静默判零命中(kb 检索不分词)](pitfall/tooling/2026-10-15-kb.md) · pitfall · tooling · accepted · 2026-10-15 观测 agent(flysee 两仓)经 MCP `kb_search` 的真实调用时发现: 自然习惯的 多词查询几乎必然零命中, 且**不报错、不降级、无任何提示**:
+- [联邦 L2 记录契约：index.jsonl 行是外部异构源接入的唯一接口](reference/backend/2026-11-14-federated-l2-record-contract.md) · reference · backend · accepted · 外部异构源接入只需产出含 origin/uri 的 index.jsonl 行；本地条目恒为 origin=local、uri=null，检索与 lint 面零改动。

@@ -55,6 +55,8 @@ kb init --repo docs --agent-kb .agent-kb        # 接入: 生成去绝对路径�
 kb doctor --repo docs --agent-kb .agent-kb      # 接入自检(FAIL 才退 1)
 ```
 
+联邦 L2 记录契约(index.jsonl 行是外部异构源接入的唯一接口): `kb show kb-20261114-b226 --repo .`。
+
 观测面命令(`kb web / serve / spider-live / trace`)与团队令牌配置见 README「观测面板」;
 `traces/` 由每日定时任务自动提交, **不要**随手纳入功能提交。
 

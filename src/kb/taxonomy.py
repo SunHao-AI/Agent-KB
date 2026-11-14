@@ -57,6 +57,8 @@ def derive_schema(tax: dict) -> dict:
         "related": {"type": "array", "items": {"type": "string"}},
         "supersedes": {"type": ["string", "null"]},
         "superseded_by": {"type": ["string", "null"]},
+        # repowiki 桥(spec 2026-11-14 §4.1): 条目 → repowiki 模块归属键, 缺省=不导出
+        "module": {"type": ["string", "null"]},
     }
     # per-type 条件必填: taxonomy types[*].requires 非空的 type,
     # 用 draft 2020-12 allOf + if/then 生成"该 type 必须携带这些字段"规则。

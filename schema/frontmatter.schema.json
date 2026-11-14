@@ -144,6 +144,9 @@
         "string",
         "null"
       ]
+    },
+    "module": {
+      "type": ["string", "null"]
     }
   },
   "allOf": [

@@ -72,3 +72,21 @@ def test_needs_scope_lists_tagged(tmp_repo):
     (d / "b.md").write_text(make_entry(id="kb-20261014-b2b2", tags=["vite"]), encoding="utf-8")
     rows = needs_scope(tmp_repo)
     assert [r["id"] for r in rows] == ["kb-20261014-a1a1"]
+
+
+def test_stat_summary_coverage(tmp_path):
+    """覆盖率只认显式字段: 派生兜底不算 explicit, 空串/缺失都不算(spec §5.1)。"""
+    root = tmp_path / "kbroot"
+    d = root / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261114-aa01", status="accepted",
+                                       summary="连接池上限过低会拖垮高并发接口。"),
+                            encoding="utf-8")
+    (d / "b.md").write_text(make_entry(id="kb-20261114-aa02", status="accepted"),
+                            encoding="utf-8")
+    (d / "c.md").write_text(make_entry(id="kb-20261114-aa03", status="accepted",
+                                       summary='""'), encoding="utf-8")  # YAML 空串, 裸 "" 会变 None
+    build_indexes(root, repo_name="kbroot")
+    s = stat(root)
+    assert s["total"] == 3
+    assert s["summary_coverage"] == {"explicit": 1, "total": 3}

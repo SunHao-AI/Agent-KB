@@ -60,7 +60,7 @@ def _mk(kb_dir: Path, module) -> None:
           "confidence": "verified", "created": "2026-11-14",
           "updated": "2026-11-14", "severity": "medium", "module": module}
     (d / "a.md").write_text("---\n" + yaml.safe_dump(fm, allow_unicode=True,
-                            sort_keys=False) + f"---\n\n# 示例条目\n\n正文。\n",
+                            sort_keys=False) + "---\n\n# 示例条目\n\n正文。\n",
                             encoding="utf-8")
 
 
@@ -117,7 +117,7 @@ def _entry(kb_dir: Path, *, eid: str, type: str = "pitfall",
 
 
 def test_find_repowiki_root_sibling_layout(tmp_path):
-    zh = _tree(tmp_path)
+    _tree(tmp_path)
     assert repowiki.find_repowiki_root(tmp_path / "docs") == tmp_path / ".qoder" / "repowiki"
     # brief 原断言 `.parent == tmp_path` 与上一条对"不存在载体"要求返回
     # tmp_path/.qoder/repowiki 矛盾(两个不存在的同级目录无法由同一纯函数
@@ -127,7 +127,7 @@ def test_find_repowiki_root_sibling_layout(tmp_path):
 
 
 def test_find_repowiki_root_explicit_and_missing(tmp_path):
-    zh = _tree(tmp_path)
+    _tree(tmp_path)
     root = tmp_path / ".qoder" / "repowiki"
     assert repowiki.find_repowiki_root(tmp_path, explicit=str(root)) == root
     assert repowiki.find_repowiki_root(tmp_path, explicit=str(tmp_path / "nope")) is None
@@ -240,7 +240,7 @@ def test_export_dry_run_default_writes_nothing(tmp_path):
 def test_export_write_renders_managed_cards(tmp_path):
     root, zh, rdir, ddir = _full_tree(tmp_path)
     docs = _docs_with_entries(tmp_path)
-    report = export_repowiki(docs, write=True)
+    export_repowiki(docs, write=True)
     card = (ddir / "架构设计.md").read_text(encoding="utf-8")
     assert card.startswith(repowiki.TOOL_MARKER)
     assert "已知陷阱 (pitfall)" in card
@@ -815,7 +815,7 @@ def test_cli_export_corrupt_module_yaml_exits_1(tmp_path, capsys):
 
 
 def test_module_dir_rejects_dir_name_escaping_tree(tmp_path):
-    zh = _tree(tmp_path)
+    _tree(tmp_path)
     modules, locale_dir = repowiki.load_module_tree(
         tmp_path / ".qoder" / "repowiki", "zh")
     modules["root"]["dir_name"] = "../../evil"
@@ -875,7 +875,7 @@ def test_module_dir_multi_level_roundtrip(tmp_path):
 def test_module_dir_rejects_sibling_dir_name(tmp_path):
     """`../<同级名>` 归一化后仍在树内: 前缀比对照这类拦不住, 但它会覆写兄弟模块
     的 _module.yaml 与卡, 所以含 `..` 的 dir_name 一律拒。"""
-    zh = _tree(tmp_path)
+    _tree(tmp_path)
     modules, locale_dir = repowiki.load_module_tree(
         tmp_path / ".qoder" / "repowiki", "zh")
     modules["docker_infra"]["dir_name"] = "../演示仓 demo"

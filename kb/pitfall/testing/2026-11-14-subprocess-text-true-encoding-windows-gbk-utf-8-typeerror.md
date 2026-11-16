@@ -7,10 +7,7 @@ domain:
 - testing
 tags:
 - auto-reviewed
-- promote-to:stack
-- needs-scope-review
-- promoted
-scope: project
+scope: stack
 status: accepted
 confidence: verified
 created: '2026-11-14'
@@ -28,6 +25,8 @@ verification:
     → 6 passed, 证明解码口径是唯一变量; (3) 在捕获点加 encoding=utf-8 errors=replace 后, 默认 GBK 控制台
     → 6 passed 且全量 517 passed, pre-push-gate 实跑 PASS 并完成推送 aed3911..0d0edca'
   reviewed_at: '2026-11-14'
+source:
+  project: Agent-KB
 ---
 
 # subprocess text=True 不指定 encoding: 中文 Windows 按 GBK 解码 UTF-8 子进程输出, 断言伪装成 TypeError

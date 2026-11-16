@@ -126,6 +126,21 @@ kb trace report                               # 零命中周报(高频待消化�
 `KB_SERVE_TOKEN` / `KB_INGEST_URL` 团队态令牌与上报口。指标口径唯一实现 serve,
 面板只做展示; 命中率/零命中榜的改进回路是 `kb trace report`(见 PRD FR-3.5)。
 
+鉴权令牌可用三种方式提供(优先级从高到低): `kb serve --token`、环境变量
+`KB_SERVE_TOKEN`、用户级配置 `~/.kb/config.toml`:
+
+```toml
+[serve]
+token = "你的令牌"
+```
+
+配置里只需写一次, `kb serve` / `kb web` 都会读取。直接打开面板(不带 `?token=`)
+会看到登录卡, 可勾选"记住我 30 天"(默认不勾选); 页头"退出"只撤销当前会话,
+不影响其他设备。60 秒内累计输错 5 次会限流(登录与 `?token=`、`Authorization: Bearer`、
+`?ticket=` 共用计数), 无凭据的匿名请求不计次。cookie 为 HttpOnly + SameSite=Lax,
+令牌不进浏览器存储。局域网共享请只在可信内网使用: HTTP 明文传输, 跨不可信网络
+需前置 HTTPS 反向代理。
+
 ### 团队常开态与令牌分发(PRD FR-2.5)
 
 单人态开箱即用(仅 127.0.0.1, 无鉴权, 本机即边界); 团队态是配置升级而非架构切换。
@@ -149,11 +164,27 @@ git 始终是权威账本, ingest 上报只是直播加速通道(幂等按 trace
 - **要多团队**: 优先双令牌重叠期轮换(serve 并行校验新旧两把), 或每团队独立 serve。
 - **traces/ 年增长 >50MB**: 触发月分卷评审; **>20 人或 ≥2 仓同连一把 serve**: 触发小规模压测。
 
-### trace 提交节奏(D-3 约定)
+### trace 提交节奏(D-3 约定, 2026-11-09 更新)
 
-`traces/` 随检索不断变脏, 约定**每日定时任务自动提交**(每天 18:30, 只 commit 不
-push, 推送仍人工): 平时不必手动提交 traces/, 也不必为它改 pre-push 钩子; 功能提交
-时看到 traces/ 脏属预期, 跳过即可。周报/日报类自动化见 `docs/reports/`。
+`traces/` 随检索不断变脏, 约定**每日定时任务自动提交并推送**(每天 18:30, commit 后
+直接 push origin/master, 随后 `reset origin/master` + `clean -fd traces/` 复原工作树,
+日常保持 clean): 平时不必手动提交 traces/, 也不必为它改 pre-push 钩子。traces/ 现已
+上远端, 各仓 submodule pin 会校验到这些 commit, 钩子不再报"未 push commit 不可达"。
+周报/日报类自动化见 `docs/reports/`。
+
+## RepoWiki 桥
+
+把项目知识投影为 Qoder RepoWiki 文件格式，并把 RepoWiki 纳入 kb 检索。
+
+- `kb repowiki export --repo <载体> [--write] [--force]`：按条目 front-matter
+  可选字段 `module: <module_path>` 归属，聚合进 `.qoder/repowiki/knowledge/zh/`
+  的两类 managed 卡（架构设计/特殊配置与命令）。默认 dry-run；overlay 模式
+  保留 Qoder 原生模块树与原生卡，只写 managed 卡。目标卡已有非本工具内容时
+  拒绝写盘并警告，需 `--force`。
+- `kb index` 自动探测 `.qoder/repowiki` 生成侧车 `kb/index.repowiki.jsonl`；
+  `kb search` 变三层（project kb → repowiki → agent-kb），结果带
+  `kind: "repowiki_card"`；`kb show repowiki://<locale>/<module>/<card>`（MCP
+  `kb_get` 同 id）读卡原文。
 
 ## 贡献流程
 

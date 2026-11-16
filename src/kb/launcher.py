@@ -113,8 +113,9 @@ def open_panel(port: int = 4320, *, repo: Path | None = None, caller: str | None
     params: list[tuple[str, str]] = ([("caller", "*")] if all_projects
                                      else ([("caller", resolved)] if resolved else []))
     team_url, team_token = serve_target()
+    # 配置/环境令牌优先; 显式 token 参数只在本机代拉起时兜底(kb web 当前不暴露 --token)
+    tok = team_token or token
     if team_url and probe_http(team_url, team_token):
-        tok = team_token or token
         team_params = list(params)
         if tok:
             team_params.append(("token", tok))
@@ -124,7 +125,7 @@ def open_panel(port: int = 4320, *, repo: Path | None = None, caller: str | None
         return url, f"team: {team_url}"
     degraded = bool(team_url)  # 配了团队地址但连不上 → 降级(前端横幅明示)
     if not probe_port(port):
-        spawn_serve(root, port, resolved, token=token)
+        spawn_serve(root, port, resolved, token=tok)
         t0 = time.monotonic()
         while not probe_port(port):
             if time.monotonic() - t0 > wait_sec:
@@ -133,6 +134,8 @@ def open_panel(port: int = 4320, *, repo: Path | None = None, caller: str | None
                     f"可手动运行 kb serve --repo {root} 查看报错")
             time.sleep(0.25)
     local_params = list(params)
+    if tok:  # 本机 serve 同样要令牌: 传了却没带上 URL, 面板打开即 401
+        local_params.append(("token", tok))
     if degraded:  # 前端据 degraded=1 挂横幅: "已配置团队实例但不可达"(FR-2.5 禁演"没数据")
         local_params += [("degraded", "1"), ("serve_url", team_url)]
     url = _join_qs(f"http://127.0.0.1:{port}/", local_params)

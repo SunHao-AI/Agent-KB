@@ -51,6 +51,38 @@ def _normalize_lists(fm: dict) -> list[str]:
     return degraded
 
 
+_CN_TERM = "。！？"
+_ASCII_TERM = ".!?"
+_FENCE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
+
+
+def _first_sentence(text: str) -> str:
+    """首个句末终止符处截断(保留终止符)。
+
+    ASCII 终止符须**后接空白**且**前一字符非数字**——否则 `nginx 1.27.3 起支持`
+    会从 `27.3` 那个点被剁开(版本号里的点后接空格是常态)。数字前置的点不当终止符
+    会漏判 "value is 3. Next" 这类句界, 代价只是首句偏长, 对匹配面无害(仍有 limit 截断)。
+    """
+    for i, ch in enumerate(text):
+        if ch in _CN_TERM:
+            return text[: i + 1]
+        if (ch in _ASCII_TERM and i + 1 < len(text) and text[i + 1].isspace()
+                and i > 0 and not text[i - 1].isdigit()):
+            return text[: i + 1]
+    return text
+
+
+def _nonempty_paragraphs(text: str) -> list[str]:
+    """按空行分块, 块内剔除标题行并折叠空白, 返回非空块(与 summary 的取块规则同构)。"""
+    out: list[str] = []
+    for block in re.split(r"\n\s*\n", text):
+        b = re.sub(r"\s+", " ", " ".join(
+            ln for ln in block.splitlines() if not ln.strip().startswith("#"))).strip()
+        if b:
+            out.append(b)
+    return out
+
+
 @dataclass
 class Entry:
     fm: dict
@@ -67,6 +99,12 @@ class Entry:
         return None
 
     def summary(self, limit: int = 120) -> str:
+        # 显式 summary 优先(spec 2026-11-14 §3.2): "空 = 缺失"——strip 后非空才采信;
+        # 仅折叠空白不截断(schema 已限 300, 显式声明即最终消费文案)。派生兜底路径
+        # 逐字节不变, 存量条目输出与索引零漂移(回归锁定见 tests/test_entry.py)。
+        explicit = str(self.fm.get("summary") or "").strip()
+        if explicit:
+            return re.sub(r"\s+", " ", explicit)
         # 按空行分块, 块内剔除标题行(标题可能与正文同块), 取第一个还有正文的块
         for block in re.split(r"\n\s*\n", self.body):
             lines = [ln for ln in block.splitlines() if not ln.strip().startswith("#")]
@@ -74,6 +112,27 @@ class Entry:
             if b:
                 return b[:limit]
         return ""
+
+    def sections_text(self, limit: int = 60, max_paras: int = 20) -> str:
+        """各 H2 段**每个段落**首句的拼接, 只供 index 匹配面(spec §4.2)。
+        不进 INDEX.md、不进检索返回值。
+
+        存在理由: summary 只取正文首块, 向既有条目追加新病灶面时检索面不增长,
+        红线 #3 要求的"先 search 去重"因此自我失效。
+
+        粒度必须是"每段每个段落"而非"每段首段": 追加新发现的物理位置是**段末的
+        另一个段落**, 只取段首等于对最主流的写入路径视而不见(实测 64e8 追加 1400
+        字后「IP 漂移」仍 MISS)。max_paras 给单段封顶, 防超长条目把 L1 常驻索引
+        撑爆——超出部分显式截断, 不静默丢整段。
+        """
+        from kb.dedup import h2_sections  # 运行期反向依赖本模块, 延迟导入避免环
+
+        out = []
+        for _header, content in h2_sections(self):
+            # 围栏整块删除后再分段: 真首句常与紧随的代码块同段, 按段跳过会连主旨句一起丢
+            paras = _nonempty_paragraphs(_FENCE_BLOCK_RE.sub("", content))
+            out.extend(_first_sentence(p)[:limit] for p in paras[:max_paras])
+        return " ".join(out)
 
 
 def parse_entry(path: pathlib.Path) -> Entry:

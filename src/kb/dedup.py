@@ -1,7 +1,10 @@
 from __future__ import annotations
 import hashlib
 import re
-from kb.entry import Entry
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:      # 纯注解用途(本模块无 Entry 运行时使用); 让 entry 可反向导入 h2_sections
+    from kb.entry import Entry
 
 # 规范化删除的标点集(中英文, 固定不可配置, spec §4)
 _PUNCT = (

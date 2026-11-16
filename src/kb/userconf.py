@@ -16,6 +16,8 @@ import os
 import re
 from pathlib import Path
 
+from kb.fskit import write_text_lf
+
 
 def config_path() -> Path:
     return Path.home() / ".kb" / "config.toml"
@@ -114,5 +116,5 @@ def write_serve_config(url: str, token: str | None = None,
             lines.append(f'{k} = "{esc}"')
         lines.append("")
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("\n".join(lines), encoding="utf-8")
+    write_text_lf(p, "\n".join(lines))
     return p

@@ -9,10 +9,10 @@ from mcp.server.fastmcp import FastMCP
 from kb import trace as kbtrace
 from kb import sources
 from kb.gate import (DuplicateCandidate, GateViolation, create_draft, review,
-                     update_draft)
+                     update_entry)
 from kb.layers import get_layered, related_layers, search_layers_report
-
-AUTO_ACCEPT_CAP = 3  # 单次会话(每 server 实例) agent 自审 accepted 上限
+from kb.repowiki import (REPOWIKI_ID_PREFIX, find_repowiki_root,
+                         get_card_by_id, make_repowiki_layer)
 
 
 def _json(obj) -> str:
@@ -32,7 +32,6 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
     name = repo_name or repo.resolve().name.lower()
     connectors = sources.build_connectors()  # FR-6: 默认空(纯本地), KB_SOURCES 开启
     mcp = FastMCP(f"kb-{name}")
-    auto_accepted = 0  # 本会话已自审 accepted 计数
 
     @mcp.tool()
     def kb_search(query: str | None = None, type: str | None = None,
@@ -40,8 +39,9 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
                   scope: str | None = None, limit: int = 10) -> str:
         """检索知识库(项目层优先, 再通用层, 再外接源)。只返回元数据+摘要+路径, 不返回正文。
         draft 条目永不返回。命中后再用 kb_get 读全文。
-        检索语义: 查询按空白分词, 每词须命中 title/tags/keywords/summary(AND);
-        keywords 为正文派生词(报错串/函数名/配置键可直接搜)。中文连写自动按
+        检索语义: 查询按空白分词, 默认每词须命中 title/tags/keywords/summary(AND);
+        AND 零命中且词数≥2 时自动降级放行命中≥2 词的条目(口径见 trace 的
+        match_mode)。keywords 为正文派生词(报错串/函数名/配置键可直接搜)。中文连写自动按
         2-gram 覆盖率匹配, 但仍建议 2-4 字短词。命中按相关性排序(hit_fields
         说明命中在哪个字段)。
         外接源命中 id 形如 source://<源>/<原生id>(source 字段标来源), 同样用 kb_get 读。
@@ -67,8 +67,13 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
                     duration_ms=round((time.perf_counter() - t0) * 1000),
                     returned_chars=len(out)))
             return out
+        between = None
+        if (repo / "kb" / "index.repowiki.jsonl").exists() \
+                and find_repowiki_root(repo):
+            between = make_repowiki_layer(repo)
         rows, reports = search_layers_report(
-            layers, type=type, domain=domain, tag=tag, scope=scope, query=query, limit=limit)
+            layers, type=type, domain=domain, tag=tag, scope=scope, query=query,
+            limit=limit, between=between)
         # FR-6.1 联邦: 外接源摘要先行补位(预算=剩余名额), 任何源故障静默跳过
         ext_rows: list[dict] = []
         ext_health: list[dict] = []
@@ -92,7 +97,8 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
             suggest = next((r["suggest"] for r in reports if r.get("suggest")), [])
             out = _compact({"hits": [],
                             "hint": (f"scanned {scanned}: 死于过滤器 {n_f}, "
-                                     f"死于词匹配 {n_q}; 建议用更短单 token 重试"),
+                                     f"死于词匹配 {n_q}; AND 与部分命中均已尝试, "
+                                     f"建议更换关键词或按 suggest 改写"),
                             "suggest": suggest,
                             "sources": ext_health or None})
         if kbtrace.trace_enabled():
@@ -115,7 +121,20 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
 
     @mcp.tool()
     def kb_get(id: str) -> str:
-        """按 id 读取单条全文 markdown(外接源 id 形如 source://<源>/<原生id>)。"""
+        """按 id 读取单条全文 markdown(外接源 id 形如 source://<源>/<原生id>,
+        repowiki 卡 id 形如 repowiki://<lang>/<module_path>/<card>)。"""
+        if id.startswith(REPOWIKI_ID_PREFIX):
+            text = get_card_by_id(repo, id)
+            # 与 CLI show 同口径: 卡读取是 L3 消费, 不入账则 meta_only 失真。
+            if kbtrace.trace_enabled():
+                kbtrace.append_event(kbtrace.build_get_event(
+                    trace_id=kbtrace.latest_search_id(name, entry_id=id),
+                    source="mcp", caller_repo=name,
+                    id=id, layer="repowiki", ok=text is not None,
+                    chars=len(text) if text is not None else None))
+            if text is None:
+                raise ValueError(f"not found: {id}")
+            return text
         got = None
         if id.startswith("source://"):
             for c in connectors:
@@ -144,12 +163,14 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
 
     @mcp.tool()
     def kb_create(type: str, domain: str, title: str, body: str,
-                  tags: list[str] | None = None, severity: str | None = None) -> str:
+                  tags: list[str] | None = None, severity: str | None = None,
+                  summary: str | None = None) -> str:
         """沉淀新知识。强制 status=draft / confidence=speculative / scope=project。
-        查重命中会失败并返回候选 id, 此时应改用 kb_update。单次仅允许 1 条。"""
+        查重命中会失败并返回候选 id, 此时应改用 kb_update。单次仅允许 1 条。
+        summary 传一句话结论句, 缺省时退回正文派生(检索面质量更低)。"""
         try:
             e = create_draft(repo, type=type, domain=domain, title=title,
-                             body=body, tags=tags, severity=severity,
+                             body=body, tags=tags, severity=severity, summary=summary,
                              agent_kbs=tuple(kbs))
         except DuplicateCandidate as exc:
             raise ValueError("duplicate candidates: "
@@ -160,10 +181,18 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
 
     @mcp.tool()
     def kb_update(id: str, title: str | None = None, body: str | None = None,
-                  tags: list[str] | None = None, severity: str | None = None) -> str:
-        """更新**本项目 draft 条目**。accepted/proposed 一律拒绝(人工 CLI 专用)。"""
+                  tags: list[str] | None = None, severity: str | None = None,
+                  summary: str | None = None) -> str:
+        """更新**本项目条目**正文/元数据。
+
+        draft/proposed 直接改; accepted 改完自动降级 proposed 并清掉终审留痕
+        (结论已被改动, 必须重审), 审计痕迹写进 revision;
+        deprecated/superseded 终态拒绝编辑。scope 与 status 本身不在此入口,
+        状态流转走 kb_review, scope 上提只能人工 CLI。
+        summary 传一句话结论句, 缺省时退回正文派生(检索面质量更低)。"""
         try:
-            e = update_draft(repo, id, title=title, body=body, tags=tags, severity=severity)
+            e = update_entry(repo, id, title=title, body=body, tags=tags, severity=severity,
+                             summary=summary)
         except FileNotFoundError:
             raise ValueError(f"not found in project layer: {id}") from None
         return _json({**e.fm, "path": str(e.path)})
@@ -176,25 +205,20 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
         规则: 流转必须沿合法路径(draft→accepted 或 proposed→accepted);
         accepted 必须带实测 evidence 并把 confidence 提升为 verified/probable,
         否则被拒(speculative 不可 accepted)。自审 accepted 会打 auto-reviewed
-        留痕, 单会话最多 3 条。scope 上提(stack/universal)仍只能人工 CLI。"""
-        nonlocal auto_accepted
+        留痕供事后抽查回滚, 终审条数不限(节流靠 kb_create 的单任务沉淀上限,
+        清理存量 backlog 不该被切成多个会话)。scope 上提(stack/universal)仍只能人工 CLI。"""
         try:
             if to == "accepted":
                 if not (evidence and evidence.strip()):
                     raise GateViolation(
                         f"{id}: accepted 需先完成自行验证并附 evidence"
                         f"(当前 confidence=speculative 不可 accepted)")
-                if auto_accepted >= AUTO_ACCEPT_CAP:
-                    raise GateViolation(
-                        f"{id}: 单次会话自主终审已达上限 {AUTO_ACCEPT_CAP} 条")
             e = review(repo, id, to, by="agent", confidence=confidence,
                        evidence=evidence)
         except GateViolation as exc:
             raise ValueError(str(exc)) from None
         except FileNotFoundError:
             raise ValueError(f"not found in project layer: {id}") from None
-        if to == "accepted":
-            auto_accepted += 1
         return _json({**e.fm, "path": str(e.path)})
 
     return mcp

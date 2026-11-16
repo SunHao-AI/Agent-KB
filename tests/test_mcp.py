@@ -115,11 +115,16 @@ async def test_create_duplicate_rejected(layers):
     assert err is True and "kb-20261014-e1e1" in out
 
 
-async def test_update_non_draft_rejected(layers):
+async def test_update_accepted_downgrades(layers):
+    """2026-11-05 自助化: kb_update 不再拒已终审条目, 而是改完自动降级重审。"""
     proj, kb = layers
     srv = build_server(proj, agent_kbs=[kb], repo_name="docs")
-    err, out = await _call(srv, "kb_update", {"id": "kb-20261014-e1e1", "body": "x"})
-    assert err is True and "only draft" in out
+    err, out = await _call(srv, "kb_update", {
+        "id": "kb-20261014-e1e1", "tags": ["vite", "hmr"]})
+    assert err is False, out
+    assert out["status"] == "proposed"
+    assert out["revision"]["from_status"] == "accepted"
+    assert "verified_by" not in out and "verification" not in out
 
 
 # --- kb_review: agent 自审终审(保守放开: 仅状态流转, scope 仍人工) ---
@@ -172,23 +177,22 @@ async def test_review_illegal_to(layers):
     assert err is True
 
 
-async def test_review_session_cap_three(layers):
+async def test_review_no_session_cap(layers):
+    """2026-11-05 自助化: 终审存量 backlog 不该被会话上限切成多个会话。
+    沉淀节流仍是红线 #5 的约定(单任务 ≤3 条), accepted 的机械硬约束只剩
+    evidence + confidence 提升 + auto-reviewed 留痕。"""
     proj, _ = layers
     srv = build_server(proj, repo_name="docs")  # 每 server 实例即一次 agent 会话
     # 四条真正独立的主题: 查重池纳入 draft 后(第十六轮走查), 共用 CJK 词组的标题
     # 会被正确判重, 故"独立验证"必须各用不同 ≥3 字中文词组, 否则第二起即被拦
     topics = ["连接池上限过低", "慢日志同步刷盘", "主从切换丢写", "热键集中单片"]
-    ok_ids = [await _create(srv, f"Redis {topics[i]} 验证{i}") for i in range(3)]
-    for eid in ok_ids:
-        err, _ = await _call(srv, "kb_review", {
+    for i, t in enumerate(topics):
+        eid = await _create(srv, f"Redis {t} 验证{i}")
+        err, out = await _call(srv, "kb_review", {
             "id": eid, "to": "accepted", "confidence": "verified",
             "evidence": "实测复现并通过"})
-        assert err is False
-    fourth = await _create(srv, f"Redis {topics[3]} 验证9")
-    err, out = await _call(srv, "kb_review", {
-        "id": fourth, "to": "accepted", "confidence": "verified",
-        "evidence": "实测复现并通过"})
-    assert err is True and "上限" in out
+        assert err is False, out
+        assert out["status"] == "accepted" and "auto-reviewed" in (out.get("tags") or [])
 
 
 async def test_create_dedup_against_existing_draft(layers):

@@ -9,6 +9,7 @@ status: draft
 severity: medium
 confidence: speculative
 created: YYYY-MM-DD
+summary: ""
 updated: YYYY-MM-DD
 ---
 

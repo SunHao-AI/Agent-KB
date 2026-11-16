@@ -23,11 +23,12 @@ from kb.spider_export import spider_id
 COMPLETE_AFTER_SEC = 5.0     # search 后无新 get 即定格(可回放)
 _POLL_SEC = 0.5
 
-# route 四色语义(与面板一致): code=项目层, model=通用层, ext=外接源(B-1, PRD 指定
-# #F34A87), you=已读消费
+# route 语义(与面板一致): code=项目层, model=通用层, you=已读消费。
+# 公开版对端(lib/config.js ROUTES)只认 code/model/you: 外接源命中并入 model,
+# 区分信息留在 label 的"外接 <源>: "前缀(2026-11-11 对端白名单实测, 同
+# spider_export 的切换原因——多一个 ext 键会被 normalizeConfig 整包拒)。
 ROUTES = {"code": {"label": "项目层命中", "color": "#42D6A4"},
           "model": {"label": "通用层命中", "color": "#F28A76"},
-          "ext": {"label": "外接源命中", "color": "#F34A87"},
           "you": {"label": "已读消费", "color": "#F0CA57"}}
 
 
@@ -126,13 +127,13 @@ def event_to_updates(search: dict) -> tuple[dict, list[dict]]:
                            "route": "code" if ly.get("repo") == proj_repo else "model",
                            "status": "running",
                            "detail": "hit: " + "+".join(m.get("hit_fields") or [])})
-    for e in search.get("ext") or []:  # 外接源命中 → ext 分支色(粉), label 带源名
+    for e in search.get("ext") or []:  # 外接源命中并入 model(公开版对端无 ext 分支)
         for eid in e.get("hits", []):
             if eid not in seen:
                 seen.add(eid)
                 events.append({"id": spider_id(eid),
                                "label": f"外接 {e.get('source')}: {eid}"[:40],
-                               "route": "ext", "status": "running",
+                               "route": "model", "status": "running",
                                "detail": f"source://{e.get('source')}"})
     q = search.get("query") or "-"
     cfg = {"title": f"KB 直播 {search.get('caller_repo', '?')}"[:80],
@@ -152,10 +153,14 @@ def run(root: Path | None = None, *, spider_home: str | None = None,
     offsets: dict[Path, int] = {}
     active: dict[str, dict] = {}   # trace_id → {session, last_ts, pending_reads}
     t0 = time.monotonic()
-    # 首见文件 birth 判定必须用 wall-clock(与 st_ctime 同钟系): 旧实现拿
-    # monotonic 的 t0 与 epoch 秒的 st_ctime 比, 恒 False → 每次启动把所有历史
-    # trace 从头回放(会话洪泛)。serve watcher 用 time.time() 是对的, 此处对齐。
-    birth = time.time()
+    # 首见文件"启动前已存在"的判定用**启动时目录快照**, 不用时钟比对:
+    # §46 曾拿 monotonic 与 st_ctime 比(不同钟系恒 False → 历史全量回放); 改成
+    # wall-clock `st_ctime >= birth` 后仍受粒度混叠——实测(2026-10-29, 本机 Temp 区)
+    # "建文件后立刻取 birth" 200 次里 131 次 ctime >= birth(ctime 粒度粗于建文件与
+    # 取 birth 的间隔), 启动前毫秒级刚写的历史文件会被误判为新文件回灌。快照判定
+    # 是确定性的: 启动瞬间在目录里的文件 = 历史(offsets=size), 之后新出现的才从头播。
+    d0 = kbtrace.traces_dir(root)
+    preexisting = {f.name for f in d0.glob("*.jsonl")} if d0.exists() else set()
     try:
         while not max_sec or time.monotonic() - t0 < max_sec:
             d = kbtrace.traces_dir(root)
@@ -166,7 +171,7 @@ def run(root: Path | None = None, *, spider_home: str | None = None,
                     pos = offsets.get(f)
                     if pos is None:
                         # 首见文件: 启动后新文件从头播, 启动前已有的只记偏移不回灌
-                        offsets[f] = 0 if st.st_ctime >= birth else size
+                        offsets[f] = size if f.name in preexisting else 0
                         continue
                     if size <= pos:
                         if size < pos:  # 文件被截断/重写: 重置

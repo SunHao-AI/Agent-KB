@@ -8,6 +8,7 @@ scope: project
 status: draft
 confidence: speculative
 created: YYYY-MM-DD
+summary: ""
 updated: YYYY-MM-DD
 ---
 

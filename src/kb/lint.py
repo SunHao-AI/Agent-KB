@@ -11,6 +11,10 @@ from kb.taxonomy import load_taxonomy, derive_schema
 # 占位段检测用: 剥离 HTML 注释后判断段内容是否为空
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
+# summary 渐进守护(spec 2026-11-14 §3.3): 只对新条目要"结论句", 存量不追(批量回填会产
+# 数百条机翻摘要噪音)。created 判界用 ISO 字符串比较(字典序即时间序), 不做日期解析。
+SUMMARY_REQUIRED_SINCE = "2026-11-15"
+
 
 def _placeholder_warnings(entry, sections: list[str]) -> list[str]:
     """该 type taxonomy sections 定义的每个 H2 段, 段内容剥离 HTML 注释后为空
@@ -72,7 +76,16 @@ def lint_repo(repo_root: Path, scope: str = "project",
         for err in sorted(validator.iter_errors(e.fm), key=lambda x: x.json_path):
             errors.append(f"{rid}: schema {err.json_path}: {err.message}")
         if e.fm.get("scope") == "project" and scope == "agent-kb":
-            errors.append(f"{rid}: scope=project must not live in agent-kb")
+            # draft 豁免: 门控通道(kb new --generated / kb_create)在 Agent-KB 仓内
+            # 只能产出 scope=project 的暂存草稿(红线 #2: Agent 永不改 scope), 终审
+            # 落地(set-scope stack)前不算违规——否则 Agent 在本仓沉淀必使 CI 变红
+            # 且无法自修(2026-11-11 实测, kb-20261111-c872)。只豁免 draft:
+            # proposed 及以上仍是 error, 防止"项目私有知识常驻通用仓"反向漏洞。
+            msg = f"{rid}: scope=project must not live in agent-kb"
+            if e.fm.get("status") == "draft":
+                errors.append(f"warning: {msg} (draft 暂存待终审)")
+            else:
+                errors.append(msg)
         if e.fm.get("scope") != "project" and scope == "project":
             errors.append(f"{rid}: scope!=project must be promoted to agent-kb")
         for f in ("related",):
@@ -100,6 +113,19 @@ def lint_repo(repo_root: Path, scope: str = "project",
         type_sections = tax["types"].get(e.fm.get("type"), {}).get("sections", [])
         for msg in _placeholder_warnings(e, type_sections):
             errors.append(f"warning: {rid}: {msg}")
+        # summary 渐进守护(spec 2026-11-14 §3.3): 缺失按**值**判(strip 后为空即缺失),
+        # 与另两处"空 = 缺失"同口径——schema 放行空串(占位合法)、Entry.summary 空值回落
+        # 派生、query.stat 也按 strip 后非空计显式覆盖。改成只认"键不存在"曾被认为可以
+        # 豁免模板占位, 实际后果是守护线被自己的模板屏蔽: 8 个模板 front-matter 都带
+        # `summary: ""`, 照模板建档的条目天然带空串键, 永远报不出来(2026-11-14 终审实测)。
+        # 脏值只报非空且 strip 后 <10(schema 的 1-9 硬错误归 schema 校验段管,
+        # 这里是给人看的可行动提示, created 任意日期都报)。
+        s = str(e.fm.get("summary") or "").strip()
+        if not s:
+            if str(e.fm.get("created", "")) >= SUMMARY_REQUIRED_SINCE:
+                errors.append(f"warning: {rid}: 缺 summary(建议一句结论: 条件+结论+动作, 10-300 字)")
+        elif len(s) < 10:
+            errors.append(f"warning: {rid}: summary 仅 {len(s)} 字符, 难承载结论句(建议 10-300)")
     # 指纹冲突检测: 规范化源短于 MIN_FP_LEN 不参检(防测试桩/占位段互撞),
     # 门槛常量唯一事实源在 kb.dedup
     fp_map: dict[str, list[str]] = {}

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from kb.dedup import fingerprint, fingerprint_source, fingerprint_text
 from kb.entry import Entry, parse_entry, dump_entry, iter_entry_paths
+from kb.fskit import write_text_lf
 from kb.new_entry import create_entry
 from kb.taxonomy import load_taxonomy
 
@@ -98,6 +99,26 @@ def _dup_hits(repos: list[Path], fp: str, title: str) -> list[dict]:
     return hits
 
 
+def _strip_h1_lines(body: str) -> str:
+    """body 参数契约是"不含 H1 的正文"——唯一 H1 由写入口统一前置。调用方误传
+    整篇文档(含 H1)时, 旧实现原样拼接出双 H1, 要等 lint 才报 "exactly one H1"
+    (2026-11-11 实际踩中两轮: 追加"新发现"传了含旧 H1 的全文, 修 H1 的脚本又基于
+    e.body 再传一次, 每改一轮多一个)。写入口先剥掉围栏外全部 H1 行, 与 lint 的
+    围栏感知计数同口径(``` 块内的 "# " 是内容不是标题); 幂等——剥过的正文再传
+    进来不变。"""
+    out: list[str] = []
+    in_fence = False
+    for ln in body.splitlines():
+        if ln.strip().startswith("```"):
+            in_fence = not in_fence
+            out.append(ln)
+            continue
+        if not in_fence and ln.strip().startswith("# "):
+            continue
+        out.append(ln)
+    return "\n".join(out)
+
+
 def _check_severity(severity: str | None) -> None:
     """severity 枚举守门(第三十八轮走查): CLI 面有 argparse choices 挡, MCP 面经
     gate 直写**没有**任何枚举校验——`severity='blocker'` 一路落盘进 draft 索引,
@@ -111,6 +132,7 @@ def _check_severity(severity: str | None) -> None:
 
 def create_draft(repo, *, type: str, domain: str, title: str, body: str | None = None,
                  tags: list[str] | None = None, severity: str | None = None,
+                 summary: str | None = None,
                  agent_kbs: tuple = (), today: dt.date | None = None) -> Entry:
     """Agent 唯一写入口: 强制 draft/speculative/project + 查重拒建."""
     _check_severity(severity)
@@ -125,15 +147,18 @@ def create_draft(repo, *, type: str, domain: str, title: str, body: str | None =
         raise DuplicateCandidate(hits)
     e = create_entry(Path(repo), type=type, domain=domain, scope="project",
                      title=title, generated=True, today=today)
-    if body or tags or severity:
+    if body or tags or severity or summary:
         cur = parse_entry(e.path)
         if body:
-            cur.body = f"\n# {title}\n\n{body.strip()}\n"
+            cur.body = f"\n# {title}\n\n{_strip_h1_lines(body).strip()}\n"
         if tags:
             cur.fm["tags"] = list(tags)
         if severity:
             cur.fm["severity"] = severity
-        e.path.write_text(dump_entry(cur), encoding="utf-8")
+        # 空串跳过=保持缺失(与 body/tags 同口径): 新建场景没有"清空既有值"的语义
+        if summary:
+            cur.fm["summary"] = summary
+        write_text_lf(e.path, dump_entry(cur))
         e = parse_entry(e.path)
     _reindex(repo)  # §44: 新建 draft 要进 index.draft.jsonl——get_entry/kb_get/related
     return e        # 的底座 query._records 只读两个索引文件, 不重建则"create 返回
@@ -165,7 +190,7 @@ def _find(repo, id: str) -> Path:
 
 def _save(p: Path, fm: dict, body: str, today: dt.date) -> Entry:
     fm["updated"] = today.isoformat()
-    p.write_text(dump_entry(Entry(fm=fm, body=body, path=p)), encoding="utf-8")
+    write_text_lf(p, dump_entry(Entry(fm=fm, body=body, path=p)))
     return parse_entry(p)
 
 
@@ -176,20 +201,41 @@ def _reindex(repo) -> None:
     (draft 池现算可见)"变为"应进 live 池"——不重建则检索与查重**双双隐身**: 红线1
     承诺的"agent 自审 accepted 无需等人工"闭环断裂, 且下一个任务感知不到它的存在,
     会把同一条知识重复沉淀。与 export_entry 搬移后重建双方索引(第十四轮)同一先例。
-    repo_name 口径与 cli index 一致(resolve().name.lower())。"""
-    from kb.index import build_indexes  # 局部导入: index 侧不反向依赖 gate
-    build_indexes(Path(repo), repo_name=Path(repo).resolve().name.lower())
+    repo_name 口径与 cli index 一致(resolve_repo_name: 已有索引自取, 无索引才
+    回落目录名)。写路径若从目录名反推, 会把生成时固化的标签改掉(业务仓 docs
+    载体 → "docs" 而非仓名), 每写一条就与已提交索引产生一次无意义 diff, 并让
+    `index --check` 重新变 stale。"""
+    from kb.index import (  # 局部导入: index 侧不反向依赖 gate
+        build_indexes,
+        resolve_repo_name,
+    )
+    repo = Path(repo)
+    build_indexes(repo, repo_name=resolve_repo_name(repo))
 
 
-def update_draft(repo, id: str, *, title: str | None = None, body: str | None = None,
+# 编辑即降级重审(2026-11-05 自助化): 旧口径"仅 draft 可编辑"把人挤成瓶颈——补一次
+# tags(红线 #3b 强制要求)或加一段"新发现"都要先把条目降回 draft。放宽为
+# draft/proposed 全量可改、accepted 可改但自动退回 proposed, 终态仍不可写。
+_EDITABLE = ("draft", "proposed", "accepted")
+
+
+def update_entry(repo, id: str, *, title: str | None = None, body: str | None = None,
                  tags: list[str] | None = None, severity: str | None = None,
+                 summary: str | None = None,
                  today: dt.date | None = None) -> Entry:
-    """人工 CLI: 仅 draft 可编辑正文/元数据."""
+    """编辑本项目条目正文/元数据。
+
+    draft/proposed 直接改; accepted 改完自动降级 proposed(结论已被改动, 必须重审),
+    并清掉 verified_by/verification/auto-reviewed——它们记录的是"当时通过终审的证据",
+    结论变了还留着会误导事后抽查。审计痕迹写进 fm["revision"]。
+    deprecated/superseded 是终态(与 _TRANSITIONS 一致), 拒绝编辑。
+    """
     _check_severity(severity)
     p = _find(repo, id)
     e = parse_entry(p)
-    if e.fm.get("status") != "draft":
-        raise GateViolation(f"{id}: only draft entries are editable, current status={e.fm.get('status')}")
+    status = e.fm.get("status", "")
+    if status not in _EDITABLE:
+        raise GateViolation(f"{id}: {status or 'unknown'} entries are not editable")
     fm = dict(e.fm)
     cur_body = e.body
     h1 = e.h1() or fm.get("title", "")
@@ -197,14 +243,30 @@ def update_draft(repo, id: str, *, title: str | None = None, body: str | None = 
         fm["title"] = title
         cur_body = cur_body.replace(f"# {h1}", f"# {title}", 1)
     if body:
-        cur_body = f"\n# {fm.get('title', h1)}\n\n{body.strip()}\n"
+        cur_body = f"\n# {fm.get('title', h1)}\n\n{_strip_h1_lines(body).strip()}\n"
     if tags is not None:
         fm["tags"] = list(tags)
     if severity:
         fm["severity"] = severity
+    if summary is not None:
+        # kb_update 传空串 = 清空显式结论(回退派生兜底), 与既有 title/tags 的
+        # "传了才覆盖"一致。用 pop 而非置空串: 空串与缺失在 lint(按值判)、
+        # Entry.summary、query.stat 三处同义, 但落盘留空串会让 front-matter 里
+        # 多一个语义为"无"的键, 不如直接没有干净。
+        if summary:
+            fm["summary"] = summary
+        else:
+            fm.pop("summary", None)
+    if status == "accepted":
+        d = (today or dt.date.today()).isoformat()
+        fm["status"] = "proposed"
+        fm["revision"] = {"reason": "content-edited", "from_status": "accepted", "at": d}
+        fm.pop("verified_by", None)
+        fm.pop("verification", None)
+        fm["tags"] = [t for t in (fm.get("tags") or []) if t != "auto-reviewed"]
     e = _save(p, fm, cur_body, today or dt.date.today())
-    _reindex(repo)  # §44: title/body/tags 都是 draft 索引列(summary/dedup_key 派生
-    return e        # 自它们), 滞留则 kb_get 返回旧文、去重指纹与面板展示全部失真
+    _reindex(repo)  # §44: title/body/tags 都是索引列(summary/dedup_key 派生自它们),
+    return e        # 滞留则 kb_get 返回旧文、去重指纹与面板展示全部失真
 
 
 def review(repo, id: str, to: str, today: dt.date | None = None, *,
@@ -230,7 +292,29 @@ def review(repo, id: str, to: str, today: dt.date | None = None, *,
     if to == "accepted" and confidence in ("verified", "probable"):
         fm["confidence"] = confidence
     frm = e.fm.get("status", "")
-    if to not in _TRANSITIONS.get(frm, set()):
+    if frm == to == "accepted":
+        # 复核升级通道(kb-20261109-0ac8): _TRANSITIONS 中 accepted 无回自身出边,
+        # 后来拿到实测证据要升 confidence 时, 纯 CLI 会话(MCP kb_update 的降级重审
+        # 路径不可用)没有任何合规通道。放行 accepted 自环, 但语义是"复核"而非重复
+        # 终审: 必须带非空 evidence + confidence 严格升级(verified > probable >
+        # speculative), 否则拒绝——防止无信息量的自环刷 updated/verification。
+        # 审计留痕走下方既有 accepted 分支(verification 覆盖为本次证据)。
+        order = load_taxonomy()["enums"]["confidence"]   # [verified, probable, ...]
+        cur_c = e.fm.get("confidence")   # 用提升前的原值比较(fm 已在上文被写入
+        # --confidence, 读 fm 会把"本次要升到的档"误判成当前档, 使正常升级自拒)
+        if not (evidence or "").strip():
+            raise GateViolation(
+                f"{id}: accepted reverification requires --evidence")
+        if (confidence not in order or confidence == cur_c
+                or cur_c not in order):
+            raise GateViolation(
+                f"{id}: accepted reverification requires confidence upgrade "
+                f"(current: {cur_c})")
+        if order.index(confidence) > order.index(cur_c):
+            raise GateViolation(
+                f"{id}: accepted reverification cannot lower confidence "
+                f"({cur_c} -> {confidence})")
+    elif to not in _TRANSITIONS.get(frm, set()):
         raise GateViolation(f"{id}: illegal transition {frm} -> {to}")
     if to == "accepted" and fm.get("confidence") == "speculative":
         raise GateViolation(f"{id}: confidence=speculative must be verified before accepted")
@@ -337,13 +421,15 @@ def export_entry(project_repo, agent_kb_repo, id: str, *, to_scope: str,
     fm["source"] = {**src_meta,
                     "project": src_meta.get("project") or _project_name(project_repo)}
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(dump_entry(Entry(fm=fm, body=e.body, path=dst)), encoding="utf-8")
+    write_text_lf(dst, dump_entry(Entry(fm=fm, body=e.body, path=dst)))
     src.unlink()
     # 搬移后重建双方索引: 旧实现两仓 index 均滞留——源仓检索命中已删条目(断链),
     # 目标仓检索看不到新条目直到有人手动 kb index(第十四轮走查)
-    from kb.index import build_indexes  # 局部导入: index 侧不反向依赖 gate
-    build_indexes(Path(project_repo),
-                  repo_name=Path(project_repo).resolve().name.lower())
-    build_indexes(Path(agent_kb_repo),
-                  repo_name=Path(agent_kb_repo).resolve().name.lower())
+    from kb.index import (  # 局部导入: index 侧不反向依赖 gate
+        build_indexes,
+        resolve_repo_name,
+    )
+    for lib in (project_repo, agent_kb_repo):
+        lib = Path(lib)
+        build_indexes(lib, repo_name=resolve_repo_name(lib))
     return dst

@@ -295,3 +295,92 @@ def test_all_readers_share_single_discovery_rule(tmp_repo):
             pass
     due = {d["id"] for d in due_review(tmp_repo, dt.date(2030, 1, 1))}
     assert due == {"kb-20261013-d1d1"}   # 散文件/外仓条目同样不入待复核
+
+
+# --- draft 豁免(kb-20261111-c872): Agent 在本仓沉淀的暂存草稿不使 CI 变红 ---
+def test_agent_kb_draft_project_scope_is_warning_only(tmp_repo):
+    # 门控通道产物(draft + scope=project)在 agent-kb 范围降为 warning, 不出 error
+    _put(tmp_repo, "kb/pitfall/frontend/a.md",
+         make_entry(scope="project", status="draft", confidence="speculative",
+                    severity="medium"))
+    errs = lint_repo(tmp_repo, scope="agent-kb")
+    assert any(m.startswith("warning: ") and "must not live in agent-kb" in m
+               for m in errs)
+    assert not any(not m.startswith("warning: ") and "must not live in agent-kb"
+                   in m for m in errs)
+
+
+def test_agent_kb_proposed_project_scope_still_error(tmp_repo):
+    # 只豁免 draft: proposed 及以上仍是 error, 封死"项目私有知识常驻通用仓"的反向漏洞
+    for st in ("proposed", "accepted", "deprecated"):
+        (tmp_repo / "kb" / "pitfall" / "frontend").mkdir(parents=True, exist_ok=True)
+        _put(tmp_repo, "kb/pitfall/frontend/a.md",
+             make_entry(scope="project", status=st, confidence="probable",
+                        severity="medium"))
+        errs = lint_repo(tmp_repo, scope="agent-kb")
+        assert any(not m.startswith("warning: ") and "must not live in agent-kb"
+                   in m for m in errs), st
+
+
+def test_lint_summary_missing_only_for_new_entries(tmp_repo):
+    """存量(created < SUMMARY_REQUIRED_SINCE)不告警; 新条目缺 summary 告警。"""
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True)
+    # severity 是 pitfall 的条件必填: 不带上条 schema 硬错误会混进"零硬错误"断言
+    (d / "old.md").write_text(make_entry(id="kb-20260101-aa01", severity="medium"),
+                              encoding="utf-8")
+    (d / "new.md").write_text(make_entry(id="kb-20261120-aa02", created="2026-11-20",
+                                         updated="2026-11-20", severity="medium"),
+                              encoding="utf-8")
+    msgs = lint_repo(tmp_repo, scope="project")
+    warns = [m for m in msgs if m.startswith("warning: ")]
+    assert any("kb-20261120-aa02" in m and "缺 summary" in m for m in warns)
+    assert not any("kb-20260101-aa01" in m for m in warns)
+    assert not [m for m in msgs if not m.startswith("warning: ")]   # 只加 warning 不进硬闸门
+
+
+def test_lint_summary_empty_value_counts_as_missing(tmp_repo):
+    """空串 = 缺失(与 schema/Entry.summary/query.stat 同一口径): 新条目照模板留着
+    `summary: ""` 也要告警——否则守护线被模板占位永久屏蔽(2026-11-14 终审 F1)。
+    存量(created 早于守护线)仍豁免。"""
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True)
+    (d / "p.md").write_text(make_entry(id="kb-20261120-aa03", created="2026-11-20",
+                                       updated="2026-11-20",
+                                       summary="Redis 连接池默认过低会拖垮高并发接口。"),
+                            encoding="utf-8")
+    (d / "e.md").write_text(make_entry(id="kb-20261120-aa04", created="2026-11-20",
+                                       updated="2026-11-20", summary='""'), encoding="utf-8")
+                                       # '""' 是 YAML 空串字面量; 裸 "" 会产出 `summary: ` → None
+    (d / "o.md").write_text(make_entry(id="kb-20261012-aa06", created="2026-10-12",
+                                       updated="2026-11-20", summary='""'), encoding="utf-8")
+    warns = [m for m in lint_repo(tmp_repo, scope="project") if m.startswith("warning: ")]
+    assert not any("kb-20261120-aa03" in m for m in warns)          # 合规值不打扰
+    assert any("kb-20261120-aa04" in m and "缺 summary" in m for m in warns)
+    assert not any("kb-20261012-aa06" in m for m in warns)          # 存量仍豁免
+
+
+def test_lint_summary_dirty_short_value(tmp_repo):
+    """1-9 字符脏值: schema 硬错误(Task 1) + 可读性 warning(本规则)。"""
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True)
+    (d / "s.md").write_text(make_entry(id="kb-20261012-aa05", summary="太短"),
+                            encoding="utf-8")
+    msgs = lint_repo(tmp_repo, scope="project")
+    assert any("summary" in m and "schema" in m for m in msgs if not m.startswith("warning: "))
+    assert any("kb-20261012-aa05" in m and "summary" in m for m in msgs if m.startswith("warning: "))
+
+
+def test_lint_existing_rules_unaffected(tmp_repo):
+    """回归: 新规则只加 warning——带合规 summary 的两条新条目零 summary 打扰、零硬错误。"""
+    d = tmp_repo / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text(make_entry(id="kb-20261012-aa11", title="标题甲", severity="medium",
+                                       summary="上线前必须验证连接池上限与超时配置。"), encoding="utf-8")
+    (d / "b.md").write_text(make_entry(id="kb-20261012-aa12", title="标题乙", severity="medium",
+                                       summary="灰度发布先 1% 再放量并盯住回滚开关。"), encoding="utf-8")
+    msgs = lint_repo(tmp_repo, scope="project")
+    # 默认条目短源低于 MIN_FP_LEN 免检, 互不撞指纹; 本断言锁的是"新规则不引入硬错误"
+    assert [m for m in msgs if not m.startswith("warning: ")] == []
+    warns = [m for m in msgs if m.startswith("warning: ")]
+    assert not any("summary" in m for m in warns)

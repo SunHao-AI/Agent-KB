@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 from kb.taxonomy import load_taxonomy
 from kb.entry import Entry, iter_entry_paths, parse_entry
+from kb.fskit import write_text_lf
 
 _NONKEBAB = re.compile(r"[^a-z0-9]+")
 
@@ -71,7 +72,8 @@ def _unique_id(repo_root: Path, today: dt.date, taken: set[str]) -> str:
 
 
 def create_entry(repo_root: Path, type: str, domain: str, scope: str,
-                 title: str, generated: bool, today: dt.date) -> Entry:
+                 title: str, generated: bool, today: dt.date,
+                 summary: str | None = None) -> Entry:
     tax = load_taxonomy()
     if type not in tax["types"]:
         raise ValueError(f"unknown type: {type}")
@@ -87,6 +89,9 @@ def create_entry(repo_root: Path, type: str, domain: str, scope: str,
         "status": "draft" if generated else "proposed",
         "confidence": "speculative" if generated else "probable",
         "created": today.isoformat(),
+        # 显式 L2 结论句(spec 2026-11-14): None=未提供不写键; ""=显式清空(schema 豁免);
+        # 1-9 字符可落盘但 lint 双报(schema+可读性), 调用方自慎。
+        **({"summary": summary} if summary is not None else {}),
         "updated": today.isoformat(),
     }
     if "severity" in tax["types"][type].get("requires", []):
@@ -95,5 +100,5 @@ def create_entry(repo_root: Path, type: str, domain: str, scope: str,
     body = f"\n# {title}\n\n{_template_body(type)}"
     path = _unique_path(Path(repo_root), type, domain, title, today, fm["id"])
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{fm_text}\n---\n{body}", encoding="utf-8")
+    write_text_lf(path, f"---\n{fm_text}\n---\n{body}")
     return parse_entry(path)

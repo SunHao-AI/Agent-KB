@@ -16,9 +16,11 @@ def spider_id(native: str) -> str:
     return re.sub(r"[^\w.:-]", "-", str(native))
 
 
+# 分支白名单对齐公开版对端 lib/config.js 的 ROUTES=['code','model','you']
+# (2026-11-11: 私有 fork 的 ext 分支在公开仓不存在, 带上会被
+# normalizeConfig 以 "Unknown configuration field: ext" 整包拒导入)。
 ROUTES = {"code": {"label": "项目层命中", "color": "#42D6A4"},
           "model": {"label": "通用层命中", "color": "#F28A76"},
-          "ext": {"label": "外接源命中", "color": "#F34A87"},
           "you": {"label": "已读消费", "color": "#F0CA57"}}
 _LAYER_ROUTE = {0: "code", 1: "model"}   # reports 顺序: 项目层在前(spec §7)
 # 对端 lib/replay.js + lib/config.js 硬限制(真机校准 2026-10-15):
@@ -81,11 +83,13 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
                            "label": (m.get("title") or "")[:40] or m["id"],
                            "route": final, "status": "completed",
                            "detail": _detail(m)})
-    for e in search_ev.get("ext", []) or []:  # 外接源命中 → ext 分支(不在 layers 内)
+    for e in search_ev.get("ext", []) or []:  # 外接源命中(不在 layers 内) → 并入 model 分支
         for eid in e.get("hits", []):
             if eid not in returned:
                 continue
-            final = "you" if eid in read_ids else "ext"
+            # 公开版无 ext 分支(validateEvent 只认 code/model/you):
+            # 外接源并入 model, label 的"外接 <源>: "前缀保留区分信息。
+            final = "you" if eid in read_ids else "model"
             events.append({"id": spider_id(eid), "label": f"外接 {e.get('source')}: {eid}"[:40],
                            "route": final, "status": "completed",
                            "detail": f"source://{e.get('source')}"})
@@ -96,8 +100,7 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
     consumed = {g["id"] for g in get_evs
                 if g.get("trace_id") == sid
                 and isinstance(g.get("id"), str) and g["id"] in returned}
-    events.sort(key=lambda e: (e["route"] != "code", e["route"] != "model",
-                               e["route"] != "ext", e["id"]))
+    events.sort(key=lambda e: (e["route"] != "code", e["route"] != "model", e["id"]))
     layers_note = " · ".join(
         # .get: rejected 子键可缺(手工/早期 schema), 回放不得因此炸
         f"{l.get('repo', '?')} 扫描{l.get('scanned', '?')} 过滤-{(l.get('rejected') or {}).get('filter', 0)}"
@@ -113,10 +116,11 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
                       + (f" | 截断于{truncated}层" if truncated else "")
                       + (" | 0 命中" if n == 0 else ""))[:_SUBTITLE_MAX]),
         "modelName": f"{search_ev.get('caller_repo', '?')} · {ts}"[:80],
-        # wall: 词墙布局(参考演示同款观感——事件铺成中部词墙、蜘蛛轨道压在词上)。
-        # 依赖克隆仓 layout 白名单含 wall(lib/config.js, 2026-10-21 已加),
-        # 否则 normalizeConfig 拒导入——回放目标就是该克隆仓, 版本需同步。
-        "layout": "wall", "unit": "task", "routes": ROUTES,
+        # layout 白名单以**当前挂载的对端**为准: 公开版(Kirito14IT/prompt-spider-ui)
+        # 只认 portrait|landscape|square, 私有 fork 的 wall 词墙在公开仓不存在——
+        # 带 wall 会被 normalizeConfig 以 "layout must be portrait, landscape or
+        # square" 整包拒导入(2026-11-11 线上实测)。切回私有 fork 时可改回 wall。
+        "layout": "landscape", "unit": "task", "routes": ROUTES,
     }
     # 对端契约: log 项用 type; configure/events/complete; events 批 1..100;
     # revision 严格递增, at 非递减且≤duration; 空批非法; log≤10万条。

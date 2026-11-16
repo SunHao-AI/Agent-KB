@@ -54,6 +54,17 @@ def related(repo_root: Path, id: str) -> list[dict]:
 
 def stat(repo_root: Path) -> dict:
     recs = _records(repo_root)
+    # 显式 summary 覆盖率(spec 2026-11-14 §5.1): 只认 front-matter 显式字段——
+    # 派生兜底恒有值, 从索引统计会把覆盖率虚报成 100%。仿 due_review 直接 parse,
+    # 不进 index.jsonl(检索面零污染, 也少一个索引漂移源)。
+    explicit = total = 0
+    for p in iter_entry_paths(repo_root):   # 发现规则唯一事实源(§42)
+        fm = parse_entry(p).fm
+        if not fm.get("id"):
+            continue
+        total += 1
+        if str(fm.get("summary") or "").strip():
+            explicit += 1
     due = due_review(repo_root, dt.date.today())
     return {
         "total": len(recs),
@@ -63,6 +74,7 @@ def stat(repo_root: Path) -> dict:
         "by_confidence": dict(Counter(r["confidence"] for r in recs)),
         "draft_backlog": sum(1 for r in recs if r["status"] == "draft"),
         "due_review": len(due),
+        "summary_coverage": {"explicit": explicit, "total": total},
     }
 
 

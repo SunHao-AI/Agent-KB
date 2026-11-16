@@ -99,3 +99,106 @@ def test_degraded_list_search_filter_exact_match(tmp_repo):
     assert [r["id"] for r in kb_search.search(tmp_repo, domain="front")] == []
     assert [r["id"] for r in kb_search.search(tmp_repo, domain="frontend")] == ["kb-20261011-aaaa"]
     assert query.stat(tmp_repo)["by_domain"] == {"frontend": 1}
+
+
+# ---- sections_text: 各 H2 段首句拼接(只供 index 匹配面, spec 4.2) -----------
+
+def _sec_entry(tmp_path, name, body):
+    """构造带正文的 Entry(_write 要求完整 front-matter, 这里只测正文派生)."""
+    p = tmp_path / f"{name}.md"
+    p.write_text("---\nid: kb-20261029-aaaa\ntitle: t\n---\n" + body, encoding="utf-8")
+    return parse_entry(p)
+
+
+def test_sections_text_joins_first_sentence_of_each_h2(tmp_path):
+    """"每段首句"拼接: 六段式骨架下段首句即该病灶面主旨, 是 sections 匹配面的内容来源."""
+    e = _sec_entry(tmp_path, "s1",
+                   "# 标题\n\n## 根因\n启动期解析成功后上游 IP 漂移。围栏不参与。\n"
+                   "```\n假首句 Vvvv。\n```\n\n## 解决方案\n"
+                   "用 resolver 与 resolve 指令。第二段废话不该出现在结果里。\n")
+    st = e.sections_text()
+    assert "启动期解析成功后上游 IP 漂移" in st
+    assert "resolver" in st
+    assert "第二段废话" not in st          # 只取首句
+    assert "假首句" not in st              # 围栏内容不作为首句来源
+
+
+def test_sections_text_ascii_sentence_boundary_respects_dots(tmp_path):
+    """句末 `.` 须后接空白且前一字符非数字才算终止; 版本号内的点(1.27.3)不得截断首句."""
+    e = _sec_entry(tmp_path, "s2", "# t\n\n## 根因\nnginx 1.27.3 起支持 resolve。后续内容。\n")
+    assert e.sections_text().startswith("nginx 1.27.3 起支持 resolve。")
+
+
+def test_sections_text_caps_each_sentence_at_limit(tmp_path):
+    e = _sec_entry(tmp_path, "s3", "# t\n\n## 根因\n" + "很长" * 100 + "\n")
+    assert len(e.sections_text()) <= 60
+
+
+def test_sections_text_covers_appended_paragraph_in_same_section(tmp_path):
+    """回归: 红线 #3 要求的"追加新发现"物理位置是**段末的另一个段落**, 不是段首。
+
+    首版实现每个 H2 段只取第一个段落的首句, 于是"追加"这条最主流的写入路径
+    结构上不可见(线上 64e8 追加 1400 字后 `IP 漂移` 仍 MISS 的根因)。
+    """
+    e = _sec_entry(tmp_path, "s5",
+                   "# 标题\n\n## 解决方案\n**应急**：拉起 media 后重启恢复。\n\n"
+                   "```bash\nnginx -s reload\n```\n\n"
+                   "**新发现**：同一机制的第二病灶面 —— 上游 IP 事后漂移。\n")
+    st = e.sections_text()
+    assert "上游 IP 事后漂移" in st            # 段末追加的段落必须进面
+    assert "拉起 media 后重启恢复" in st       # 段首仍保留
+    assert "nginx" not in st                   # 围栏不作为首句来源
+
+
+def test_sections_text_paragraphs_are_bounded(tmp_path):
+    """段落数无界会让单条 sections 无限膨胀(索引是 L1 常驻面), 须有显式上限。
+
+    构造要点: 段落内**不含句末终止符**, 使每段首句都被 limit 截满 60 字——
+    否则首句天然很短, 40 个段落也远不到上限, 断言形同虚设。
+    """
+    body = "# t\n\n## 解决方案\n" + "\n\n".join(
+        f"第{i}条结论说明" + "填充" * 40 for i in range(40)) + "\n"
+    st = _sec_entry(tmp_path, "s6", body).sections_text()
+    assert len(st) <= 20 * 61          # 每段最多前 20 个段落 × 60 字 + 段间空格
+    assert st.count("第") == 20        # 第 21 个段落起被切掉(有界, 且不静默丢整段)
+
+
+def test_sections_text_empty_without_h2(tmp_path):
+    """无 H2 段时返回空串(不抛): 派生面退化但 index 不因单条坏格式中断."""
+    assert _sec_entry(tmp_path, "s4", "# t\n\n裸正文没有分段。\n").sections_text() == ""
+
+
+# ---- summary: 显式 front-matter 字段优先(spec 2026-11-14 §3.2) --------------
+
+def test_summary_explicit_preferred_not_truncated(tmp_path):
+    """显式 summary: 优先于派生、折叠空白、不截断; 空串/空白=缺失回落派生。"""
+    from conftest import make_entry
+    long_text = "结" * 200
+    p = tmp_path / "s.md"
+    p.write_text(make_entry(summary="  上线前必须压测 前, 连接池上限需复核。  ")
+                 + "\n## 背景\n\n被压制的派生兜底文案。\n", encoding="utf-8")
+    assert parse_entry(p).summary() == "上线前必须压测 前, 连接池上限需复核。"
+
+    p2 = tmp_path / "l.md"
+    p2.write_text(make_entry(summary=long_text) + "\n## 背景\n\n兜底。\n", encoding="utf-8")
+    assert parse_entry(p2).summary() == long_text          # 200 字不截断
+
+    # YAML 空串/空白字面量: '""' 解析为 ""、'"   "' 解析为 "   "(make_entry 是
+    # f"{k}: {v}" 行拼接, 直接传 "" 会产出裸 `summary:` → None, 语义不同)
+    for blank in ('""', '"   "'):
+        p3 = tmp_path / "b.md"
+        p3.write_text(make_entry(summary=blank)
+                      + "\n## 背景\n\n派生文案。\n", encoding="utf-8")
+        assert parse_entry(p3).summary() == "首段摘要。"    # 空/空白 → 派生兜底
+
+
+def test_summary_derived_fallback_unchanged(tmp_path):
+    """回归锁定 Global Constraints: 无显式字段时输出与旧行为逐字节一致。"""
+    from conftest import make_entry
+    p = tmp_path / "d.md"
+    p.write_text(make_entry(), encoding="utf-8")
+    assert parse_entry(p).summary() == "首段摘要。"        # 默认 body 派生值
+
+    p2 = tmp_path / "d2.md"
+    p2.write_text(make_entry() + "\n## 背景\n\n上线后偶发连接超时。\n", encoding="utf-8")
+    assert parse_entry(p2).summary() == "首段摘要。"      # 追加段不改首个正文块

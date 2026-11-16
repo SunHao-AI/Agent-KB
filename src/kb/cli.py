@@ -13,12 +13,16 @@ from kb.gate import DuplicateCandidate, GateViolation, create_draft, export_entr
 from kb.gate import review as gate_review
 from kb.gate import set_scope as gate_set_scope
 from kb.entry import dump_entry, parse_entry
-from kb.index import build_indexes, check_indexes
+from kb.fskit import write_text_lf
+from kb.index import build_indexes, check_indexes, resolve_repo_name
 from kb.layers import get_layered, related_layers, search_layers_report
 from kb.lint import lint_repo
 from kb.new_entry import create_entry
 from kb.promote import promote
 from kb.query import due_review, get_entry, needs_scope, related, stat
+from kb.repowiki import (build_sidecar, export_repowiki, find_repowiki_root,
+                         get_card_by_id, make_repowiki_layer,
+                         REPOWIKI_ID_PREFIX)
 
 
 def _date_arg(v: str) -> str:
@@ -31,6 +35,16 @@ def _date_arg(v: str) -> str:
     except ValueError:
         raise argparse.ArgumentTypeError(f"需 YYYY-MM-DD 日期, 收到 {v!r}") from None
     return v
+
+
+def _week_arg(s: str) -> str:
+    """ISO 周号入口即拒(对齐 _date_arg): 坏周号不进业务面。"""
+    from kb import metrics as _m
+    try:
+        _m.week_bounds(s)
+    except ValueError as exc:
+        raise argparse.ArgumentError(None, str(exc)) from None
+    return s
 
 
 def _dispatch(argv: list[str] | None = None) -> int:
@@ -52,6 +66,9 @@ def _dispatch(argv: list[str] | None = None) -> int:
     # pitfall/rca 需要 severity(模板默认 medium); 对齐 MCP kb_create, 显式覆盖用本参数
     p_new.add_argument("--severity", default=None,
                        choices=["low", "medium", "high", "critical"])
+    # L2 摘要质量(spec 2026-11-14 §5.1): 显式结论句优先于正文派生兜底,
+    # 检索面的 summary 权重依赖这里能传进来
+    p_new.add_argument("--summary", default=None)
 
     p_lint = sub.add_parser("lint", parents=[common])
     # choices 严格校验, 拼错立即 exit 2 而非静默关闭落位检查
@@ -71,6 +88,9 @@ def _dispatch(argv: list[str] | None = None) -> int:
     for flag in ("type", "domain", "tag", "scope", "status", "confidence", "query"):
         p_s.add_argument(f"--{flag}", default=None)
     p_s.add_argument("--limit", type=int, default=20)
+    # trace 归因用: 与 index 的 --repo-name 同语义, 缺省从索引 repo 字段自取
+    p_s.add_argument("--repo-name", default=None,
+                     help="trace 的 caller 名(默认取索引 repo 字段, 再回落目录名)")
     g = p_s.add_mutually_exclusive_group()
     g.add_argument("--trace", dest="trace_on", action="store_true", default=None,
                    help="本次强制记录检索 trace")
@@ -102,6 +122,19 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_ex.add_argument("id"); p_ex.add_argument("--to-repo", required=True)
     p_ex.add_argument("--to-scope", required=True, choices=["stack", "universal"])
 
+    # repowiki 桥(spec 2026-11-14): 仿 trace 的组+子命令双层结构(组本身不带 common)
+    p_rw = sub.add_parser("repowiki")
+    rw_sub = p_rw.add_subparsers(dest="rw_cmd", required=True)
+    p_rwe = rw_sub.add_parser("export", parents=[common])
+    p_rwe.add_argument("--lang", default="zh")
+    p_rwe.add_argument("--out", default=None,
+                       help="repowiki 根目录, 默认 <项目根>/.qoder/repowiki")
+    p_rwe.add_argument("--modules", default=None,
+                       help="模块清单 yaml(无已有 _index.yaml 时必填)")
+    p_rwe.add_argument("--write", action="store_true", help="落盘(默认 dry-run)")
+    p_rwe.add_argument("--force", action="store_true",
+                       help="覆盖非本工具生成的 managed 卡")
+
     p_init = sub.add_parser("init", parents=[common])
     p_init.add_argument("--kb-dir", default="docs", help="仓内知识库目录(生成物含 kb/)")
     p_init.add_argument("--repo-name", default=None, help="写入 --repo-name 的名字, 默认仓目录名小写")
@@ -125,6 +158,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--token", default=None)
     p_serve.add_argument("--default-caller", default=None,
                          help="单项目视图默认项目名(小写目录名)")
+    p_serve.add_argument("--repos", action="append", metavar="NAME=PATH", default=None,
+                         help="额外纳入质量面的库(PATH 指向其 kb 根, 可重复)")
     p_serve.add_argument("--install-autostart", action="store_true",
                          help="注册系统服务常驻(Windows 计划任务/systemd 用户 unit, 幂等)")
     p_serve.add_argument("--uninstall-autostart", action="store_true",
@@ -183,6 +218,18 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_trp.add_argument("--caller", default=None)
     p_trp.add_argument("--format", default="md", choices=["md", "json"])
 
+    # 长周期观测: 自然周指标快照(不可变账本)+ 周报 + 消化工单建议
+    p_tsn = tr_sub.add_parser("snapshot",
+                              help="周指标快照(落盘 traces/metrics/ + 周报 + 消化工单建议)")
+    p_tsn.add_argument("--repo", default=None,
+                       help="Agent-KB 仓根(其下 traces/), 默认为本仓 kb_root()")
+    p_tsn.add_argument("--week", default=None, type=_week_arg,
+                       help="YYYY-Www(如 2026-W45), 默认上一个完整自然周")
+    p_tsn.add_argument("--force", action="store_true",
+                       help="重写已存在的周快照(改变历史口径, 需在评审说明)")
+    p_tsn.add_argument("--format", default="md", choices=["md", "json"],
+                       help="md=周报正文(默认); json=快照原文(供脚本消费)")
+
     args = ap.parse_args(argv)
     # trace 子命令 --repo 缺省 None(= kb_root()); 其余命令经 common 恒有默认 "."
     repo = Path(args.repo) if args.repo is not None else None
@@ -206,19 +253,25 @@ def _dispatch(argv: list[str] | None = None) -> int:
                 print("note: generated entries are always scope=project", file=sys.stderr)
             body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else None
             e = create_draft(repo, type=args.type, domain=args.domain, title=args.title,
-                             body=body, severity=args.severity,
+                             body=body, severity=args.severity, summary=args.summary,
                              agent_kbs=tuple(Path(p) for p in args.agent_kb))
         else:
             e = create_entry(repo, type=args.type, domain=args.domain, scope=args.scope,
-                             title=args.title, generated=False, today=dt.date.today())
+                             title=args.title, generated=False, today=dt.date.today(),
+                             summary=args.summary)
             if args.severity:
                 cur = parse_entry(e.path)
                 cur.fm["severity"] = args.severity
-                e.path.write_text(dump_entry(cur), encoding="utf-8")
+                write_text_lf(e.path, dump_entry(cur))
             # §44: 非门控路径建的是 proposed(进 live 池), 与 create_draft 同理须重建,
             # 否则 `kb new` 返回路径后立刻 `kb show <id>` 报 not found
             from kb.gate import _reindex
             _reindex(repo)
+        # spec 2026-11-14 §3.4: 只提示不强制(强制违背 draft→终审既有节奏)。走 stderr——
+        # stdout 是裸路径, 被 `kb new | xargs kb show` 式管道与既有断言依赖。
+        if not args.summary:
+            print("note: 未传 --summary, L2 摘要将退回正文派生(检索面质量更低); "
+                  "建议补一句结论: 条件+结论+动作(10-300 字)", file=sys.stderr)
         print(e.path)
         return 0
     if args.cmd == "review":
@@ -239,6 +292,19 @@ def _dispatch(argv: list[str] | None = None) -> int:
     if args.cmd == "export":
         print(export_entry(repo, Path(args.to_repo), args.id, to_scope=args.to_scope))
         return 0
+    if args.cmd == "repowiki":
+        if args.rw_cmd == "export":
+            # 测试面经 _dispatch 直调(不经 main 的异常处理器), 冲突/缺文件须在此
+            # 落成 exit 1 而非冒泡(SystemExit 之外的裸异常对脚本消费方同样是非 1 崩溃)
+            try:
+                report = export_repowiki(repo, lang=args.lang, out=args.out,
+                                         modules=args.modules, write=args.write,
+                                         force=args.force)
+            except (ValueError, FileNotFoundError) as exc:
+                print(f"kb error: {exc}", file=sys.stderr)
+                return 1
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
     if args.cmd == "init":
         from kb.bootstrap import init_repo
         ak = Path(args.agent_kb[0]) if args.agent_kb else None
@@ -262,7 +328,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
         warns = [e for e in errs if e.startswith("warning: ")]
         hard = [e for e in errs if not e.startswith("warning: ")]
         if args.update_baseline:
-            base_path.write_text("".join(w + "\n" for w in sorted(warns)), encoding="utf-8")
+            write_text_lf(base_path, "".join(w + "\n" for w in sorted(warns)))
             print(f"baseline updated: {len(warns)} warnings -> {base_path}")
             for e in hard:
                 print(e, file=sys.stderr)
@@ -288,27 +354,42 @@ def _dispatch(argv: list[str] | None = None) -> int:
             return 1
         return 0
     if args.cmd == "index":
-        # 目录显示名统一小写: 仓库显示名大小写(本地克隆 Agent-KB)不得进入 repo 字段,
-        # 否则与已提交 index 的规范名(agent-kb)不一致, `index --check` 恒 stale
-        repo_name = args.repo_name or repo.resolve().name.lower()
+        # repo 标签从被检索引自取, 不从载体目录名反推: 固化值与目录名不同源时
+        # (`.agent-kb` vs agent-kb、`docs` vs flysee-video-setting)`--check` 恒
+        # stale。索引不存在时(首次构建)才回落目录名小写, 显示名大小写不进字段。
+        repo_name = resolve_repo_name(repo, args.repo_name)
         if args.check:
             ok = check_indexes(repo, repo_name=repo_name)
             print("index up to date" if ok else "index stale")
             return 0 if ok else 1
         md, jl, dj = build_indexes(repo, repo_name=repo_name)
         print(f"wrote {md}\nwrote {jl}\nwrote {dj}")
+        # 侧车是增强面: 无 repowiki 根/全部语言漂移时静默, 不阻断主索引
+        side = build_sidecar(repo)
+        if side:
+            print(f"wrote {side}")
         return 0
     if args.cmd == "search":
         t0 = time.perf_counter()
         layers_list = [repo] + [Path(p) for p in args.agent_kb]
+        between = None
+        if (repo / "kb" / "index.repowiki.jsonl").exists() \
+                and find_repowiki_root(repo):
+            between = make_repowiki_layer(repo)
         res, reports = search_layers_report(
             layers_list, type=args.type, domain=args.domain, tag=args.tag,
             scope=args.scope, status=args.status, confidence=args.confidence,
-            query=args.query, limit=args.limit)
+            query=args.query, limit=args.limit, between=between)
         if kbtrace.trace_enabled(cli_flag=args.trace_on):
+            # caller_repo 与索引 repo 字段同源(resolve_repo_name: 显式 --repo-name →
+            # index.jsonl 自取 → 目录名兜底)。旧实现取 `--repo` 载体目录名, 而业务仓
+            # 一律 `--repo docs` 检索项目层, 于是 573 次真实检索全记在幽灵项目 `docs`
+            # 名下(2026-11-02 联邦矩阵实测: 两个业务仓各 6 次, 检索数 0/命中率 — )。
+            # 与 index/doctor/pre-push-gate 三处同一口径, 分叉收口。
             ev = kbtrace.build_search_event(
                 trace_id=kbtrace.new_trace_id(), source="cli",
-                caller_repo=repo.resolve().name.lower(), query=args.query,
+                caller_repo=resolve_repo_name(repo, args.repo_name).lower(),
+                query=args.query,
                 filters={"type": args.type, "domain": args.domain, "tag": args.tag,
                          "scope": args.scope, "status": args.status,
                          "confidence": args.confidence},
@@ -320,14 +401,39 @@ def _dispatch(argv: list[str] | None = None) -> int:
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "show":
-        if args.agent_kb:
-            got = get_layered([repo] + [Path(p) for p in args.agent_kb], args.id)
-            if got is None:
+        if args.id.startswith(REPOWIKI_ID_PREFIX):
+            text = get_card_by_id(repo, args.id)
+            # 卡读取同样是 L3 消费: 早返回若不入账, 面板 meta_only 会把"已读全文"
+            # 的检索算成"只看元数据", 与 repowiki:// 消费口径不符。stdout 逐字节不变。
+            if kbtrace.trace_enabled():
+                caller = resolve_repo_name(repo).lower()
+                kbtrace.append_event(kbtrace.build_get_event(
+                    trace_id=kbtrace.latest_search_id(caller, entry_id=args.id),
+                    source="cli", caller_repo=caller, id=args.id,
+                    layer="repowiki", ok=text is not None,
+                    chars=len(text) if text is not None else None))
+            if text is None:
                 print(f"not found: {args.id}", file=sys.stderr)
                 return 1
-            print(got[0])
+            # 原文逐字节输出(卡文件自带结尾换行), print() 会多加一个换行
+            print(text, end="")
             return 0
-        text = get_entry(repo, args.id)
+        if args.agent_kb:
+            got = get_layered([repo] + [Path(p) for p in args.agent_kb], args.id)
+            text, layer = got if got else (None, None)
+        else:
+            text = get_entry(repo, args.id)
+            layer = Path(repo).resolve().name.lower() if text is not None else None
+        # 读全文必须入账: 此前 CLI show 完全没有埋点, 面板的消费率/估算节省只能看到
+        # MCP kb_get, 而 AGENTS.md 规定的标准路径是 `kb search` → `kb show` ——
+        # 主路径不入账, 消费率恒 0 且与"真的没读全文"不可区分。
+        if kbtrace.trace_enabled():
+            caller = resolve_repo_name(repo).lower()
+            kbtrace.append_event(kbtrace.build_get_event(
+                trace_id=kbtrace.latest_search_id(caller, entry_id=args.id),
+                source="cli", caller_repo=caller, id=args.id, layer=layer,
+                ok=text is not None,
+                chars=len(text) if text is not None else None))
         if not text:
             print(f"not found: {args.id}", file=sys.stderr)
             return 1
@@ -363,9 +469,22 @@ def _dispatch(argv: list[str] | None = None) -> int:
             print(json.dumps(stat(repo), ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "serve":
-        from kb.serve import run as serve_run
+        from kb.serve import parse_repos as serve_parse_repos, run as serve_run
+        try:
+            extra = serve_parse_repos(args.repos)
+        except ValueError as exc:
+            print(f"kb serve: {exc}", file=sys.stderr)
+            return 2
         if args.install_autostart or args.uninstall_autostart:
             from kb import autostart
+            # 安装/卸载都校验 --repos 路径: 常驻服务装在不存在/不是 kb 根的目录上,
+            # 装完只会让面板分库表出一行"读取失败"且再无人重装——报错比装出坏服务好。
+            bad = [f"{n}={p}" for n, p in extra.items()
+                   if not (p / "kb").is_dir()]
+            if bad:
+                print("kb serve autostart: --repos 路径下没有 kb/ 目录(不是 kb 根): "
+                      + ", ".join(bad), file=sys.stderr)
+                return 2
             try:
                 if args.uninstall_autostart:
                     print(autostart.uninstall())
@@ -373,7 +492,8 @@ def _dispatch(argv: list[str] | None = None) -> int:
                     print(autostart.install(
                         Path(args.repo).resolve() if args.repo
                         else Path(__file__).resolve().parents[2],
-                        args.port, args.bind, args.default_caller))
+                        args.port, args.bind, args.default_caller,
+                        {n: p.resolve() for n, p in extra.items()}))
             except (RuntimeError, OSError, ValueError) as exc:
                 # ValueError: 安装参数被渲染守门拒绝(如 systemd 字段含换行, §72 同族)
                 print(f"kb serve autostart: {exc}", file=sys.stderr)
@@ -382,7 +502,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
         try:
             serve_run(Path(args.repo) if args.repo else None, port=args.port,
                       bind=args.bind, token=args.token,
-                      default_caller=args.default_caller)
+                      default_caller=args.default_caller, extra_repos=extra)
         except ValueError as exc:  # 红线: 非本机绑定无 token → 拒绝启动
             print(f"kb serve: {exc}", file=sys.stderr)
             return 2
@@ -442,8 +562,7 @@ def _dispatch(argv: list[str] | None = None) -> int:
             rec = to_record(ev, [g for g in gets
                                  if g.get("trace_id") == args.id])
             out = Path(args.out) if args.out else Path(f"{args.id}.json")
-            out.write_text(json.dumps(rec, ensure_ascii=False, indent=2),
-                           encoding="utf-8")
+            write_text_lf(out, json.dumps(rec, ensure_ascii=False, indent=2))
             print(out)
             return 0
         if args.trace_cmd == "report":
@@ -472,6 +591,25 @@ def _dispatch(argv: list[str] | None = None) -> int:
                           f"最近 {r['last_ts'][:10]})")
             else:
                 print("\n本窗口零命中已全部消化 ✅")
+            return 0
+        if args.trace_cmd == "snapshot":
+            from kb import metrics as kbmetrics
+            week = args.week or kbmetrics.prev_week()
+            try:
+                snap = kbmetrics.build_snapshot(root, week)
+                path = kbmetrics.write_snapshot(root, snap, force=args.force)
+            except FileExistsError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            if args.format == "json":
+                print(json.dumps(snap, ensure_ascii=False, indent=2))
+                return 0
+            snaps, _w = kbmetrics.load_snapshots(root)
+            prev = next((s for s in reversed(snaps)
+                         if s.get("week") == kbmetrics.prev_of(week)), None)
+            plan = kbmetrics.digest_plan(root, snap)
+            print(kbmetrics.report_markdown(snap, prev, plan))
+            print(f"\n快照已落盘: {path.relative_to(root) if root else path}")
             return 0
         if args.trace_cmd == "show":
             ev = kbtrace.find_trace(args.id, root=root)

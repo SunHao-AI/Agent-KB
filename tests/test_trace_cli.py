@@ -84,3 +84,54 @@ def test_event_has_no_body(env):
     main(["search", "--repo", str(proj), "--query", "vite", "--trace"])
     dump = json.dumps(_events(root), ensure_ascii=False)
     assert "根因" not in dump and "背景" not in dump   # make_entry 正文段名
+
+
+def test_show_off_writes_nothing(env):
+    root, proj = env
+    assert main(["show", "--repo", str(proj), "kb-20261012-aaaa"]) == 0
+    assert not (root / "traces").exists()
+
+
+def test_show_writes_get_event_linked_to_search(env, monkeypatch, capsys):
+    root, proj = env
+    monkeypatch.setenv("KB_TRACE", "1")
+    main(["search", "--repo", str(proj), "--query", "vite"])
+    se = _events(root)[0]
+    capsys.readouterr()
+    assert main(["show", "--repo", str(proj), "kb-20261012-aaaa"]) == 0
+    out = capsys.readouterr().out
+    ev = _events(root)[1]
+    assert ev["kind"] == "get" and ev["source"] == "cli"
+    assert ev["caller_repo"] == "flysee_web" and ev["layer"] == "flysee_web"
+    assert ev["ok"] is True and ev["id"] == "kb-20261012-aaaa"
+    assert ev["chars"] == len(out) - 1        # print 追加的换行不计入全文长度
+    assert ev["trace_id"] == se["trace_id"]   # 消费判定依赖同 trace 关联
+
+
+def test_show_missing_records_failed_get(env, monkeypatch):
+    root, proj = env
+    monkeypatch.setenv("KB_TRACE", "1")
+    assert main(["show", "--repo", str(proj), "kb-20261012-ffff"]) == 1
+    ev = _events(root)[0]
+    assert ev["kind"] == "get" and ev["ok"] is False
+    assert ev["layer"] is None and "chars" not in ev
+    assert ev["trace_id"] is None
+
+
+def test_show_layered_records_layer(env, monkeypatch, tmp_path, capsys):
+    root, proj = env
+    monkeypatch.setenv("KB_TRACE", "1")
+    akb = tmp_path / "agent_kb_shared"
+    d = akb / "kb" / "reference" / "backend"
+    d.mkdir(parents=True)
+    (d / "c.md").write_text(make_entry(id="kb-20261012-cccc", title="通用层条目",
+                                       scope="stack", status="accepted",
+                                       confidence="verified"),
+                            encoding="utf-8")
+    main(["index", "--repo", str(akb)])
+    capsys.readouterr()
+    assert main(["show", "--repo", str(proj), "--agent-kb", str(akb),
+                 "kb-20261012-cccc"]) == 0
+    ev = _events(root)[0]
+    assert ev["layer"] == "agent_kb_shared" and ev["ok"] is True
+    assert ev["id"] == "kb-20261012-cccc"

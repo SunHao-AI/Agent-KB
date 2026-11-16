@@ -158,6 +158,11 @@
    每天 18:30（与周一 09:00/09:15 两个周报任务错开, 且当天检索基本收尾）:
    仅 `git add traces/` + commit（无变更则空转）, 只 commit 不 push, 严禁越界 add;
    约定同步写入 README「trace 提交节奏」小节。首跑 2026-10-21。
+   **↪ 2026-11-09 口径变更**: 原口径会让 traces/ 长期永脏 + 本地领先 origin,
+   各仓 submodule pin 到这些 commit 时 pre-push 钩子报"未 push commit 不可达"
+   （flysee-video-setting 2026-11-06/09 两次实测）。Schedule 已改为
+   commit → push origin/master → `reset origin/master` + `clean -fd traces/` 复原,
+   日常保持 clean; README 同步更新。本段"只 commit 不 push"为历史原貌, 保留存档。
 
 ## E. 仓库收尾杂项
 

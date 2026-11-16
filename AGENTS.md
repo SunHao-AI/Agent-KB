@@ -18,12 +18,17 @@ Agent-KB 是**跨项目研发知识库的事实源**, 配套 `kb` CLI(本仓 `sr
 
 | 层级 | 载体 | 内容 | 何时加载 |
 | --- | --- | --- | --- |
-| L1 | 本文件(AGENTS.md) | 位置、命令、规则 | 常驻 |
-| L2 | `kb/INDEX.md`(或 `kb search`) | 标题 + 元数据 + 一句话摘要 | 判断相关性时 |
-| L3 | `kb show <id>` | 单条全文 | 确认相关后 |
+| L1 | 本文件(AGENTS.md) | 位置、命令、规则 | 常驻(宿主装载, kb 不产生读取事件) |
+| L2 | `kb/index.jsonl` 机器面(`kb/INDEX.md` 仅人读投影; 命令 `kb search`) | 标题 + 元数据 + 一句话摘要 | 判断相关性时 |
+| L3 | `kb show <id>`(条目正文 markdown) | 单条全文 | 确认相关后 |
 
 **标准路径**: 先 `kb search`(只回元数据+摘要+路径), 命中才 `kb show` 读全文。
 禁止跳过 L2 直接批量读 L3, 浪费 token。`status: draft` 的条目不进检索索引。
+
+**观测口径**: 每次 `kb search`/`kb_search` 落一条 L2 事件(`level=2`, `surface=index.jsonl`),
+每次 `kb show`/`kb_get` 落一条 L3 事件(`level=3`, `surface=entry.md`); L1 由宿主装进
+系统提示, kb 进程不参与, 因此**没有读取事件**——面板显示"不可观测"而不是 0。
+"只看元数据"(有返回但同 trace 未读全文)由 `meta_only` 显式出数, 不再从字符数反推。
 
 ## 常用命令
 
@@ -50,6 +55,9 @@ kb init --repo docs --agent-kb .agent-kb        # 接入: 生成去绝对路径�
 kb doctor --repo docs --agent-kb .agent-kb      # 接入自检(FAIL 才退 1)
 ```
 
+联邦 L2 记录契约(index.jsonl 行**形状**已定版; 外部源直写接入**尚未实现**, 直写会被
+索引重建清除并打挂消费面): `kb show kb-20261114-b226 --repo .`。
+
 观测面命令(`kb web / serve / spider-live / trace`)与团队令牌配置见 README「观测面板」;
 `traces/` 由每日定时任务自动提交, **不要**随手纳入功能提交。
 
@@ -70,9 +78,25 @@ kb doctor --repo docs --agent-kb .agent-kb      # 接入自检(FAIL 才退 1)
 2. Agent **永远不能**改 `scope`(非 project); 认为值得上提 Agent-KB 时只做
    `kb promote <id> --to stack|universal` 式**建议**, 由人 `kb set-scope`/`kb export` 落地。
 3. 沉淀前**必须**先 `kb search` 去重; 命中既有条目则更新(追加"新发现"), 不新建。
+3b. 向既有条目**追加"新发现"时必须同步补 `tags`**: 检索面只有 title/tags/keywords/
+    sections 四处, keywords 每段配额有限、sections 每段最多 20 个段落首句——只加正文
+    不动 tags, 下一次 `kb search` 很可能搜不到这次追加的内容, 红线 #3 的去重随之
+    失效(2026-10-29 线上实测: 追加约 1400 字后旧查询仍零命中, 补 tag 后立即命中)。
+    **tag 语言须与查询习惯一致**: 补的 tag 若只有英文, 中文查询仍零命中(同日实测:
+    `pre-push-gate`/`repo-name` 命中而 `pre-push 门禁 repo 名同源` 零命中, 补中文
+    tag 后才命中)——中英各补一组, 别只补一边。
 4. 无实测证据的结论**必须**标 `confidence: speculative`; 采信时默认只信 verified/probable,
    `speculative` 结论须自行验证后才可依据(检索本身不做 confidence 过滤)。
-5. 单次任务最多沉淀 **3 条**, 自主终审 accepted 单会话也**最多 3 条**, 防刷噪音。
+5. 单次任务最多沉淀 **3 条**(防刷噪音的节流点在新建); **自主终审 accepted 不限次**
+   ——清理存量 backlog 不该被会话上限切成多轮, accepted 的硬约束只剩 evidence +
+   confidence 提升 + `auto-reviewed` 留痕。
+6. `kb_update` 可编辑本项目 draft/proposed; **编辑已 accepted 的条目会自动降级
+   proposed**(结论被改动必须重审), 并清掉 `verified_by`/`verification`/`auto-reviewed`
+   留痕、写 `revision` 审计字段。deprecated/superseded 终态不可编辑。
+
+> **不要手改 front-matter**: confidence 提升不是"人工改文件", 而是一次
+> `kb review <id> --to accepted --confidence verified --evidence "实测证据出处" --repo docs`
+> (MCP 面同名为 `kb_review`)。手改 status/confidence 属绕过门控的违规操作。
 
 ## 收录标准
 

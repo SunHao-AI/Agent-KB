@@ -2,16 +2,21 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from kb.dedup import fingerprint
-from kb.entry import iter_entry_paths, parse_entry
+from kb.dedup import fingerprint, h2_sections
+from kb.entry import Entry, iter_entry_paths, parse_entry
+from kb.fskit import write_text_lf
 
 # FR-3.4 keywords 派生(竞品 Mem0 "entity 信号"的零依赖本地化): agent 最自然的
-# 查询词往往是报错串/函数名/配置键, 它们只出现在正文。取三类高信息标识符,
-# 每条 ≤20 词; 只进 index 匹配面, 不是正文句子(敏感度与 summary 同级)。
+# 查询词往往是报错串/函数名/配置键, 它们只出现在正文。取三类高信息标识符;
+# 只进 index 匹配面, 不是正文句子(敏感度与 summary 同级)。
+#
+# 配额按 H2 段分桶(spec 4.1, 修线上故障): 旧实现全文取词 + 全局 cap=20, 而六段式
+# 条目正文远超 20 词, 于是先写的段占满配额、后追加的病灶面**永远进不了检索面**——
+# 全库 577 条 447 条(77%)被截断。分桶后每段各有配额, 顺序偏置消除; 取值规则本身未动。
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 _IDENT_RE = re.compile(r"[A-Za-z_$][\w$.]{3,}")
-_H2_RE = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
-_KEYWORDS_CAP = 20
+_SECTION_KW_CAP = 8
+_KEYWORDS_CAP = 64
 
 
 def _is_informative(w: str) -> bool:
@@ -19,36 +24,64 @@ def _is_informative(w: str) -> bool:
     return any(c.isupper() for c in w) or "_" in w or "." in w or "$" in w
 
 
-def derive_keywords(body: str) -> list[str]:
+def _section_words(header: str, content: str) -> list[str]:
+    """单个 H2 段内的四级派生(围栏 → 行内码 → 段名 → 段落), 保序, 不跨段去重不复用配额。
+
+    围栏与行内码两级**不做** _is_informative 过滤(沿用 FR-3.4 既有规则: 代码里的
+    普通词也是有效实体), 段名与段落两级做过滤。
+    """
     out: list[str] = []
-    seen: set[str] = set()
 
     def add(w: str) -> None:
         w = w.strip("` '\"()[]")
-        if len(w) >= 4 and w.lower() not in seen:
-            seen.add(w.lower())
+        if len(w) >= 4:
             out.append(w)
 
-    for fence in _FENCE_RE.findall(body):
+    for fence in _FENCE_RE.findall(content):
         lines = fence.splitlines()
         # 首行是 ```lang 语言标记, 不是代码, 不参与派生
         for w in _IDENT_RE.findall("\n".join(lines[1:])):
             add(w)
-    for line in body.splitlines():
+    for line in content.splitlines():
         s = line.strip()
         if s.startswith("#") or not s:
             continue
         for w in _IDENT_RE.findall(" ".join(re.findall(r"`[^`]+`", s))):
             add(w)
-    for m in _H2_RE.findall(body):
-        if _is_informative(m):  # 中文段名无检索价值, 只收含标识符的段名
-            add(m)
-    for para in re.split(r"\n\s*\n", body):
+    if _is_informative(header):  # 中文段名无检索价值, 只收含标识符的段名
+        add(header)
+    for para in re.split(r"\n\s*\n", content):
         # 跳过标题行: H1=标题、H2=段名已各自覆盖, keywords 只收正文独有实体
         text = " ".join(ln for ln in para.splitlines() if not ln.strip().startswith("#"))
         for w in _IDENT_RE.findall(text):
             if _is_informative(w):
                 add(w)
+    return out
+
+
+def derive_keywords(entry: Entry) -> list[str]:
+    """按 H2 段分桶派生: 每段 ≤_SECTION_KW_CAP 词, 跨段保序去重, 全局 ≤_KEYWORDS_CAP。
+
+    配额必须在**标 seen 之后**才判满并 break: 若先判满再跳过, 段内剩余词不会被任何
+    段收录(本段不要、后续段看不到), 与旧的全局截断无异。反之超额词不标 seen 也无害
+    ——它只是没进结果, 不影响后续段的独立配额。
+
+    H2 之前的引言内容不参与派生: 六段式模板与 lint 保证内容都住在段内(实测全库
+    条目 0 例外), 由 tests/test_search_cjk_keywords.py 的 keywords 非空守护兜住该
+    假设, 不设运行时退化分支。
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for header, content in h2_sections(entry):
+        taken = 0
+        for w in _section_words(header, content):
+            if w.lower() in seen:
+                continue
+            seen.add(w.lower())
+            out.append(w)
+            taken += 1
+            if taken >= _SECTION_KW_CAP:
+                break
     return out[:_KEYWORDS_CAP]
 
 
@@ -67,9 +100,15 @@ def _records(repo_root: Path, repo_name: str):
             "confidence": fm.get("confidence", ""),
             "path": p.relative_to(repo_root).as_posix(),
             "summary": e.summary(),
-            "keywords": derive_keywords(e.body),
+            "keywords": derive_keywords(e),
+            "sections": e.sections_text(),
             "dedup_key": fingerprint(e),
             "related": fm.get("related", []),
+            # 联邦 L2 记录契约(spec 2026-11-14 §1): origin/uri 是本文件唯一的记录
+            # 生产者注入点——外部源(feishu/notion/wiki/tencentdb…)只需产出同形状
+            # JSONL 行; 外部 id 用 `source://<connector>/<原生id>`(对齐 stats.source_of
+            # 既有命名空间), 归一 origin=`ext:<connector>`。本地恒 local/null。
+            "origin": "local", "uri": None,
             "updated": fm.get("updated", ""), "repo": repo_name,
         }
         (draft if fm.get("status") == "draft" else live).append(rec)
@@ -105,18 +144,93 @@ def build_indexes(repo_root: Path, repo_name: str = "agent-kb"):
     md = root / "INDEX.md"
     jl = root / "index.jsonl"
     dj = root / "index.draft.jsonl"
-    md.write_text(_md(live), encoding="utf-8")
-    jl.write_text(_jsonl(live), encoding="utf-8")
-    dj.write_text(_jsonl(draft), encoding="utf-8")
+    write_text_lf(md, _md(live))
+    write_text_lf(jl, _jsonl(live))
+    write_text_lf(dj, _jsonl(draft))
     return md, jl, dj
 
 
-def check_indexes(repo_root: Path, repo_name: str = "agent-kb") -> bool:
-    live, draft = _records(repo_root, repo_name)
-    root = Path(repo_root) / "kb"
-    want = {root / "INDEX.md": _md(live), root / "index.jsonl": _jsonl(live),
-            root / "index.draft.jsonl": _jsonl(draft)}
-    for path, content in want.items():
-        if not path.exists() or path.read_text(encoding="utf-8") != content:
+_REPO_FIELD_RE = re.compile(r'"repo"\s*:\s*"([^"]+)"')
+
+
+def resolve_repo_name(repo_root: Path, explicit: str | None = None) -> str:
+    """repo 标签从**被检内容自取**, 不从挂载路径反推(同 pre-push-gate.sh:234-244)。
+
+    `repo` 是 `kb index` **生成时**写进每条记录的固化标签(业务仓项目层写仓名,
+    通用层写 agent-kb), 与 kb 载体目录名没有必然关系。校验侧若从目录名反推再与
+    固化值全等比对, 在"载体目录名 ≠ 逻辑仓名"的布局下恒判 stale:
+    `.agent-kb` → `.agent-kb` vs 固化 `agent-kb`; `docs` → `docs` vs 固化
+    `flysee-video-setting`。主仓 kb/ 恰好载体名=仓根同名, 自测全绿掩盖了漂移
+    (§45 第二十七轮把"业务仓根名"改成"载体名", 仍是从可变量反推, 未触及根因)。
+
+    恒假阳性的 `index fresh` 检查与没有检查等价, 且更糟——它提供虚假的安全感,
+    使通用层 submodule 索引过期长期无人发现。故读取顺序: 显式 --repo-name →
+    index.jsonl 首行自取 → 仅在索引不存在时回落目录名。
+    """
+    if explicit:
+        return explicit
+    jl = Path(repo_root) / "kb" / "index.jsonl"
+    try:
+        with jl.open(encoding="utf-8", errors="replace") as fh:
+            first = fh.readline()          # 每条记录都带 repo, 首行足够
+    except OSError:
+        return Path(repo_root).resolve().name.lower()
+    m = _REPO_FIELD_RE.search(first)
+    return m.group(1) if m else Path(repo_root).resolve().name.lower()
+
+
+def _v1_tolerant_equal(committed_text: str, want_records) -> bool:
+    """比对已提交 index.jsonl 与重算结果, 容忍 v1 行缺 `origin`/`uri`。
+
+    为什么必须容忍(2026-11-14 独立终审实测): 飞视 web / algorithm 两仓 `import kb`
+    失败 → 门禁按 pre-push-gate 的解释器回落改用 **Agent-KB 主仓 venv(新码)** 跑
+    `index --check`; 而这两仓已提交的索引是**各自 submodule 钉住的旧码**产出
+    (web `f44f010` / algorithm `c20b144`, 均不注入 origin/uri, 共 121/47 行)。逐字节
+    比对 → 两仓下次触碰 `docs/kb` 的推送恒被 `index --check` 拦死, 且被引导用**自己
+    钉不住的新形状**整体重写索引(无版本闸门)。缺这两个字段即视为契约默认值
+    (`origin`=local / `uri`=null), 与本仓"重建即可对齐"语义等价。
+
+    豁免范围严格限定为"这两个键缺失": 其余任一字段的差异、行数增减、以及 `origin`
+    显式为别的值都仍判漂移——否则等于把整条 `--check` 门禁掏空。committed 侧语法
+    坏(手改/半写)按漂移处理, 不抛。
+    """
+    want = [dict(r) for r in want_records]
+    got = []
+    try:
+        for ln in committed_text.splitlines():
+            if ln.strip():
+                got.append(json.loads(ln))
+    except json.JSONDecodeError:
+        return False
+    if len(got) != len(want):
+        return False
+    for g, w in zip(got, want):
+        # 键序无关的整体比对(排除两个契约字段), 缺键与异键都会在此暴露。
+        rest_g = {k: v for k, v in g.items() if k not in ("origin", "uri")}
+        rest_w = {k: v for k, v in w.items() if k not in ("origin", "uri")}
+        if rest_g != rest_w:
+            return False
+        # 键在位就必须与契约默认值一致(旧格式重建后仍逐字节严判); 缺键才回落默认值。
+        if g.get("origin", "local") != w.get("origin", "local"):
+            return False
+        if g.get("uri") != w.get("uri"):
             return False
     return True
+
+
+def check_indexes(repo_root: Path, repo_name: str = "agent-kb") -> bool:
+    """live 面(INDEX.md / index.jsonl)漂移门禁; **故意不比对 index.draft.jsonl**。
+
+    draft 索引是他人 WIP 的生成物: 业务仓工作区常有未提交的 QA draft, 提交时
+    `git restore index.draft.jsonl` 后若仍比对, --check 会一直红到那批 draft 收口
+    (2026-10-29 在 flysee-video-setting 实际踩到)。门禁拦"live 面漂移", 不拦 WIP。
+    """
+    live, _draft = _records(repo_root, repo_name)
+    root = Path(repo_root) / "kb"
+    md_path = root / "INDEX.md"
+    jl_path = root / "index.jsonl"
+    if not md_path.exists() or md_path.read_text(encoding="utf-8") != _md(live):
+        return False
+    if not jl_path.exists():
+        return False
+    return _v1_tolerant_equal(jl_path.read_text(encoding="utf-8"), live)

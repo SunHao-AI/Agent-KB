@@ -230,3 +230,14 @@ def test_cli_search_agent_kb_layers(tmp_path, capsys):
                  "--query", "vite"]) == 0
     rows = json.loads(capsys.readouterr().out)
     assert {r["repo"] for r in rows} == {proj_kb.name, stack_kb.name}
+
+
+def test_kb_new_summary_flag(tmp_repo, capsys):
+    # 简报偏差: `kb new` stdout 是裸路径(非 JSON)、get_entry 返回 markdown 文本
+    # (非 dict), 无法按简报原样 json.loads(out)["id"]; 改断言 live 索引行的
+    # summary——显式结论句必须同时落盘与进 L2 索引面才算透传成功。
+    assert main(["new", "pitfall", "--domain", "frontend", "--title", "结论句演示",
+                 "--summary", "Vite 端口漂移需固定 server.port。",
+                 "--repo", str(tmp_repo)]) == 0
+    rec = json.loads((tmp_repo / "kb" / "index.jsonl").read_text(encoding="utf-8"))
+    assert rec["summary"] == "Vite 端口漂移需固定 server.port。"

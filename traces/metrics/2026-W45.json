@@ -1,0 +1,390 @@
+{
+  "schema": 1,
+  "week": "2026-W45",
+  "since": "2026-11-02",
+  "until": "2026-11-08",
+  "generated_at": "2026-11-13T11:48:17+08:00",
+  "metrics": {
+    "window": {
+      "since": "2026-11-02",
+      "until": "2026-11-08"
+    },
+    "searches": 338,
+    "not_executed_count": 4,
+    "hit_rate": 0.3787,
+    "returned_total": 289,
+    "consumed_total": 0,
+    "consume_rate": 0.0,
+    "consume_tracked_from": "2026-11-13",
+    "consume_tracked": false,
+    "pre_tracking_searches": 338,
+    "get_events": 0,
+    "saved_chars_est": 0,
+    "saved_unknown_count": 0,
+    "overhead_chars": 540476,
+    "by_caller": {
+      "flysee-video-setting": {
+        "searches": 268,
+        "hits": 116,
+        "last_ts": "2026-11-08T23:55:18+08:00"
+      },
+      "agent-kb": {
+        "searches": 64,
+        "hits": 11,
+        "last_ts": "2026-11-08T19:34:17+08:00"
+      },
+      "docs": {
+        "searches": 3,
+        "hits": 1,
+        "last_ts": "2026-11-07T16:13:20+08:00"
+      },
+      "flysee_video_web": {
+        "searches": 3,
+        "hits": 0,
+        "last_ts": "2026-11-05T10:25:12+08:00"
+      }
+    },
+    "by_day": [
+      {
+        "day": "2026-11-02",
+        "searches": 16,
+        "hits": 3
+      },
+      {
+        "day": "2026-11-03",
+        "searches": 28,
+        "hits": 6
+      },
+      {
+        "day": "2026-11-04",
+        "searches": 46,
+        "hits": 33
+      },
+      {
+        "day": "2026-11-05",
+        "searches": 57,
+        "hits": 11
+      },
+      {
+        "day": "2026-11-06",
+        "searches": 42,
+        "hits": 18
+      },
+      {
+        "day": "2026-11-07",
+        "searches": 86,
+        "hits": 32
+      },
+      {
+        "day": "2026-11-08",
+        "searches": 63,
+        "hits": 25
+      }
+    ],
+    "cold_start": false
+  },
+  "latency": {
+    "n": 342,
+    "p50_ms": 28,
+    "p95_ms": 183,
+    "avg_ms": 58,
+    "max_ms": 2038
+  },
+  "zero_hit": {
+    "board": [
+      {
+        "query": "vite hmr 热更新",
+        "count": 5,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-02T13:35:28+08:00",
+        "digested": false
+      },
+      {
+        "query": "start_002",
+        "count": 3,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-07T20:35:19+08:00",
+        "digested": false
+      },
+      {
+        "query": "acme",
+        "count": 3,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-07T02:16:41+08:00",
+        "digested": false
+      },
+      {
+        "query": "weight_path onnx engine 迁移",
+        "count": 2,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-07T20:01:18+08:00",
+        "digested": false
+      },
+      {
+        "query": "let's encrypt",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-07T02:03:39+08:00",
+        "digested": false
+      },
+      {
+        "query": "端口白名单",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-07T02:03:37+08:00",
+        "digested": false
+      },
+      {
+        "query": "!override",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-07T02:03:34+08:00",
+        "digested": false
+      },
+      {
+        "query": "deploy-hook",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-07T02:03:24+08:00",
+        "digested": false
+      },
+      {
+        "query": "证书续期",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-07T02:03:21+08:00",
+        "digested": false
+      },
+      {
+        "query": "公网化",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-07T02:03:18+08:00",
+        "digested": false
+      },
+      {
+        "query": "http-01",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-07T02:03:15+08:00",
+        "digested": false
+      },
+      {
+        "query": "证书",
+        "count": 2,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-06T17:12:46+08:00",
+        "digested": false
+      },
+      {
+        "query": "规范文档与实现不一致",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-05T14:34:16+08:00",
+        "digested": false
+      },
+      {
+        "query": "seed migration 双通道 对账 分叉",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-05T11:46:07+08:00",
+        "digested": false
+      },
+      {
+        "query": "菜单树 父节点 未授权 不可达",
+        "count": 2,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-05T11:46:05+08:00",
+        "digested": false
+      },
+      {
+        "query": "quota 快照 quota_token",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T23:52:55+08:00",
+        "digested": false
+      },
+      {
+        "query": "mysql 中文文件名 字符集 乱码",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T20:54:19+08:00",
+        "digested": false
+      },
+      {
+        "query": "rtmp 推流 签名 on_publish",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T20:54:18+08:00",
+        "digested": false
+      },
+      {
+        "query": "dockerfile 混淆 漏拷 module_not_found",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T20:54:05+08:00",
+        "digested": false
+      },
+      {
+        "query": "镜像 工作区 md5",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T19:34:40+08:00",
+        "digested": false
+      },
+      {
+        "query": "阻塞读 管道 无超时 冻结 rtmp",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-08T19:34:17+08:00",
+        "digested": false
+      },
+      {
+        "query": "子进程 日志 sink 级别 静默",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-08T19:34:16+08:00",
+        "digested": false
+      },
+      {
+        "query": "docker 镜像 构建 未提交 代码 追溯",
+        "count": 1,
+        "caller": "agent-kb",
+        "last_ts": "2026-11-08T19:34:15+08:00",
+        "digested": false
+      },
+      {
+        "query": "worker 子进程 日志 静默 sink warning",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T19:34:07+08:00",
+        "digested": false
+      },
+      {
+        "query": "零检出 静默 告警 保存 门禁",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T19:34:06+08:00",
+        "digested": false
+      },
+      {
+        "query": "镜像 未提交 工作区 md5 git 版本",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T19:34:05+08:00",
+        "digested": false
+      },
+      {
+        "query": "o-r3 部署 镜像 compose env-file a 机",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T19:17:54+08:00",
+        "digested": false
+      },
+      {
+        "query": "file 输入 上传 视频 卷",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T17:16:22+08:00",
+        "digested": false
+      },
+      {
+        "query": "start_002 文件缺失 挂载",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T17:16:20+08:00",
+        "digested": false
+      },
+      {
+        "query": "radius_cfg",
+        "count": 1,
+        "caller": "flysee-video-setting",
+        "last_ts": "2026-11-08T17:14:08+08:00",
+        "digested": true
+      }
+    ],
+    "digested": 1,
+    "digest_rate": 0.0333
+  },
+  "callers": [
+    {
+      "caller": "flysee-video-setting",
+      "searches": 268,
+      "hit_rate": 0.4328,
+      "last_ts": "2026-11-13T02:04:59+08:00",
+      "stale": false,
+      "by_source": {
+        "project": 257
+      },
+      "ext": []
+    },
+    {
+      "caller": "agent-kb",
+      "searches": 64,
+      "hit_rate": 0.1719,
+      "last_ts": "2026-11-13T11:13:00+08:00",
+      "stale": false,
+      "by_source": {
+        "project": 27
+      },
+      "ext": []
+    },
+    {
+      "caller": "flysee_video_web",
+      "searches": 3,
+      "hit_rate": 0.0,
+      "last_ts": "2026-11-13T02:05:13+08:00",
+      "stale": false,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "docs",
+      "searches": 3,
+      "hit_rate": 0.3333,
+      "last_ts": "2026-11-07T16:13:20+08:00",
+      "stale": false,
+      "by_source": {
+        "project": 5
+      },
+      "ext": []
+    },
+    {
+      "caller": "flysee_video_algorithm",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-11-12T18:35:49+08:00",
+      "stale": false,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": ".agent-kb",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-11-01T17:07:50+08:00",
+      "stale": false,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "tencentdb-agent-memory",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-10-20T18:26:25+08:00",
+      "stale": true,
+      "by_source": {},
+      "ext": []
+    },
+    {
+      "caller": "kb-demo",
+      "searches": 0,
+      "hit_rate": null,
+      "last_ts": "2026-10-15T16:34:42+08:00",
+      "stale": true,
+      "by_source": {},
+      "ext": []
+    }
+  ],
+  "warns": []
+}

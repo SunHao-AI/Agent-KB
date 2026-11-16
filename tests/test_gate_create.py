@@ -82,3 +82,20 @@ def test_no_title_hit_without_body_creates(tmp_repo):
     assert e.fm["status"] == "draft" and e.path.exists()
     text = e.path.read_text(encoding="utf-8")
     assert "## 根因" in text  # 模板骨架保留
+
+
+# --- F6: 标题查重词边界(短 token 丢弃 + latin 词边界) ---
+def test_short_latin_token_not_matched(tmp_repo):
+    # 短 token(el/ui 等, 长度<3)不再参与标题匹配: el-dialog 不应命中含 dialog 的旧标题
+    _accepted_entry(tmp_repo, "kb-20261012-6666", "el-dialog 遮罩拦截表格点击", "无关根因甲。")
+    e = create_draft(tmp_repo, type="pitfall", domain="frontend",
+                     title="el 组件弹层点击穿透排查", body="## 根因\n另一独立机制说明文本。\n")
+    assert e.fm["status"] == "draft" and e.path.exists()
+
+
+def test_latin_token_word_boundary(tmp_repo):
+    # close 不得命中 close_reason(下划线视为词内), rules 不得命中 rules-empty
+    _accepted_entry(tmp_repo, "kb-20261012-7777", "启动失败 close_reason 语义排查", "无关根因甲。")
+    e = create_draft(tmp_repo, type="pitfall", domain="frontend",
+                     title="EventSource close 后浏览器仍记 aborted", body="## 根因\n SSE 关闭属于另一机制。\n")
+    assert e.fm["status"] == "draft" and e.path.exists()

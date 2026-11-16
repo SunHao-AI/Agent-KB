@@ -1,12 +1,15 @@
 """FR-1.2 指标口径唯一实现(kb.stats)的口径回归 + serve 服务端点冒烟。"""
+import datetime as dt
 import json
 import socket
 import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from kb import serve, stats
+from kb import trace as kbtrace
 
 
 def _search(tid, caller, query, returned, *, ts="2026-10-18T10:00:00+08:00",
@@ -203,6 +206,19 @@ def test_feed_events_limit_contract_nonpositive():
     assert [e["trace_id"] for e in stats.feed_events(S, [], limit=2)] == ["t4", "t3"]
 
 
+def test_feed_events_offset_cursor():
+    """S1: offset 游标——排序后切片 [offset:offset+limit], 与单次 limit 同序同源,
+    翻页不重不漏(面板"加载更多"按已载入条数续取)。"""
+    S = [_search(f"t{i}", "a", f"q{i}", [], ts=f"2026-10-2{i}T10:00:00+08:00")
+         for i in range(1, 6)]                      # 倒序: t5,t4,t3,t2,t1
+    p1 = [e["trace_id"] for e in stats.feed_events(S, [], limit=2)]
+    p2 = [e["trace_id"] for e in stats.feed_events(S, [], limit=2, offset=2)]
+    assert p1 == ["t5", "t4"] and p2 == ["t3", "t2"]
+    assert p1 + p2 == ["t5", "t4", "t3", "t2"]      # 无漏无重
+    assert [e["trace_id"] for e in stats.feed_events(S, [], limit=2, offset=4)] == ["t1"]
+    assert stats.feed_events(S, [], limit=2, offset=99) == []
+
+
 def test_board_functions_limit_contract_nonpositive():
     """§58 同族(第四十六轮): top_queries/top_consumed/zero_hit_board 三榜单
     与 feed_events 同文件同族却各自漏网——`[:limit]` 负数尾截"要最少给最多"
@@ -213,10 +229,46 @@ def test_board_functions_limit_contract_nonpositive():
           "caller_repo": "a", "id": f"kb-x{i}", "ok": True} for i in range(2, 6, 2)]
     for fn, args in ((stats.top_queries, (S,)),
                      (stats.top_consumed, (S, G)),
-                     (stats.zero_hit_board, (S,))):
+                     (stats.zero_hit_board, (S,)),
+                     (stats.dead_weight, (S, G))):
         assert fn(*args, limit=0) == [], fn
         assert fn(*args, limit=-2) == [], fn   # 旧行为: 全量减 2(尾截翻转)
     assert len(stats.top_queries(S, limit=2)) == 2
+
+
+def test_dead_weight_ranks_unconsumed_returns():
+    """A6: 消费率低的归因榜——被返回但从未同 trace 读全文的条目。
+    口径与 _consumed_ids 互补: 被消费过一次的条目绝不该上榜(哪怕同窗口
+    其他 trace 没读它), 只被返回 1-2 次的长尾由 min_returned 滤掉。"""
+    S = [_search(f"t{i}", "a", f"q{i}", ["kdead", "kalive"]) for i in range(1, 5)]
+    G = [_get("t1", "kalive", "a")]          # kalive 被消费过一次
+    rows = stats.dead_weight(S, G)
+    assert [r["id"] for r in rows] == ["kdead"]
+    assert rows[0]["returned"] == 4 and rows[0]["title"] == "Tkdead"
+    assert stats.dead_weight(S, G, min_returned=5) == []
+
+
+def test_usage_by_id_matches_consumed_caliber():
+    """Q11: usage_by_id 的 reads 必须与 top_consumed.count 同一判定(被返回且同
+    trace 有 ok get), hits 计所有 returned 出现。质量清单的使用度与热门榜对得上,
+    否则同屏两处"消费次数"迟早互相打脸。"""
+    S = [_search("t1", "a", "q", ["k1", "k2"], ts="2026-10-18T10:00:00+08:00"),
+         _search("t2", "a", "q", ["k1"], ts="2026-10-18T10:01:00+08:00")]
+    G = [_get("t1", "k1", "a", ts="2026-10-18T10:00:05+08:00")]   # 只 k1 被消费
+    u = stats.usage_by_id(S, G)
+    assert u["k1"] == {"hits": 2, "reads": 1, "last": "2026-10-18T10:01:00+08:00"}
+    assert u["k2"] == {"hits": 1, "reads": 0, "last": "2026-10-18T10:00:00+08:00"}
+    # reads 口径与 top_consumed 一致(同 id 同次数)
+    tc = {r["id"]: r["count"] for r in stats.top_consumed(S, G)}
+    assert {i: v["reads"] for i, v in u.items() if v["reads"]} == tc
+    # get 未伴随同 trace 的 returned(未消费)不计 reads
+    assert stats.usage_by_id([], [_get("t9", "kx", "a")]) == {}
+
+
+def test_dead_weight_ignores_non_str_returned():
+    """§67 同族: returned 里的 None/非字符串不得进榜(集合语义要求 str)。"""
+    S = [_search("t1", "a", "q", ["k1", None, 3])] * 4
+    assert [r["id"] for r in stats.dead_weight(S, [])] == ["k1"]
 
 
 def test_serve_feed_limit_noninteger_rejected_400(tmp_path):
@@ -235,9 +287,56 @@ def test_serve_feed_limit_noninteger_rejected_400(tmp_path):
         srv.server_close()
 
 
+def test_serve_feed_follows_window(tmp_path):
+    """A2(2026-11-02): feed 快照此前固定全时最近 N 条, 切窗口 KPI 变、列表不变,
+    同屏两口径。修复后 /api/feed 与 /api/stats 同 _within 口径, 且缓存键必须含
+    窗口(否则 7 天/全时两份响应互串)。"""
+    import datetime as dt
+    today = dt.date.today().isoformat()
+    old = (dt.date.today() - dt.timedelta(days=40)).isoformat()
+    d = tmp_path / "traces"
+    rows = [
+        {"kind": "search", "trace_id": "t-new", "ts": f"{today}T10:00:00+08:00",
+         "source": "cli", "caller_repo": "p", "query": "近", "returned": ["k1"],
+         "layers": [{"repo": "docs", "scanned": 5, "matched": [{"id": "k1", "title": "T"}]}]},
+        {"kind": "search", "trace_id": "t-old", "ts": f"{old}T10:00:00+08:00",
+         "source": "cli", "caller_repo": "p", "query": "远", "returned": [],
+         "layers": [{"repo": "docs", "scanned": 5, "matched": []}]},
+    ]
+    srv, base = _serve(tmp_path)   # _serve 负责建 traces/, 账本随后写入
+    lines = [json.dumps({"kind": "meta", "schema": serve.kbtrace.SCHEMA})] + \
+        [json.dumps(r, ensure_ascii=False) for r in rows]     # 账本契约: 首行必须是 meta
+    (d / "ledger.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        st, body = _get_url(f"{base}/api/feed?since={today}")
+        assert st == 200 and [x["trace_id"] for x in body] == ["t-new"]
+        st, body = _get_url(f"{base}/api/feed")           # 不设窗口: 两条都在
+        assert [x["trace_id"] for x in body] == ["t-new", "t-old"]
+        # 缓存互串守卫: 先取窄窗再取全量(同 caller/limit, 仅 since 不同)
+        st, body = _get_url(f"{base}/api/feed?since={today}")
+        assert [x["trace_id"] for x in body] == ["t-new"]
+        # stats 与 feed 同口径: 7 天窗口下两者都只数到 t-new
+        st, sb = _get_url(f"{base}/api/stats?since={today}")
+        st, fb = _get_url(f"{base}/api/feed?since={today}")
+        assert sb["kpi"]["searches"] == len(fb) == 1
+        # X-Total-Count: body 被 limit 截断时, 面板仍能拿到窗口内真实总数
+        # (否则 7 天窗/全时都被截成 500, 切窗口计数纹丝不动)
+        assert _head(f"{base}/api/feed?since={today}&limit=1") == "1"
+        assert _head(f"{base}/api/feed?limit=1") == "2"
+        assert _head(f"{base}/api/feed?caller=nope&limit=1") == "0"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_callers_stale_detection():
-    S = [_search("t1", "fresh", "v", ["k1"], ts="2026-10-19T10:00:00+08:00"),
-         _search("t2", "dead", "v", ["k1"], ts="2026-01-01T10:00:00+08:00")]
+    # 新鲜度基准是"距今 >14d = stale", 用固定日历日写死"fresh"必然腐坏:
+    # 2026-11-02 起原 ts(2026-10-19)距已超 14 天, 该用例天天挂。改相对今天取值。
+    today = dt.date.today()
+    fresh = f"{today - dt.timedelta(days=2):%Y-%m-%d}T10:00:00+08:00"
+    dead = f"{today - dt.timedelta(days=40):%Y-%m-%d}T10:00:00+08:00"
+    S = [_search("t1", "fresh", "v", ["k1"], ts=fresh),
+         _search("t2", "dead", "v", ["k1"], ts=dead)]
     rows = {r["caller"]: r for r in stats.callers(S)}
     assert rows["fresh"]["stale"] is False and rows["dead"]["stale"] is True
 
@@ -297,17 +396,20 @@ def test_watcher_waits_for_complete_line(tmp_path):
 # ---- serve 端点冒烟(临时目录当仓根, 端口 0 自动分配) ----------------------
 
 def _serve(tmp_path, token=None, default_caller=None):
-    (tmp_path / "traces").mkdir()
+    # exist_ok: 部分用例要先写账本再拉服务(写文件需要 traces/ 已存在)
+    (tmp_path / "traces").mkdir(exist_ok=True)
     srv = serve.ServeServer(("127.0.0.1", 0), tmp_path, token, default_caller, quiet=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     port = srv.server_address[1]
     return srv, f"http://127.0.0.1:{port}"
 
 
-def _get_url(url, token=None):
+def _get_url(url, token=None, cookie=None):
     req = urllib.request.Request(url)
     if token:
         req.add_header("Authorization", f"Bearer {token}")
+    if cookie:
+        req.add_header("Cookie", cookie)
     with urllib.request.urlopen(req, timeout=5) as r:
         return r.status, json.loads(r.read().decode())
 
@@ -318,6 +420,42 @@ def _get_any(url):
         return _get_url(url)
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode())
+
+
+def test_panel_inline_script_parses(tmp_path):
+    """面板内联脚本语法守护(2026-11-02 实测教训): 一处多余的单引号让整段 <script>
+    解析失败——389 条 pytest 全绿(后端与数据层确实没坏), 浏览器却整页白屏、
+    连接指示器永停"连接中…"。serve 只在启动时读 HTML, 单测又只断言 HTML 含标题,
+    这类错误只有"解析一遍脚本"才能拦住。无 node 环境自动跳过。"""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        import pytest
+        pytest.skip("node not available")
+    html = (Path(serve.__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
+    # 逐段校验**所有**内联脚本(head 里还有 D3 主题初始化的小脚本); 只查第一段
+    # 会让 head 脚本的语法错误溜过——那同样导致整页不工作。
+    blocks, rest = [], html
+    while "<script>" in rest:
+        rest = rest.split("<script>", 1)[1]
+        js, rest = rest.split("</script>", 1)
+        blocks.append(js)
+    assert blocks, "面板没有内联脚本(结构变了?)"
+    for i, js in enumerate(blocks):
+        out = tmp_path / f"panel{i}.js"
+        out.write_text(js, encoding="utf-8")
+        r = subprocess.run([node, "--check", str(out)], capture_output=True, text=True)
+        assert r.returncode == 0, f"面板内联脚本[{i}]语法错误:\n{r.stderr}"
+
+
+def _head(url):
+    """取 X-Total-Count 响应头(feed 窗口内真实总数, 与 body 截断长度解耦)。"""
+    with urllib.request.urlopen(url, timeout=5) as r:
+        r.read()
+        return r.headers.get("X-Total-Count")
 
 
 def test_serve_health_stats_and_page(tmp_path):
@@ -336,6 +474,33 @@ def test_serve_health_stats_and_page(tmp_path):
         with urllib.request.urlopen(req, timeout=5) as r:
             html = r.read().decode()
         assert "Agent-KB 观测面板" in html
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_serve_stats_reports_kb_baseline(tmp_path):
+    """B 项(2026-11-13): 检索开销必须给分母。只报 overhead 是一个差值, 读者无从
+    判断"1.4× 全库"还是"0.01× 全库"; baseline 走索引 path 逐条读正文, 与窗口/caller
+    无关(分母是本库规模, 不随筛选变化)。"""
+    body = "# 标题\n\n" + "正文" * 50
+    d = tmp_path / "kb" / "pitfall" / "frontend"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text(body, encoding="utf-8")
+    (tmp_path / "kb" / "index.jsonl").write_text(
+        json.dumps({"id": "kb-20260101-aaaa", "path": "kb/pitfall/frontend/a.md"}) + "\n",
+        encoding="utf-8")
+    (tmp_path / "kb" / "INDEX.md").write_text("索引", encoding="utf-8")
+    srv, base = _serve(tmp_path)
+    try:
+        st, d0 = _get_url(f"{base}/api/stats")
+        assert st == 200
+        bl = d0["baseline"]
+        assert bl["entries"] == 1 and bl["kb_chars"] == len(body)
+        assert bl["index_chars"] == len("索引")
+        # 窗口/caller 过滤不影响分母
+        st, d1 = _get_url(f"{base}/api/stats?since=2026-10-01&caller=ghost")
+        assert d1["baseline"] == bl
     finally:
         srv.shutdown()
         srv.server_close()
@@ -373,6 +538,420 @@ def test_serve_token_enforced(tmp_path):
         srv.server_close()
 
 
+def test_serve_session_cookie_replaces_token_in_url(tmp_path):
+    """E1(2026-11-02): token 曾常驻每个请求的 URL query(浏览器历史/Referer/分享
+    链接全泄明文)。改为 ticket 换 HttpOnly cookie: /api/session?ticket=<token>
+    发 Set-Cookie, 之后 /api/* 凭 cookie 过鉴权, query 不再需要 token。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        # 错 ticket 拒绝
+        st, _ = _get_any(f"{base}/api/session?ticket=wrong")
+        assert st == 403
+        # 正确 ticket → Set-Cookie
+        with urllib.request.urlopen(f"{base}/api/session?ticket=s3cret", timeout=5) as r:
+            assert r.status == 200
+            ck = r.headers.get("Set-Cookie", "")
+        assert "kb_tk=" in ck and "HttpOnly" in ck
+        # cookie 即可过鉴权(URL 无 token)
+        req = urllib.request.Request(f"{base}/api/stats")
+        req.add_header("Cookie", ck.split(";")[0])
+        with urllib.request.urlopen(req, timeout=5) as r:
+            assert r.status == 200
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_serve_trend_export_and_caller_all(tmp_path):
+    """B1 趋势 / B4 导出 / caller=all(追因跨项目快照)三个新端点口径。"""
+    import datetime as dt
+    today = dt.date.today().isoformat()
+    yest = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+    srv, base = _serve(tmp_path)
+    rows = [
+        {"kind": "search", "trace_id": "t1", "ts": f"{yest}T10:00:00+08:00",
+         "source": "cli", "caller_repo": "p1", "query": "缺口词", "returned": [],
+         "duration_ms": 30,
+         "layers": [{"repo": "docs", "scanned": 5, "matched": []}]},
+        {"kind": "search", "trace_id": "t2", "ts": f"{today}T10:00:00+08:00",
+         "source": "cli", "caller_repo": "p2", "query": "vite", "returned": ["k1"],
+         "duration_ms": 90,
+         "layers": [{"repo": "docs", "scanned": 5, "matched": [{"id": "k1", "title": "T"}]}]},
+    ]
+    lines = [json.dumps({"kind": "meta", "schema": serve.kbtrace.SCHEMA})] + \
+        [json.dumps(r, ensure_ascii=False) for r in rows]
+    (tmp_path / "traces" / "ledger.jsonl").write_text("\n".join(lines) + "\n",
+                                                      encoding="utf-8")
+    try:
+        st, body = _get_url(f"{base}/api/trend")
+        assert st == 200 and len(body["days"]) == 2
+        d0 = {x["day"]: x for x in body["days"]}
+        assert d0[yest]["searches"] == 1 and d0[yest]["hits"] == 0
+        assert d0[today]["median_ms"] == 90
+        # 趋势与 stats 同 caller 过滤
+        st, body = _get_url(f"{base}/api/trend?caller=p1")
+        assert [x["day"] for x in body["days"]] == [yest]
+        # 导出: 与面板榜单同一实现出口; 未知 kind 是客户端错误 400 不是 500
+        st, body = _get_url(f"{base}/api/export?kind=zero")
+        assert st == 200 and body[0]["query"] == "缺口词"
+        st, body = _get_url(f"{base}/api/export?kind=dead")
+        assert st == 200 and body == []      # k1 只返回 1 次, 未过 min_returned
+        st, body = _get_any(f"{base}/api/export?kind=bogus")
+        assert st == 400
+        # caller=all: 单项目视图追因要"跨全部 caller 但仍是列表口径"——
+        # feed 必须回两个项目的行(否则别的项目的零命中永远追不到)
+        st, body = _get_url(f"{base}/api/feed?caller=all")
+        assert [x["trace_id"] for x in body] == ["t2", "t1"]
+        st, body = _get_url(f"{base}/api/feed?caller=p1")
+        assert [x["trace_id"] for x in body] == ["t1"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_synthetic_callers_rules():
+    """P0-1 判据: pytest tmp_path 形态 caller 直接剔; 其余按"该 caller 全部 search
+    的最大 scanned ≤ 2"剔(合成夹具只有 1-2 条条目)。
+
+    关键防误伤: 真实仓只要**出现过一次**大扫描就不再是合成——用"全部"而非"存在",
+    否则刚接入(库里还只有 1-2 条)的真实仓会被永久误剔。
+    """
+    real = _search("r1", "flysee_video_web", "vite", ["k1"])          # scanned=5
+    tiny = _search("t1", "proj", "vite", ["kb-1"])
+    tiny["layers"] = [{"repo": "proj", "scanned": 1, "matched": []}]
+    grew = [_search("g1", "newrepo", "a", [], ), _search("g2", "newrepo", "b", ["k"])]
+    grew[0]["layers"] = [{"repo": "newrepo", "scanned": 1, "matched": []}]
+    pytest_like = _search("p1", "test_cli_index_then_search_jso0", "vite", ["kb-1"])
+    pytest_like["layers"] = []            # scanned 缺失也照剔(靠 caller 名铁证)
+    S = [real, tiny, *grew, pytest_like]
+    assert stats.synthetic_callers(S) == {"proj", "test_cli_index_then_search_jso0"}
+    assert "newrepo" not in stats.synthetic_callers(S)   # 长过 → 不是合成
+    assert "flysee_video_web" not in stats.synthetic_callers(S)
+
+
+def test_denoise_drops_both_kinds_and_counts():
+    """get 与 search 同批剔: 只剔 search 会让消费率分母被剔而分子不剔。"""
+    tiny = _search("t1", "proj", "vite", ["kb-1"])
+    tiny["layers"] = [{"repo": "proj", "scanned": 1, "matched": []}]
+    S = [_search("r1", "real", "vite", ["k1"]), tiny]
+    G = [_get("r1", "k1", "real"), _get("t1", "kb-1", "proj")]
+    s, g, n, bad = stats.denoise(S, G)
+    assert [x["trace_id"] for x in s] == ["r1"]
+    assert [x["trace_id"] for x in g] == ["r1"]
+    assert n == 2 and bad == {"proj"}
+    assert stats.denoise(S, G)[2:] == stats.denoise(S, G)[2:]   # 幂等(纯函数)
+    clean = [_search("r1", "real", "vite", ["k1"])]
+    assert stats.denoise(clean, []) == (clean, [], 0, set())
+
+
+def test_serve_stats_reports_dropped_synthetic(tmp_path):
+    """剔噪必须可见: 面板要拿到被剔条数与 caller 名单; `?raw=1` 回原始口径。"""
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    srv, base = _serve(tmp_path)      # _serve 负责建 traces/, 账本随后写入
+    rows = [{"kind": "search", "trace_id": "real1", "source": "cli",
+             "caller_repo": "real", "query": "连接池 耗尽", "returned": [],
+             "ts": f"{today}T10:00:00+08:00",
+             "layers": [{"repo": "real", "scanned": 195, "matched": []}]}]
+    # 三条合成 search(同一合成 caller): 复刻"零消费榜被合成夹具刷屏"的真实形态
+    for i in (1, 2, 3):
+        rows.append({"kind": "search", "trace_id": f"syn{i}", "source": "cli",
+                     "caller_repo": "proj", "query": "vite",
+                     "ts": f"{today}T11:0{i}:00+08:00",
+                     "returned": ["kb-20261012-aaaa"],
+                     "layers": [{"repo": "proj", "scanned": 1,
+                                 "matched": [{"id": "kb-20261012-aaaa",
+                                              "title": "Vite"}]}]})
+    # 窗口外的一条合成事件: synthetic_count 必须与卡面窗口口径对账(走查实测
+    # 标注 157 vs 两态 KPI 差 70 的根因就是全账本数冒充窗口数)
+    rows.append({"kind": "search", "trace_id": "synold", "source": "cli",
+                 "caller_repo": "proj", "query": "vite", "returned": [],
+                 "ts": "2026-10-01T11:00:00+08:00",
+                 "layers": [{"repo": "proj", "scanned": 1, "matched": []}]})
+    lines = [json.dumps({"kind": "meta", "schema": serve.kbtrace.SCHEMA})] + \
+        [json.dumps(r, ensure_ascii=False) for r in rows]
+    (tmp_path / "traces" / "ledger.jsonl").write_text("\n".join(lines) + "\n",
+                                                      encoding="utf-8")
+    try:
+        st, d = _get_url(f"{base}/api/stats")
+        assert st == 200
+        assert d["synthetic_count"] == 4 and d["synthetic_callers"] == ["proj"]
+        assert d["kpi"]["searches"] == 1
+        # 窗口口径对账: 剔噪数只算窗口内的(10-01 那条合成事件在窗口外)
+        st, dw = _get_url(f"{base}/api/stats?since={today}")
+        assert dw["kpi"]["searches"] == 1
+        assert dw["synthetic_count"] == 3
+        assert dw["synthetic_total"] == 4
+        # 单日聚焦(回归实测 -812 的根因: 减数没同步过窗口, 窄窗口减穿成负数)
+        st, dd = _get_url(f"{base}/api/stats?since={today}&until={today}")
+        assert dd["synthetic_count"] == 3
+        st, dz = _get_url(f"{base}/api/stats?since=2020-01-01&until=2020-01-02")
+        assert dz["synthetic_count"] == 0 and dz["kpi"]["searches"] == 0
+        # 合成条目不得进榜(实测: 两条合成夹具各 61 次并列零消费榜首)
+        assert [x["id"] for x in d["dead_weight"]] == []
+        # 矩阵同理: 合成 caller 不是"项目", 不配占一行
+        st, rows2 = _get_url(f"{base}/api/callers")
+        assert [x["caller"] for x in rows2] == ["real"]
+        # raw=1 原始口径: 合成事件回来了, 且不再报"已剔除"
+        st, d2 = _get_url(f"{base}/api/stats?raw=1")
+        assert d2["kpi"]["searches"] == 5 and d2["synthetic_count"] == 0
+        assert d2["dead_weight"][0]["id"] == "kb-20261012-aaaa"
+        assert d2["dead_weight"][0]["returned"] == 3
+        # Q4: 审计明细两口径都给(raw 态正是拿来自查误伤的, 留空=逃生门失效),
+        # 且必须带 max_scanned —— 判断 tiny-scan 有没有冤枉真实小库全靠它。
+        assert [x["caller"] for x in d2["synthetic_detail"]] == ["proj"]
+        assert d2["synthetic_detail"][0]["events"] == 4
+        assert d2["synthetic_detail"][0]["why"] == "tiny-scan"
+        assert d2["synthetic_detail"][0]["max_scanned"] == 1
+        assert d["synthetic_detail"] == d2["synthetic_detail"]
+        st, rows3 = _get_url(f"{base}/api/feed?raw=1")
+        assert {x["trace_id"] for x in rows3} == {
+            "real1", "syn1", "syn2", "syn3", "synold"}
+        st, rows4 = _get_url(f"{base}/api/feed")
+        assert [x["trace_id"] for x in rows4] == ["real1"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_serve_quality_federation(tmp_path):
+    """A5: /api/quality 聚合 = 本 serve root + 显式 --repos 的库, 二者分列;
+    traces 里出现但未配置的 caller 进 uncovered(不猜路径、不拿本库数字冒充)。"""
+    def _idx(root: Path, n: int, status="accepted"):
+        (root / "kb").mkdir(parents=True, exist_ok=True)
+        (root / "kb" / "index.jsonl").write_text("\n".join(
+            json.dumps({"id": f"kb-20261101-{i:04d}", "title": f"t{i}",
+                        "status": status, "confidence": "verified", "type": "pitfall",
+                        "domain": "backend", "scope": "project", "path": "kb/x.md",
+                        "tags": ["a"]}) for i in range(n)), encoding="utf-8")
+
+    _idx(tmp_path, 2)
+    extra = tmp_path / "biz" / "docs"
+    _idx(extra, 3, status="draft")
+    # caller "p9" 在 traces 里出现过但没配 --repos → uncovered
+    (tmp_path / "traces").mkdir()
+    (tmp_path / "traces" / "ledger.jsonl").write_text(
+        json.dumps({"kind": "meta", "schema": serve.kbtrace.SCHEMA}) + "\n" +
+        json.dumps({"kind": "search", "trace_id": "t1",
+                    "ts": dt.datetime.now().isoformat(), "source": "cli",
+                    "caller_repo": "p9", "query": "vite", "returned": ["k1"],
+                    "layers": [{"repo": "docs", "scanned": 5,
+                                "matched": [{"id": "k1", "title": "T"}]}]}) + "\n",
+        encoding="utf-8")
+    srv = serve.ServeServer(("127.0.0.1", 0), tmp_path, None, None, quiet=True,
+                            extra_repos={"biz": extra})
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        st, d = _get_url(f"{base}/api/quality")
+        assert st == 200
+        assert d["total"] == 5                     # 合计(联邦)
+        assert {r["repo"]: r["total"] for r in d["repos"]} == {d["repo"]: 2, "biz": 3}
+        assert d["draft_backlog"] == 3
+        assert "p9" in d["uncovered"]
+        assert d["errors"] == {}
+        # 坏路径: 不进 repos, 但要如实报错而不是整体 500
+        srv.extra_repos["ghost"] = tmp_path / "nowhere"
+        st, d = _get_url(f"{base}/api/quality")
+        assert "ghost" in d["errors"] and d["total"] == 5
+    finally:
+        srv.shutdown()
+
+
+def test_serve_quality_entries_drill_down(tmp_path):
+    """B3 数字下钻: 卡上五计数与 /api/quality/entries 清单必须同源同数(旧实现各自
+    sum(), 清单从未存在, 数字点不开)。参数错必须 400 —— 空清单会被读成"这个分类
+    真的没有条目"(假空, §58 同族)。"""
+    def _idx(root: Path, recs):
+        (root / "kb").mkdir(parents=True, exist_ok=True)
+        (root / "kb" / "index.jsonl").write_text("\n".join(
+            json.dumps(r, ensure_ascii=False) for r in recs), encoding="utf-8")
+
+    def _rec(i, **over):
+        r = {"id": f"kb-20261101-{i:04d}", "title": f"标题{i}", "type": "pitfall",
+             "domain": ["backend"], "tags": ["a"], "scope": "project",
+             "status": "accepted", "confidence": "verified",
+             "path": f"kb/pitfall/backend/{i}.md", "updated": "2026-10-01"}
+        r.update(over)
+        return r
+
+    recs = [_rec(1, status="draft", tags=[]),                       # draft + no_tags
+            _rec(2, confidence="speculative"),
+            _rec(3, tags=["needs-scope-review"]),
+            _rec(4)]
+    _idx(tmp_path, recs)
+    extra = tmp_path / "biz" / "docs"
+    _idx(extra, [_rec(5, status="draft"), _rec(6, status="draft")])
+    srv, base = _serve(tmp_path)
+    srv.extra_repos = {"biz": extra}
+    # Q11 使用度账本: kb-...-0005 被两条 search 返回(scanned=9 防误判合成), 其中
+    # t1 有同 trace 的 ok get → 计 1 次消费读。caller "app" 非合成形态。
+    today = dt.date.today().isoformat()
+
+    def _sv(tid, ret):
+        return {"kind": "search", "trace_id": tid, "source": "cli",
+                "caller_repo": "app", "query": "vite", "returned": ret,
+                "ts": f"{today}T10:00:00+08:00",
+                "layers": [{"repo": "app", "scanned": 9,
+                            "matched": [{"id": i, "title": "T"} for i in ret]}]}
+    led = [json.dumps({"kind": "meta", "schema": serve.kbtrace.SCHEMA}),
+           json.dumps(_sv("t1", ["kb-20261101-0005", "kb-20261101-0001"])),
+           json.dumps(_sv("t2", ["kb-20261101-0005"])),
+           json.dumps({"kind": "get", "trace_id": "t1", "source": "cli",
+                       "caller_repo": "app", "id": "kb-20261101-0005",
+                       "layer": "biz", "ok": True, "chars": 900,
+                       "ts": f"{today}T10:00:05+08:00"})]
+    (tmp_path / "traces" / "ledger.jsonl").write_text("\n".join(led) + "\n",
+                                                      encoding="utf-8")
+    try:
+        st, q = _get_url(f"{base}/api/quality")
+        assert q["draft_backlog"] == 3            # 联邦合计(本库 1 + biz 2)
+        # 单库口径: 数字 == 清单条数, 且行字段够面板辨认
+        st, d = _get_url(f"{base}/api/quality/entries?kind=draft")
+        assert st == 200 and d["total"] == 1 and len(d["rows"]) == 1
+        assert d["rows"][0]["id"] == "kb-20261101-0001"
+        assert d["rows"][0]["path"].startswith("kb/")
+        # 联邦合计口径: repo=all 跨库拼, 才与卡上 3 对得上
+        st, d = _get_url(f"{base}/api/quality/entries?kind=draft&repo=all")
+        assert d["total"] == 3 == q["draft_backlog"]
+        assert {r["repo"] for r in d["rows"]} == {q["repo"], "biz"}
+        # 其余分类同理同源
+        for kind, n in (("speculative", 1), ("needs_scope", 1), ("no_tags", 1)):
+            st, d = _get_url(f"{base}/api/quality/entries?kind={kind}")
+            assert st == 200 and d["total"] == n, kind
+        # 清单不截断(曾定 200 上限, 制造过"卡上 228 / 清单 200"的新对不上):
+        # 任何分类 rows 长度恒等于 total。
+        st, d = _get_url(f"{base}/api/quality/entries?kind=draft&repo=all")
+        assert len(d["rows"]) == d["total"] and "cap" not in d
+        # Q11: 每行带使用度(hits/reads/last_used), 且按 hits 倒序。账本里 kb-...-0005
+        # 被返回两次并读全文一次, 应排在最前。
+        assert all({"hits", "reads", "last_used"} <= set(r) for r in d["rows"])
+        assert d["rows"][0]["id"] == "kb-20261101-0005"
+        assert d["rows"][0]["hits"] == 2 and d["rows"][0]["reads"] == 1
+        assert d["rows"][-1]["hits"] == 0   # 从未被检索的 draft 沉底
+        # 显式指名 biz 库
+        st, d = _get_url(f"{base}/api/quality/entries?kind=draft&repo=biz")
+        assert d["total"] == 2 and {r["id"] for r in d["rows"]} == {
+            "kb-20261101-0005", "kb-20261101-0006"}
+        # fail-loud: 未知 kind / 未知 repo 都是 400, 不回空清单
+        st, d = _get_any(f"{base}/api/quality/entries?kind=bogus")
+        assert st == 400 and "kind" in d["error"]
+        st, d = _get_any(f"{base}/api/quality/entries?kind=draft&repo=ghost")
+        assert st == 400 and "repo" in d["error"]
+        st, d = _get_any(f"{base}/api/quality/entries")
+        assert st == 400                                   # 缺 kind
+    finally:
+        srv.shutdown()
+
+
+def test_serve_entry_source_readonly_lookup(tmp_path):
+    """Q8: 清单点"原文"→ /api/entry。路径只经索引 id 反查(不接受任意 path 参数),
+    查无此条 404、缺 id/未知库 400 —— 三者必须分开, 混成一个码就没法判断是拼错了
+    还是条目真没了。配名(biz)与目录标签(面板"库"列显示的那个)都须能解析。"""
+    def _idx(root: Path, recs, bodies):
+        (root / "kb" / "pitfall" / "backend").mkdir(parents=True, exist_ok=True)
+        (root / "kb" / "index.jsonl").write_text("\n".join(
+            json.dumps(r, ensure_ascii=False) for r in recs), encoding="utf-8")
+        for rel, txt in bodies.items():
+            (root / rel).write_text(txt, encoding="utf-8")
+
+    def _rec(i, root_name):
+        return {"id": f"kb-20261102-{i:04d}", "title": f"标题{i}", "type": "pitfall",
+                "domain": ["backend"], "tags": ["a"], "scope": "project",
+                "status": "draft", "confidence": "speculative",
+                "path": f"kb/pitfall/backend/{i}.md", "updated": "2026-11-02",
+                "repo": root_name}
+
+    _idx(tmp_path, [_rec(1, "self")],
+         {"kb/pitfall/backend/1.md": "# 标题1\n\n正文本库\n"})
+    extra = tmp_path / "somewhere" / "docs"
+    _idx(extra, [_rec(2, "biz")], {"kb/pitfall/backend/2.md": "# 标题2\n\n正文他库\n"})
+    srv, base = _serve(tmp_path)
+    srv.extra_repos = {"biz": extra}
+    try:
+        st, d = _get_url(f"{base}/api/entry?id=kb-20261102-0001")
+        assert st == 200 and "正文本库" in d["markdown"]
+        # 声明名与目录标签(somewhere)两种写法都要能命中同一库
+        for alias in ("biz", "somewhere"):
+            st, d = _get_url(f"{base}/api/entry?id=kb-20261102-0002&repo={alias}")
+            assert st == 200 and "正文他库" in d["markdown"], alias
+        st, d = _get_any(f"{base}/api/entry?id=kb-20261102-9999")
+        assert st == 404                                   # 查无此条
+        st, d = _get_any(f"{base}/api/entry")
+        assert st == 400 and "id" in d["error"]
+        st, d = _get_any(f"{base}/api/entry?id=kb-20261102-0002&repo=ghost")
+        assert st == 400 and "repo" in d["error"]
+        # R8: 不带 repo = 跨库找(原文里 related 的 kb-id 大概率不在当前库)。
+        # 本库优先, 找不到再按 --repos 声明序。
+        st, d = _get_url(f"{base}/api/entry?id=kb-20261102-0002")
+        assert st == 200 and "正文他库" in d["markdown"] and d["repo"]
+        st, d = _get_any(f"{base}/api/entry?id=kb-20261102-8888")
+        assert st == 404
+    finally:
+        srv.shutdown()
+
+
+def test_trend_daily_p95(tmp_path):
+    """R7: 趋势逐日补 p95_ms, 分位序位与 KPI latency 的 pctl 一致(ceil(95/100*n)-1)。
+    此前只有中位数——"某天毛刺"恰恰是 P95 恶化而中位数不动的形态, 会被抹平。"""
+    today = dt.date.today().isoformat()
+    durs = [10, 20, 30, 40, 200]     # n=5 → p95 序位 ceil(0.95*5)-1=4 → 200
+    rows = [json.dumps({"kind": "meta", "schema": serve.kbtrace.SCHEMA})]
+    for i, dm in enumerate(durs):
+        rows.append(json.dumps({
+            "kind": "search", "trace_id": f"t{i}", "source": "cli",
+            "caller_repo": "app", "query": "q", "returned": [],
+            "duration_ms": dm, "ts": f"{today}T09:0{i}:00+08:00",
+            "layers": [{"repo": "app", "scanned": 9, "matched": []}]}))
+    srv, base = _serve(tmp_path)     # _serve 建 traces/; 账本随后写入
+    (tmp_path / "traces" / "ledger.jsonl").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8")
+    try:
+        st, d = _get_url(f"{base}/api/trend")
+        assert st == 200
+        day = [x for x in d["days"] if x["day"] == today][0]
+        assert day["p95_ms"] == 200 and day["median_ms"] == 30
+        # 与 KPI latency 同分位同值(KPI 是整窗口口径, 这里只有一天)
+        st, s = _get_url(f"{base}/api/stats")
+        assert s["latency"]["p95_ms"] == day["p95_ms"]
+    finally:
+        srv.shutdown()
+
+
+def test_export_quality_rejects_window_params(tmp_path):
+    """Q3: kind=quality 是索引口径, 与 caller/窗口无关。此前统一拼参把它一起带上,
+    参数被静默丢弃 —— 导出方以为按窗口筛了(§58 假数据同族)。现在显式 400。"""
+    srv, base = _serve(tmp_path)
+    (tmp_path / "kb").mkdir(exist_ok=True)
+    (tmp_path / "kb" / "index.jsonl").write_text(json.dumps(
+        {"id": "kb-20261102-0001", "title": "t", "status": "accepted",
+         "confidence": "verified", "type": "pitfall", "domain": "backend",
+         "scope": "project", "path": "kb/x.md", "tags": ["a"]}), encoding="utf-8")
+    try:
+        st, d = _get_url(f"{base}/api/export?kind=quality")
+        assert st == 200                                    # 裸请求正常
+        st, d = _get_any(f"{base}/api/export?kind=quality&since=2026-10-01")
+        assert st == 400 and "quality" in d["error"]
+        st, d = _get_any(f"{base}/api/export?kind=quality&caller=x")
+        assert st == 400
+        # 窗口类 kind 不受影响
+        st, d = _get_url(f"{base}/api/export?kind=zero&since=2026-10-01")
+        assert st == 200
+    finally:
+        srv.shutdown()
+
+
+def test_parse_repos_requires_name_eq_path():
+    assert serve.parse_repos(["Biz=..\\x\\docs"]) == {"biz": Path("..\\x\\docs")}
+    assert serve.parse_repos(None) == {}
+    for bad in ("justname", "=x", "n="):
+        try:
+            serve.parse_repos([bad])
+        except ValueError:
+            continue
+        raise AssertionError(f"应拒绝 {bad!r}")
+
+
 def test_bind_without_token_refused():
     try:
         serve.resolve_bind("0.0.0.0", None)
@@ -408,17 +987,41 @@ def test_serve_survives_dirty_events(tmp_path):
 
 
 def test_panel_api_requests_use_apiurl():
-    """token 态回归守护: 面板所有 /api/* 请求(fetch 与 EventSource)必须经 apiUrl() 统一
-    注入 token, 禁止手拼 — 实测踩坑: stats/feed/health 曾漏带导致 token 态静默 401 全空。"""
+    """token 态回归守护(E1 改版): 面板所有 /api/* 请求(fetch 与 EventSource)必须经
+    apiUrl() 统一出口, 禁止手拼——实测踩坑: stats/feed/health 曾漏带导致 token 态
+    静默 401 全空。E1 后 apiUrl 不再注 token(凭 cookie), 唯一允许把凭据写进 URL 的
+    是 /api/session 的 ticket 交换(一次性, 换完即洗 URL)。"""
     import re
     from pathlib import Path
     from kb.serve import _asset_dir
     html = (Path(_asset_dir()) / "index.html").read_text(encoding="utf-8")
     bad = [m.group(0)[:70] for m in
            re.finditer(r"(?:fetch|EventSource)\(\s*(`[^`]*`|'[^']*')", html)
-           if "/api/" in m.group(0)]
-    assert not bad, f"面板 /api/* 请求未经 apiUrl() 手拼 URL(须走 apiUrl 注入 token): {bad}"
-    assert "function apiUrl(" in html, "apiUrl() 统一注入器必须存在"
+           if "/api/" in m.group(0) and "/api/session" not in m.group(0)]
+    assert not bad, f"面板 /api/* 请求未经 apiUrl() 手拼 URL(须走 apiUrl 统一出口): {bad}"
+    assert "function apiUrl(" in html, "apiUrl() 统一出口必须存在"
+    # E1 反向守护: token 只许出现在 session 交换处; 常规请求再拼 token = 回退旧泄露面
+    leak = [m.group(0)[:60] for m in
+            re.finditer(r"(?:fetch|EventSource)\([^)]{0,120}token", html)]
+    assert all("/api/session" in m for m in leak), f"token 混入常规请求 URL: {leak}"
+
+
+def test_panel_session_exchange_precedes_data_requests():
+    """E1 同源竞态守护(2026-11-11 实测): ticket→cookie 交换必须先完成, 首帧数据请求
+    (health / 各 load*)才可发出。旧写法 health 与交换并发, 带 ?token= 打开时 health
+    抢跑 401 → spiderReady 未判定, 首次点条目误弹内置 SVG 降级回放(刷新才恢复)。
+    浏览器层面难稳定复现, 这里用静态时序断言锁住: 交换语句在 health 之前, 且初始化
+    链路 await/串接 sessionReady。"""
+    from pathlib import Path
+    from kb.serve import _asset_dir
+    html = (Path(_asset_dir()) / "index.html").read_text(encoding="utf-8")
+    i_ex = html.find("fetch('/api/session?ticket=")
+    i_health = html.find("apiUrl('/api/health')")
+    assert i_ex >= 0 and i_health >= 0, "session 交换或 health 探测缺失"
+    assert i_ex < i_health, "session 交换必须在 health 之前(否则首帧 401 竞态复现)"
+    tail = html[i_ex:i_health]
+    assert "await sessionReady" in tail, "health 请求前必须 await sessionReady"
+    assert "sessionReady.then(render)" in html, "render(及内部 load*)必须串在交换完成之后"
 
 
 def test_panel_custom_clickables_are_keyboard_reachable():
@@ -751,10 +1354,14 @@ def test_userconf_env_overrides_file(tmp_path, monkeypatch):
     assert url == "http://env:2"
 
 
-def test_userconf_hash_in_values_survives_roundtrip(tmp_path):
+def test_userconf_hash_in_values_survives_roundtrip(tmp_path, monkeypatch):
     """§47 实锤: 旧读侧无条件 split('#'), 引号值里的 # 也当注释截 → 含 # 的
     URL 片段/令牌写进 config 再读出即损坏(静默截掉凭据尾巴, 401 无从排查)。"""
     from kb import userconf
+    monkeypatch.delenv("KB_SERVE_URL", raising=False)
+    monkeypatch.delenv("KB_SERVE_TOKEN", raising=False)
+    monkeypatch.delenv("KB_INGEST_URL", raising=False)
+    monkeypatch.delenv("KB_INGEST_TOKEN", raising=False)
     p = tmp_path / "config.toml"
     userconf.write_serve_config("http://kb.internal:4320/#board", "a#b#c", path=p)
     url, tok = userconf.serve_target(p)
@@ -776,20 +1383,24 @@ def test_userconf_handwritten_quoted_values_with_inline_comment(tmp_path):
     assert cfg["serve"]["plain"] == "raw-val"
 
 
-def test_userconf_quote_in_value_roundtrip(tmp_path):
+def test_userconf_quote_in_value_roundtrip(tmp_path, monkeypatch):
     """§47 对称面: 旧写侧对值原样嵌入, token 含引号产出 `token = "a"b"` 损坏
     文件; 修复后写侧转义、读侧闭引号跳过转义对, 往返保真。"""
     from kb import userconf
+    monkeypatch.delenv("KB_SERVE_URL", raising=False)
+    monkeypatch.delenv("KB_SERVE_TOKEN", raising=False)
     p = tmp_path / "config.toml"
     userconf.write_serve_config('http://h', 'a"b', path=p)
     url, tok = userconf.serve_target(p)
     assert (url, tok) == ("http://h", 'a"b')
 
 
-def test_userconf_legacy_corrupted_file_degrades_empty(tmp_path):
+def test_userconf_legacy_corrupted_file_degrades_empty(tmp_path, monkeypatch):
     """旧版写坏的存量文件(引号未闭合)不得半解析出截断凭据——整体降级为空,
     消费方回退单人态/环境变量, 好文件不受影响。"""
     from kb import userconf
+    monkeypatch.delenv("KB_SERVE_URL", raising=False)
+    monkeypatch.delenv("KB_SERVE_TOKEN", raising=False)
     p = tmp_path / "config.toml"
     p.write_text('[serve]\ntoken = "a"b"\nurl = "http://h"\n', encoding="utf-8")
     assert userconf.serve_target(p) == (None, None)
@@ -845,3 +1456,607 @@ def test_join_qs_keeps_base_query_and_drops_fragment():
     assert out == "http://h/base?a=1&token=x%20y%23z"
     out2 = _join_qs("http://h/base#frag", [("caller", "*")])
     assert out2 == "http://h/base?caller=%2A"      # 前端 URLSearchParams 解回 '*'
+
+
+# ---- /api/metrics: 只读消费 traces/metrics/*.json --------------------------
+
+def _snap(week, hit, searches, dig_rate, cold=False):
+    return {"schema": 1, "week": week, "since": "2026-11-02", "until": "2026-11-08",
+            "generated_at": "2026-11-09T18:30:00+08:00",
+            "metrics": {"searches": searches, "hit_rate": hit, "consume_rate": 0.5,
+                        "cold_start": cold},
+            "latency": {"n": 5, "p50_ms": 120, "p95_ms": 400},
+            "zero_hit": {"board": [], "digested": 0, "digest_rate": dig_rate},
+            "callers": [], "warns": []}
+
+
+def test_api_metrics_empty(tmp_path):
+    srv, base = _serve(tmp_path)
+    try:
+        code, body = _get_url(f"{base}/api/metrics")
+        assert code == 200 and body["snapshots"] == [] and body["warns"] == []
+        # 只读红线: 端点不得顺手建目录/写文件
+        assert not (tmp_path / "traces" / "metrics").exists()
+    finally:
+        srv.shutdown()
+
+
+def test_api_metrics_sorted_and_trimmed(tmp_path):
+    d = tmp_path / "traces" / "metrics"
+    d.mkdir(parents=True)
+    # 文件名与 week 故意反序: 否则 glob 的自然名序会让"按 week 排序"的断言恒真
+    (d / "a.json").write_text(json.dumps(_snap("2026-W46", 0.8, 10, 0.2)),
+                              encoding="utf-8")
+    (d / "b.json").write_text(
+        json.dumps(_snap("2026-W45", 0.6, 4, 0.5, cold=True)), encoding="utf-8")
+    (d / "broken.json").write_text("{坏", encoding="utf-8")
+    srv, base = _serve(tmp_path)
+    try:
+        code, body = _get_url(f"{base}/api/metrics")
+        assert code == 200
+        assert [s["week"] for s in body["snapshots"]] == ["2026-W45", "2026-W46"]
+        assert len(body["warns"]) == 1                       # 坏文件跳过并上报
+        assert "broken.json" in body["warns"][0]             # 上报要能定位到文件
+        # 点状字段白名单(面板只画这些), 完整 board 不回传(省带宽)
+        pt = body["snapshots"][0]
+        assert set(pt) == {"week", "since", "until", "searches", "hit_rate",
+                           "consume_rate", "consume_tracked", "consume_partial",
+                           "digest_rate", "p50_ms", "cold_start"}
+        assert pt["cold_start"] is True
+    finally:
+        srv.shutdown()
+
+
+def test_api_metrics_wrong_child_type_degrades_not_500(tmp_path):
+    """合法 JSON 但子对象类型错(metrics 是 list / callers 是 str)不得让端点
+    500: 该快照降级为 warns, 其余好快照照常返回。"""
+    d = tmp_path / "traces" / "metrics"
+    d.mkdir(parents=True)
+    (d / "2026-W45.json").write_text(
+        '{"week":"2026-W45","metrics":[1,2],"callers":"alpha"}', encoding="utf-8")
+    (d / "2026-W46.json").write_text(json.dumps(_snap("2026-W46", 0.8, 10, 0.2)),
+                                     encoding="utf-8")
+    srv, base = _serve(tmp_path)
+    try:
+        code, body = _get_url(f"{base}/api/metrics")
+        assert code == 200
+        assert [s["week"] for s in body["snapshots"]] == ["2026-W46"]
+        assert any("2026-W45.json" in w for w in body["warns"])
+    finally:
+        srv.shutdown()
+
+
+def test_api_metrics_sees_snapshot_written_after_first_request(tmp_path):
+    """新快照必须立刻可见: 这正是"直连读盘、不走 agg 缓存"的行为证据 ——
+    AggCache 的签名只盯 traces/*.jsonl, 新增 metrics/*.json 不会使其失效,
+    走缓存的话这里第二次请求仍会返回空列表。"""
+    srv, base = _serve(tmp_path)
+    try:
+        code, body = _get_url(f"{base}/api/metrics")
+        assert code == 200 and body["snapshots"] == []
+        d = tmp_path / "traces" / "metrics"
+        d.mkdir(parents=True)
+        (d / "2026-W45.json").write_text(json.dumps(_snap("2026-W45", 0.6, 4, 0.5)),
+                                         encoding="utf-8")
+        code, body = _get_url(f"{base}/api/metrics")
+        assert code == 200
+        assert [s["week"] for s in body["snapshots"]] == ["2026-W45"]
+    finally:
+        srv.shutdown()
+
+
+# ---- 夹具隔离: 事件级清单 + 写时标记 -----------------------------------------
+
+def _pick(ev, **kw):
+    ev = dict(ev)
+    ev.update(kw)
+    return ev
+
+
+def test_quarantine_events_in_mixed_caller():
+    """caller=docs 混着真实(扫 300 条)与 conftest 夹具(扫 1 条)事件: 整 caller
+    剔噪会连真实数据一起丢, 清单按事件级隔离, 且日期上界保护同 id 的后续真实事件。"""
+    fix = "kb-20261014-e1e1"
+    real = _pick(_search("r1", "docs", "vite", ["k1"], ts="2026-10-15T10:00:00+08:00"))
+    real["layers"][0]["scanned"] = 300
+    bad_hit = _pick(_search("s1", "docs", "vite", [fix], ts="2026-10-15T10:01:00+08:00"))
+    bad_hit["layers"][0]["scanned"] = 1
+    bad_miss = _pick(_search("s2", "docs", "vite", [], ts="2026-10-15T10:02:00+08:00"))
+    bad_miss["layers"][0]["scanned"] = 1
+    # 日期上界之后: 同样的 id/规模也不再算夹具(防清单误伤未来真实事件)
+    late = _pick(_search("s3", "docs", "vite", [fix], ts="2026-11-10T10:00:00+08:00"))
+    late["layers"][0]["scanned"] = 1
+    S = [real, bad_hit, bad_miss, late]
+    G = [_get("r1", "k1", "docs"), _get("s1", fix, "docs")]
+    rules = [{"caller_repo": "docs", "ids": [fix], "until": "2026-11-03",
+              "why": "fixture-id"},
+             {"caller_repo": "docs", "kinds": ["search"], "max_scanned": 2,
+              "until": "2026-11-03", "why": "tiny-scan"}]
+    assert stats.synthetic_callers(S) == set()      # 启发式剔不掉混合 caller
+    s, g, audit = stats.quarantine_events(S, G, rules)
+    assert [x["trace_id"] for x in s] == ["r1", "s3"]
+    assert [x["trace_id"] for x in g] == ["r1"]
+    assert audit["dropped"] == 3
+    assert [(x["why"], x["searches"], x["gets"]) for x in audit["detail"]] == [
+        ("fixture-id", 1, 1), ("tiny-scan", 1, 0)]
+
+
+def test_quarantine_write_time_flag_needs_no_rules():
+    """写时标记(synthetic=true)不依赖清单文件: 没有规则也要剔掉。"""
+    S = [_search("r1", "real", "vite", ["k1"]),
+         _pick(_search("x1", "real", "vite", ["k1"]), synthetic=True)]
+    s, _g, audit = stats.quarantine_events(S, [])
+    assert [x["trace_id"] for x in s] == ["r1"]
+    assert audit["dropped"] == 1 and audit["detail"][0]["why"].startswith("synthetic-flag")
+
+
+def test_denoise_full_separates_guessed_and_registered():
+    """两级剔噪分开计数: 猜的(caller 启发式)与登记的(清单)混成一个数就没法自查。"""
+    tiny = _pick(_search("t1", "proj", "vite", ["kb-1"]))
+    tiny["layers"] = [{"repo": "proj", "scanned": 1, "matched": []}]
+    fixs = _pick(_search("f1", "docs", "vite", ["kb-fix"]))
+    fixs["layers"][0]["scanned"] = 300
+    S = [_search("r1", "real", "vite", ["k1"]), tiny, fixs]
+    G = [_get("f1", "kb-fix", "docs")]
+    s, _g, audit = stats.denoise_full(
+        S, G, [{"caller_repo": "docs", "ids": ["kb-fix"], "why": "fixture"}])
+    assert [x["trace_id"] for x in s] == ["r1"]
+    assert audit["caller_dropped"] == 1 and audit["callers"] == ["proj"]
+    assert audit["quarantine_dropped"] == 2 and audit["dropped"] == 3
+
+
+def test_load_quarantine_validation(tmp_path):
+    """清单是不可信输入: 坏 JSON / 无匹配条件 / 未知键必须报 warn 而不是静默失效。"""
+    d = tmp_path / "traces"
+    d.mkdir()
+    assert kbtrace.load_quarantine(tmp_path) == ([], [])          # 缺文件不告警
+    (d / kbtrace.QUARANTINE_FILE).write_text("{bad", encoding="utf-8")
+    rules, warns = kbtrace.load_quarantine(tmp_path)
+    assert rules == [] and any("解析失败" in w for w in warns)
+    (d / kbtrace.QUARANTINE_FILE).write_text(json.dumps({"rules": [
+        {"why": "无条件"},
+        {"caller_repo": "docs", "ids": ["x"], "id": "y", "why": "ok"},
+        {"caller_repo": "docs", "ids": ["z"]},
+    ]}), encoding="utf-8")
+    rules, warns = kbtrace.load_quarantine(tmp_path)
+    assert rules == [{"caller_repo": "docs", "ids": ["x"], "why": "ok"}]
+    assert any("缺匹配条件" in w for w in warns)
+    assert any("缺 why" in w for w in warns)
+    assert any("未知键" in w for w in warns)
+
+
+def test_aggregate_marks_pre_tracking_consume():
+    """CLI show 埋点前的窗口: 消费率不可观测(显示"未采集"), 而不是 0 消费。"""
+    old = [_search("t1", "a", "v", ["k1"], ts="2026-11-01T10:00:00+08:00")]
+    k = stats.aggregate(old, [])
+    assert k["consume_tracked"] is False
+    assert k["pre_tracking_searches"] == 1
+    new = [_search("t2", "a", "v", ["k1"], ts="2026-11-13T10:00:00+08:00")]
+    k2 = stats.aggregate(new, [])
+    assert k2["consume_tracked"] is True and k2["pre_tracking_searches"] == 0
+    k3 = stats.aggregate(old + new, [])              # 跨起点: 数值只是下界
+    assert k3["consume_tracked"] is False and k3["pre_tracking_searches"] == 1
+
+
+def test_build_events_declare_layer_and_surface():
+    """三级披露显式字段: search=L2/index.jsonl, get=L3/entry.md(§五 第 2 条)。"""
+    ev = kbtrace.build_search_event(
+        trace_id="t1", source="cli", caller_repo="docs", query="vite",
+        filters={}, limit=20, reports=[], returned=["k1"], duration_ms=3)
+    assert ev["level"] == 2 and ev["surface"] == "index.jsonl"
+    g = kbtrace.build_get_event(trace_id="t1", source="cli", caller_repo="docs",
+                                id="k1", layer="docs", ok=True, chars=10)
+    assert g["level"] == 3 and g["surface"] == "entry.md"
+
+
+def test_aggregate_layer_reads_and_meta_only_reconcile():
+    """L1 不可观测; L2/L3 计数与既有 KPI 可对账; meta_only 显式切分(§五 第 7 条)。"""
+    S = [_search("t1", "a", "vite", ["k1", "k2"], rc=400),   # 读了全文
+         _search("t2", "a", "hmr", ["k3"], rc=300),           # 只看元数据
+         _search("t3", "a", "x", [], rc=60)]                  # 零命中
+    G = [_get("t1", "k1", "a", chars=1000),
+         _get("t2", "k3", "a", ok=False, chars=0)]            # 失败读不算消费
+    k = stats.aggregate(S, G)
+    lr = k["layer_reads"]
+    assert lr["l1"]["events"] == 0 and lr["l1"]["observable"] is False
+    assert lr["l2"]["events"] == k["searches"] == 3
+    assert lr["l2"]["chars"] == k["overhead_chars"] == 760
+    assert lr["l3"]["events"] == k["get_events"] == 2
+    assert lr["l3"]["ok_events"] == 1 and lr["l3"]["chars"] == 1000
+    # 旧事件无显式 surface: 仍按 kind 归类, declared=0(不假装全都有)
+    assert lr["l2"]["declared"] == 0 and lr["l3"]["declared"] == 0
+    # meta_only + meta_to_full = 有返回的检索数(零命中不计入任何一侧)
+    assert k["meta_only"]["searches"] == 1 and k["meta_to_full"]["searches"] == 1
+    assert (k["meta_only"]["searches"] + k["meta_to_full"]["searches"]
+            == round(k["hit_rate"] * k["searches"]))
+    # 字符侧: 两侧之和 + 零命中事件 = overhead_chars
+    assert k["meta_only"]["chars"] == 300 and k["meta_to_full"]["chars"] == 400
+    assert k["meta_only"]["chars"] + k["meta_to_full"]["chars"] == 700
+    k2 = stats.aggregate([dict(S[0], surface="index.jsonl")], [])
+    assert k2["layer_reads"]["l2"]["declared"] == 1
+
+
+def test_level_coerce_rejects_dirty_values():
+    """level/surface 是声明不是事实: 脏值删键回退 kind 归类, 不打崩聚合。"""
+    warns: list[str] = []
+    ev = {"kind": "search", "level": True, "surface": 3}
+    kbtrace._coerce(ev, warns, "x.jsonl")
+    assert "level" not in ev and "surface" not in ev
+    assert any("level" in w for w in warns) and any("surface" in w for w in warns)
+    ev2 = {"kind": "search", "level": 2.0, "surface": "index.jsonl"}
+    kbtrace._coerce(ev2, [], "y.jsonl")
+    assert ev2["level"] == 2 and isinstance(ev2["level"], int)
+
+
+def test_append_event_marks_synthetic_only_outside_sandbox(tmp_path, monkeypatch):
+    """写侧事实级标记: 只有"测试进程写到沙箱之外(真实账本)"才打标, 且不改调用方对象。
+
+    沙箱内(tmp_path)的写入是用例自建夹具, 打标会把"用 append_event 造数据"的
+    聚合测试整批剔空——所以这里同时验证两个方向。
+    """
+    ev = _search("t1", "docs", "vite", ["k1"])
+    kbtrace.append_event(ev, root=tmp_path)
+    assert "synthetic" not in ev
+    s, _, _ = kbtrace.read_traces(root=tmp_path)
+    assert len(s) == 1 and "synthetic" not in s[0]
+    # 模拟"沙箱判据不成立"(= 写到了真实账本): 打标
+    monkeypatch.setattr(kbtrace, "_under", lambda p, b: False)
+    kbtrace.append_event(_search("t2", "docs", "vite", ["k1"]), root=tmp_path)
+    s, _, _ = kbtrace.read_traces(root=tmp_path)
+    marked = [x["trace_id"] for x in s if x.get("synthetic") is True]
+    assert marked == ["t2"]
+
+
+def test_serve_stats_quarantines_registered_fixture_events(tmp_path):
+    """面板口径与账本复算对齐: 默认剔隔离清单, raw=1 回全量; 消费率由 50%→100%。"""
+    today = dt.date.today().isoformat()
+    srv, base = _serve(tmp_path)
+    real_s = _pick(_search("r1", "docs", "连接池", ["k1"], ts=f"{today}T10:00:00+08:00",
+                           rc=100))
+    real_s["layers"][0]["scanned"] = 300
+    fix_s = _pick(_search("f1", "docs", "vite", ["kb-fix"], ts=f"{today}T10:01:00+08:00",
+                          rc=80))
+    fix_s["layers"][0]["scanned"] = 1
+    rows = [real_s, fix_s,
+            _get("r1", "k1", "docs", chars=900, ts=f"{today}T10:00:05+08:00"),
+            # 夹具 get 记 ok=False: 只为验证"get 也按清单剔", 不参与消费计数
+            _get("f1", "kb-fix", "docs", ok=False, chars=500,
+                 ts=f"{today}T10:01:05+08:00")]
+    lines = [json.dumps({"kind": "meta", "schema": kbtrace.SCHEMA})] + \
+        [json.dumps(r, ensure_ascii=False) for r in rows]
+    (tmp_path / "traces" / "ledger.jsonl").write_text("\n".join(lines) + "\n",
+                                                      encoding="utf-8")
+    (tmp_path / "traces" / kbtrace.QUARANTINE_FILE).write_text(json.dumps({
+        "schema": 1,
+        "rules": [{"caller_repo": "docs", "ids": ["kb-fix"], "why": "fixture-id",
+                   "evidence": "test"}]}), encoding="utf-8")
+    try:
+        st, d = _get_url(f"{base}/api/stats")
+        assert st == 200
+        assert d["quarantine_count"] == 2 and d["quarantine_total"] == 2
+        assert d["quarantine_detail"][0]["searches"] == 1
+        assert d["quarantine_detail"][0]["gets"] == 1
+        assert d["kpi"]["searches"] == 1
+        assert d["kpi"]["returned_total"] == 1 and d["kpi"]["consumed_total"] == 1
+        assert d["kpi"]["consume_rate"] == 1.0
+        assert d["kpi"]["consume_tracked"] is True
+        # 账本复算: 剔掉 1 条夹具 search + 1 条夹具 get 后与面板同值
+        st, dr = _get_url(f"{base}/api/stats?raw=1")
+        assert dr["quarantine_count"] == 0 and dr["quarantine_total"] == 0
+        assert dr["kpi"]["searches"] == 2 and dr["kpi"]["consumed_total"] == 1
+        assert dr["kpi"]["consume_rate"] == 0.5
+        # 检索流同口径: 默认看不到夹具检索
+        st, feed = _get_url(f"{base}/api/feed")
+        assert [x["trace_id"] for x in feed] == ["r1"]
+        st, feed_raw = _get_url(f"{base}/api/feed?raw=1")
+        assert {x["trace_id"] for x in feed_raw} == {"r1", "f1"}
+    finally:
+        srv.shutdown()
+
+
+def test_resolve_token_priority(monkeypatch, tmp_path):
+    """spec §4.1: --token > env > config, 缺省 None(本机免鉴权)。"""
+    from kb import serve, userconf
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[serve]\ntoken = "cfg-tok"\n', encoding="utf-8")
+    monkeypatch.setattr(userconf, "config_path", lambda: cfg)
+    monkeypatch.delenv("KB_SERVE_TOKEN", raising=False)
+
+    assert serve.resolve_token(None) == "cfg-tok"
+    monkeypatch.setenv("KB_SERVE_TOKEN", "env-tok")
+    assert serve.resolve_token(None) == "env-tok"
+    assert serve.resolve_token("cli-tok") == "cli-tok"
+
+    monkeypatch.delenv("KB_SERVE_TOKEN", raising=False)
+    cfg.unlink()
+    assert serve.resolve_token(None) is None
+
+
+# ---- 登录/退出(spec §4.2/§4.3/§4.6) ----------------------------------------
+
+def _post_json_hd(url, payload, cookie=None):
+    """POST JSON, 非 2xx 也返回 (status, body, headers)。
+
+    与 ingest 用例的 _post_json 分开命名: 后者只要 (status, body), 登录/退出
+    必须读到 Set-Cookie / Retry-After 响应头。
+    """
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json"})
+    if cookie:
+        req.add_header("Cookie", cookie)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, json.loads(r.read().decode()), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode()), dict(e.headers)
+
+
+def test_login_session_cookie(tmp_path):
+    """spec §4.2/§4.6: 登录成功种 HttpOnly 会话 cookie, 默认无 Max-Age。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        st, body, hd = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        assert st == 200 and body["ok"] is True
+        ck = hd["Set-Cookie"]
+        assert "kb_tk=" in ck and "HttpOnly" in ck and "SameSite=Lax" in ck
+        assert "Max-Age" not in ck
+        cookie = ck.split(";")[0]
+        st2, _ = _get_url(f"{base}/api/stats", cookie=cookie)
+        assert st2 == 200
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_login_full_ticket_pool_evicts_one(tmp_path):
+    """票据池满时只淘汰一张, 不清空: 全清会让所有设备/标签页同时掉线。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        old = {f"old-ticket-{i}" for i in range(64)}
+        with srv.login_lock:
+            srv.tickets.update(old)
+        st, body, hd = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        assert st == 200 and body["ok"] is True
+        new = hd["Set-Cookie"].split(";")[0].removeprefix("kb_tk=")
+        with srv.login_lock:
+            assert len(srv.tickets) == 64
+            assert new in srv.tickets
+            assert len(old & srv.tickets) == 63  # 仅淘汰一张旧票据
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_login_remember_sets_max_age(tmp_path):
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        st, body, hd = _post_json_hd(
+            f"{base}/api/session", {"token": "s3cret", "remember": True})
+        assert st == 200 and body["remember"] is True
+        assert "Max-Age=2592000" in hd["Set-Cookie"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_login_bad_token_and_lockout(tmp_path):
+    """spec §4.3: 前 5 次 403 计数, 第 6 次 429 + Retry-After; 成功后清零。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(5):
+            st, _, _ = _post_json_hd(f"{base}/api/session", {"token": "nope"})
+            assert st == 403
+        st, _, hd = _post_json_hd(f"{base}/api/session", {"token": "nope"})
+        assert st == 429 and int(hd["Retry-After"]) >= 1
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(4):
+            _post_json_hd(f"{base}/api/session", {"token": "nope"})
+        st, _, _ = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        assert st == 200
+        st, _, _ = _post_json_hd(f"{base}/api/session", {"token": "nope"})
+        assert st == 403  # 成功已清零, 未触发限流
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_login_auth_disabled_returns_409(tmp_path):
+    srv, base = _serve(tmp_path)  # 无 token = 免鉴权
+    try:
+        st, body, _ = _post_json_hd(f"{base}/api/session", {"token": "x"})
+        assert st == 409 and "auth disabled" in body["error"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_logout_revokes_cookie(tmp_path):
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        _, _, hd = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        cookie = hd["Set-Cookie"].split(";")[0]
+        st, _ = _get_url(f"{base}/api/stats", cookie=cookie)
+        assert st == 200
+        st, body, hd2 = _post_json_hd(f"{base}/api/logout", {}, cookie=cookie)
+        assert st == 200 and "Max-Age=0" in hd2["Set-Cookie"]
+        try:
+            _get_url(f"{base}/api/stats", cookie=cookie)
+            raise AssertionError("退出后旧 cookie 应 401")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_logout_revokes_only_current_ticket(tmp_path):
+    """退出只撤当前票据: 另一张登录票据(其他设备/标签页)不受影响。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        _, _, hd1 = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        _, _, hd2 = _post_json_hd(f"{base}/api/session", {"token": "s3cret"})
+        ck1 = hd1["Set-Cookie"].split(";")[0]
+        ck2 = hd2["Set-Cookie"].split(";")[0]
+        assert ck1 != ck2
+        st, _, _ = _post_json_hd(f"{base}/api/logout", {}, cookie=ck1)
+        assert st == 200
+        try:
+            _get_url(f"{base}/api/stats", cookie=ck1)
+            raise AssertionError("已退出票据应 401")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401
+        st2, _ = _get_url(f"{base}/api/stats", cookie=ck2)
+        assert st2 == 200
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_login_body_too_large(tmp_path):
+    """spec §4.2: 登录 body 上限 4 KiB, 超限 413。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        big = json.dumps({"token": "x" * 5000}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base}/api/session", data=big, method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("超限 body 应 413")
+        except urllib.error.HTTPError as e:
+            assert e.code == 413
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def _get_status_hd(url, token=None, cookie=None):
+    """GET 并把非 2xx 也折成 (status, headers), 供限流用例读 Retry-After。"""
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    if cookie:
+        req.add_header("Cookie", cookie)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, dict(r.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers)
+
+
+def test_query_token_failures_rate_limited(tmp_path):
+    """旧 ?token= 通道也必须计入失败限流: 否则绕过 POST /api/session 无限猜解。
+
+    语义与登录端点一致: 前 5 次 401 并计数, 第 6 次起 429 + Retry-After;
+    限流生效期间连正确令牌也先被拦(先判限流再比令牌)。
+    """
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(5):
+            st, _ = _get_status_hd(f"{base}/api/stats?token=bad")
+            assert st == 401
+        st, hd = _get_status_hd(f"{base}/api/stats?token=bad")
+        assert st == 429 and int(hd.get("Retry-After", "0")) > 0
+        st, _ = _get_status_hd(f"{base}/api/stats?token=s3cret")
+        assert st == 429
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_bearer_failures_rate_limited(tmp_path):
+    """Bearer 通道与 query 通道共用同一按 IP 失败计数。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(5):
+            st, _ = _get_status_hd(f"{base}/api/stats", token="bad")
+            assert st == 401
+        st, hd = _get_status_hd(f"{base}/api/stats", token="bad")
+        assert st == 429 and int(hd.get("Retry-After", "0")) > 0
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_ticket_failures_rate_limited(tmp_path):
+    """GET /api/session?ticket= 的错票也计入失败限流(前 5 次 403, 第 6 次 429)。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(5):
+            st, _ = _get_status_hd(f"{base}/api/session?ticket=bad")
+            assert st == 403
+        st, hd = _get_status_hd(f"{base}/api/session?ticket=bad")
+        assert st == 429 and int(hd.get("Retry-After", "0")) > 0
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_anonymous_requests_do_not_trip_login_limit(tmp_path):
+    """无凭据的匿名请求不计数: 过期 cookie 的面板 2s 轮询不该把 IP 锁死。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(10):
+            st, _ = _get_status_hd(f"{base}/api/stats")
+            assert st == 401
+        st, _ = _get_status_hd(f"{base}/api/session")
+        assert st == 403  # 空 ticket 同样不计数
+        st, _ = _get_status_hd(f"{base}/api/stats")
+        assert st == 401
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_valid_token_resets_failure_count(tmp_path):
+    """任一通道验证成功即清零: 4 次失败 → 成功 → 再 5 次失败仍应 401 而非 429。"""
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        for _ in range(4):
+            assert _get_status_hd(f"{base}/api/stats?token=bad")[0] == 401
+        assert _get_status_hd(f"{base}/api/stats?token=s3cret")[0] == 200
+        for _ in range(5):
+            assert _get_status_hd(f"{base}/api/stats?token=bad")[0] == 401
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_healthz_reports_auth_flag(tmp_path):
+    srv, base = _serve(tmp_path, token="s3cret")
+    try:
+        st, body = _get_url(f"{base}/healthz")
+        assert st == 200 and body["auth"] is True
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    srv, base = _serve(tmp_path)
+    try:
+        _, body = _get_url(f"{base}/healthz")
+        assert body["auth"] is False
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_open_panel_local_carries_config_token(monkeypatch):
+    """spec §4.1: 本机模式解析到令牌时, URL 带 token 且代拉起 serve 收到同一令牌。"""
+    from kb import launcher, userconf
+
+    seen = {}
+    monkeypatch.setattr(userconf, "serve_target", lambda path=None: (None, "cfg-tok"))
+    monkeypatch.setattr(launcher, "probe_http", lambda *a, **k: False)
+    seq = iter([False, True])
+    monkeypatch.setattr(launcher, "probe_port", lambda *a, **k: next(seq))
+    monkeypatch.setattr(launcher, "spawn_serve",
+                        lambda root, port, caller, token=None: seen.update(token=token))
+    url, mode = launcher.open_panel(4320, caller=None, no_browser=True)
+    assert seen["token"] == "cfg-tok"
+    assert mode == "local" and _qs_of(url).get("token") == "cfg-tok"

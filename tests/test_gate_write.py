@@ -1,7 +1,8 @@
 import datetime as dt
 import pytest
-from kb.gate import update_draft, review, set_scope, export_entry, GateViolation
+from kb.gate import update_entry, review, set_scope, export_entry, GateViolation
 from kb.entry import parse_entry
+from kb.new_entry import create_entry
 from conftest import make_entry
 
 TODAY = dt.date(2026, 10, 14)
@@ -20,20 +21,88 @@ def _mk(tmp_repo, eid, status="draft", conf="speculative", scope="project", tags
 
 def test_update_draft_ok(tmp_repo):
     _mk(tmp_repo, "kb-20261014-aaaa")
-    e = update_draft(tmp_repo, "kb-20261014-aaaa", body="## 根因\n新机制。\n", today=TODAY)
+    e = update_entry(tmp_repo, "kb-20261014-aaaa", body="## 根因\n新机制。\n", today=TODAY)
     assert e.body.count("新机制") == 1 and e.fm["updated"] == "2026-10-14"
     assert e.fm["status"] == "draft"
+    assert "revision" not in e.fm
 
 
-def test_update_draft_rejects_accepted(tmp_repo):
-    _mk(tmp_repo, "kb-20261014-bbbb", status="accepted", conf="verified")
-    with pytest.raises(GateViolation, match="accepted"):
-        update_draft(tmp_repo, "kb-20261014-bbbb", body="x")
+def test_update_proposed_ok_no_downgrade(tmp_repo):
+    """proposed 是建议期过渡态: 可全量改且不动 status。"""
+    _mk(tmp_repo, "kb-20261014-ppp1", status="proposed", conf="probable")
+    e = update_entry(tmp_repo, "kb-20261014-ppp1", body="## 根因\n补充。\n", today=TODAY)
+    assert e.fm["status"] == "proposed"
+    assert "revision" not in e.fm
+
+
+def test_update_accepted_downgrades_to_proposed(tmp_repo):
+    """已终审条目被编辑 → 自动降级重审, 且清掉"当时通过"的留痕(留着会误导抽查)."""
+    from kb.entry import dump_entry
+    p = _mk(tmp_repo, "kb-20261014-bbbb", status="accepted", conf="verified",
+            tags=["auto-reviewed"])
+    cur = parse_entry(p)
+    cur.fm["verified_by"] = "agent"
+    cur.fm["verification"] = {"evidence": "旧证据", "reviewed_at": "2026-10-14"}
+    p.write_text(dump_entry(cur), encoding="utf-8")
+    e = update_entry(tmp_repo, "kb-20261014-bbbb", body="## 根因\n改写了。\n", today=TODAY)
+    assert e.fm["status"] == "proposed"
+    assert "verified_by" not in e.fm
+    assert "verification" not in e.fm
+    assert "auto-reviewed" not in (e.fm.get("tags") or [])
+    assert e.fm["revision"]["from_status"] == "accepted"
+    assert e.fm["revision"]["reason"] == "content-edited"
+    assert e.fm["revision"]["at"] == "2026-10-14"
+    # confidence 不回退: 降级只影响 status, 重审时再确认
+    assert e.fm["confidence"] == "verified"
+
+
+@pytest.mark.parametrize("st", ["deprecated", "superseded"])
+def test_update_rejects_terminal(tmp_repo, st):
+    _mk(tmp_repo, "kb-20261014-term", status=st, conf="verified")
+    with pytest.raises(GateViolation, match=st):
+        update_entry(tmp_repo, "kb-20261014-term", body="x")
 
 
 def test_update_draft_missing_id(tmp_repo):
     with pytest.raises(FileNotFoundError):
-        update_draft(tmp_repo, "kb-20261014-9999", body="x")
+        update_entry(tmp_repo, "kb-20261014-9999", body="x")
+
+
+def test_update_body_with_h1_is_stripped_not_duplicated(tmp_repo):
+    """body 契约: 唯一 H1 由写入口前置。误传含 H1 的全文(2026-11-11 实际踩中:
+    追加"新发现"传旧全文 → 双 H1 等 lint 才暴露)→ 剥掉围栏外 H1, 结果恒一个;
+    围栏代码块内的 "# " 是内容, 保留。"""
+    _mk(tmp_repo, "kb-20261014-h1st", title="demo")
+    body = ("# demo\n\n## 背景\n追加全文.\n\n```\n# demo\n```\n\n"
+            "    # demo(缩进重复行)\n")
+    e = update_entry(tmp_repo, "kb-20261014-h1st", body=body, today=TODAY)
+    in_fence, h1 = False, 0
+    for ln in e.body.splitlines():
+        if ln.strip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and ln.strip().startswith("# "):
+            h1 += 1
+    assert h1 == 1 and e.body.splitlines()[0] == "# demo"
+    assert e.body.count("# demo\n```") == 1      # 围栏内示例未被误剥
+    assert "# demo(缩进重复行)" not in e.body     # 围栏外缩进 H1 也被剥(lint 同口径)
+    # 幂等: 剥过的正文再传一次不增不减
+    e2 = update_entry(tmp_repo, "kb-20261014-h1st", body=e.body, today=TODAY)
+    assert e2.body == e.body
+
+
+def test_update_entry_summary_set_and_clear(tmp_repo):
+    """kb_update 传空串 = 清空 summary(pop 键); 不传 = 不碰。返回落盘后的 Entry。"""
+    e = create_entry(tmp_repo, type="pitfall", domain="frontend", scope="project",
+                     title="更新摘要", generated=False, today=TODAY,
+                     summary="旧结论一句, 覆盖更新场景。")
+    e2 = update_entry(tmp_repo, e.fm["id"], summary="新结论一句, 覆盖更新场景。")
+    assert e2.fm["summary"] == "新结论一句, 覆盖更新场景。"
+    assert parse_entry(e.path).fm["summary"] == "新结论一句, 覆盖更新场景。"
+    update_entry(tmp_repo, e.fm["id"])                        # 不传不动
+    assert parse_entry(e.path).fm["summary"] == "新结论一句, 覆盖更新场景。"
+    e3 = update_entry(tmp_repo, e.fm["id"], summary="")       # 空串 = 清空
+    assert "summary" not in e3.fm
+    assert "summary" not in parse_entry(e.path).fm
 
 
 @pytest.mark.parametrize("frm,conf,to,ok", [
@@ -148,6 +217,67 @@ def test_review_invalid_confidence_rejected(tmp_repo):
     assert e.fm["confidence"] == "verified"
 
 
+# --- 复核升级通道(kb-20261109-0ac8): accepted 自环升 confidence ---
+def test_review_reverify_accepted_upgrade_ok(tmp_repo):
+    """已 accepted/probable 拿到实测证据 → 同状态 + --confidence verified + evidence
+    应放行(修复前: accepted 无出边, 纯 CLI 会话无任何合规通道, 只能手改违规)。"""
+    _mk(tmp_repo, "kb-20261014-rv03", status="accepted", conf="probable")
+    e = review(tmp_repo, "kb-20261014-rv03", "accepted", by="agent",
+               confidence="verified", evidence="2026-10-14 实测复跑全过", today=TODAY)
+    assert e.fm["status"] == "accepted"
+    assert e.fm["confidence"] == "verified"
+    assert e.fm["verification"] == {"evidence": "2026-10-14 实测复跑全过",
+                                    "reviewed_at": "2026-10-14"}
+    assert e.fm["verified_by"] == "agent"
+    assert "auto-reviewed" in e.fm.get("tags", [])
+
+
+def test_review_reverify_requires_evidence(tmp_repo):
+    _mk(tmp_repo, "kb-20261014-rv04", status="accepted", conf="probable")
+    with pytest.raises(GateViolation, match="requires --evidence"):
+        review(tmp_repo, "kb-20261014-rv04", "accepted", confidence="verified",
+               today=TODAY)
+    with pytest.raises(GateViolation, match="requires --evidence"):
+        review(tmp_repo, "kb-20261014-rv04", "accepted", confidence="verified",
+               evidence="   ", today=TODAY)
+    # 拒绝不留半成品
+    e = parse_entry(tmp_repo / "kb" / "pitfall" / "frontend" / "kb-20261014-rv04.md")
+    assert e.fm["confidence"] == "probable" and "verification" not in e.fm
+
+
+def test_review_reverify_requires_upgrade(tmp_repo):
+    """无信息量的自环(同 confidence / 不给 confidence / 降 confidence)一律拒绝——
+    防止刷 updated 与 verification 制造虚假活跃度。"""
+    _mk(tmp_repo, "kb-20261014-rv05", status="accepted", conf="probable")
+    with pytest.raises(GateViolation, match="requires confidence upgrade"):
+        review(tmp_repo, "kb-20261014-rv05", "accepted", evidence="再看一下",
+               today=TODAY)
+    with pytest.raises(GateViolation, match="requires confidence upgrade"):
+        review(tmp_repo, "kb-20261014-rv05", "accepted", confidence="probable",
+               evidence="同档重审", today=TODAY)
+    with pytest.raises(GateViolation, match="cannot lower confidence"):
+        review(tmp_repo, "kb-20261014-rv05", "accepted", confidence="speculative",
+               evidence="想降回去", today=TODAY)
+    e = parse_entry(tmp_repo / "kb" / "pitfall" / "frontend" / "kb-20261014-rv05.md")
+    assert e.fm["confidence"] == "probable"
+
+
+def test_review_reverify_top_confidence_rejected(tmp_repo):
+    """verified 已顶格: 自环没有可升的档位, 只能走 kb_update 改正文降级重审。"""
+    _mk(tmp_repo, "kb-20261014-rv06", status="accepted", conf="verified")
+    with pytest.raises(GateViolation, match="requires confidence upgrade"):
+        review(tmp_repo, "kb-20261014-rv06", "accepted", confidence="verified",
+               evidence="已顶格", today=TODAY)
+
+
+def test_review_accepted_still_rejects_other_same_status(tmp_repo):
+    """自环只放行 accepted; draft/proposed/deprecated 的同状态流转仍按状态机拒绝。"""
+    for st in ("draft", "proposed", "deprecated"):
+        _mk(tmp_repo, f"kb-20261014-same-{st[:4]}", status=st, conf="probable")
+        with pytest.raises(GateViolation, match="illegal transition"):
+            review(tmp_repo, f"kb-20261014-same-{st[:4]}", st)
+
+
 # --- §43 第二十五轮: 写路径改 live 池字段后必须重建索引 ---
 def test_review_accepted_makes_entry_searchable_immediately(tmp_repo):
     """红线1 闭环: agent 自审 accepted"无需等人工"——若 review 不重建 index.jsonl,
@@ -206,7 +336,7 @@ def test_update_draft_refreshes_draft_index(tmp_repo):
     指纹全部滞留旧值。"""
     import json
     _mk(tmp_repo, "kb-20261014-c1c1", title="旧标题")
-    update_draft(tmp_repo, "kb-20261014-c1c1", title="新标题", today=TODAY)
+    update_entry(tmp_repo, "kb-20261014-c1c1", title="新标题", today=TODAY)
     rec = [json.loads(x) for x in
            (tmp_repo / "kb" / "index.draft.jsonl").read_text(encoding="utf-8").splitlines()
            if x.strip()]

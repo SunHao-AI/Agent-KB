@@ -33,6 +33,10 @@ def derive_schema(tax: dict) -> dict:
     props = {
         "id": {"type": "string", "pattern": _ID_PATTERN},
         "title": {"type": "string", "minLength": 1},
+        # L2 结论句(spec 2026-11-14 §3.1): 可选; 空串=缺失显式豁免(模板 `summary: ""`
+        # 占位与人工清空都合法), 非空限 10-300——下限防"填了等于没填", 上限对齐 OG 惯例。
+        "summary": {"anyOf": [{"const": ""},
+                              {"type": "string", "minLength": 10, "maxLength": 300}]},
         "type": {"type": "string", "enum": types},
         "domain": {
             "type": "array", "minItems": 1,
@@ -53,6 +57,8 @@ def derive_schema(tax: dict) -> dict:
         "related": {"type": "array", "items": {"type": "string"}},
         "supersedes": {"type": ["string", "null"]},
         "superseded_by": {"type": ["string", "null"]},
+        # repowiki 桥(spec 2026-11-14 §4.1): 条目 → repowiki 模块归属键, 缺省=不导出
+        "module": {"type": ["string", "null"]},
     }
     # per-type 条件必填: taxonomy types[*].requires 非空的 type,
     # 用 draft 2020-12 allOf + if/then 生成"该 type 必须携带这些字段"规则。

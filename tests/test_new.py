@@ -89,3 +89,18 @@ def test_id_collision_check_follows_id_not_filename(tmp_repo, monkeypatch):
         create_entry(tmp_repo, type="howto", domain="process", scope="project",
                      title="撞改名者", generated=True, today=TODAY)
     assert parse_entry(renamed).fm["id"] == e1.fm["id"]            # 改名条目 id 不变
+
+
+def test_create_entry_summary_key(tmp_repo):
+    """summary 三态: None 不写键(与既有行为零差)、空串写 ""(schema 豁免)、有值原样。"""
+    e1 = create_entry(tmp_repo, type="pitfall", domain="frontend", scope="project",
+                      title="无摘要", generated=False, today=TODAY)
+    assert "summary" not in e1.fm
+    e2 = create_entry(tmp_repo, type="pitfall", domain="frontend", scope="project",
+                      title="空摘要", generated=False, today=TODAY, summary="")
+    assert e2.fm["summary"] == ""
+    e3 = create_entry(tmp_repo, type="pitfall", domain="frontend", scope="project",
+                      title="有摘要", generated=False, today=TODAY,
+                      summary="Vite HMR 在 Windows 偶发失效需固定 host。")
+    assert e3.fm["summary"] == "Vite HMR 在 Windows 偶发失效需固定 host。"
+    assert e3.summary() == "Vite HMR 在 Windows 偶发失效需固定 host。"

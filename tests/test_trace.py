@@ -82,6 +82,22 @@ def test_new_file_writes_meta_once(kbroot):
     assert len(lines) == 3
 
 
+def test_append_event_writes_lf_on_windows(kbroot):
+    """回归: append 必须以 LF 落盘。
+
+    Windows 上 `open("a", newline=None)` 会把 "\n" 译成 "\r\n", JSONL 尾随 \r
+    曾污染展示层(live.py fmtKV/fmtTable)。修复 = f.open(..., newline="\n")。
+    """
+    trace.append_event(_ev(1), root=kbroot)
+    trace.append_event(_ev(2), root=kbroot)
+    f = next((kbroot / "traces").glob("*.jsonl"))
+    raw = f.read_bytes()
+    assert b"\r" not in raw
+    assert raw.endswith(b"\n")
+    for ln in raw.decode("utf-8").splitlines():
+        json.loads(ln)  # 无 \r 残留, 每行可解析
+
+
 def test_read_splits_search_and_get(kbroot):
     trace.append_event(_ev(1), root=kbroot)
     trace.append_event(_ev(1, kind="get"), root=kbroot)
@@ -133,6 +149,19 @@ def test_read_skips_bad_line_and_warns(kbroot):
            [{"kind": "meta", "schema": 1}, _ev(1), "{ broken json", _ev(2)])
     searches, _, warns = trace.read_traces(root=kbroot)
     assert {s["trace_id"] for s in searches} == {"t-1", "t-2"}
+    assert any("bad line" in w for w in warns)
+
+
+def test_read_survives_non_utf8_bytes(kbroot):
+    """2026-11-07 回归: 账本里落进非 UTF-8 字节(写入侧 GBK 残片)时, 严格解码曾让
+    trace report / stats / feed 整体 UnicodeDecodeError 全挂。读取改 errors="replace",
+    坏行退回既有 bad line 分支跳过, 其余事件照常返回。"""
+    name = f"{dt.date.today():%Y-%m-%d}.jsonl"
+    d = _write(kbroot, name, [{"kind": "meta", "schema": 1}, _ev(1)])
+    with (d / name).open("ab") as fh:
+        fh.write(b'\xac", "\xe4\xbb\xbb\n')
+    searches, _, warns = trace.read_traces(root=kbroot)
+    assert {s["trace_id"] for s in searches} == {"t-1"}
     assert any("bad line" in w for w in warns)
 
 

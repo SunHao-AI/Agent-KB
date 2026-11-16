@@ -8,6 +8,15 @@
 param([string]$RepoRoot = (Get-Location).Path)
 $ErrorActionPreference = 'Stop'
 
+# Provenance helper: git blob hash of a file ('' if absent / not computable).
+# Needs no repo context beyond -C, so it works from any caller cwd.
+function Get-GitBlob([string]$path) {
+    if (-not (Test-Path -LiteralPath $path)) { return '' }
+    $h = & git -C $RepoRoot hash-object -- $path 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $h) { return '' }
+    return ([string]($h | Select-Object -First 1)).Trim()
+}
+
 # 1. locate gate master: Agent-KB scripts/ or business repo submodule .agent-kb/scripts/
 $candidates = @(
     (Join-Path $PSScriptRoot 'pre-push-gate.sh'),
@@ -28,8 +37,10 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $toLf = { param($s) $s -replace "`r`n", "`n" -replace "`r", "`n" }
 
 # 3. copy gate body (LF, no BOM -- sh chokes on BOM/CRLF)
+$installedHookPath = Join-Path $hooksDir 'pre-push-gate.sh'
+$oldBlob = Get-GitBlob $installedHookPath     # what the repo ran before this install
 $text = & $toLf ([IO.File]::ReadAllText($gateSrc))
-[IO.File]::WriteAllText((Join-Path $hooksDir 'pre-push-gate.sh'), $text, $utf8NoBom)
+[IO.File]::WriteAllText($installedHookPath, $text, $utf8NoBom)
 
 # 4. back up foreign pre-push once (skip our own launcher on re-install)
 $launcherMarker = 'pre-push-gate.sh'
@@ -56,7 +67,84 @@ printf '%s\n' "$input" | sh "$dir/pre-push-gate.sh" "$@"
 '@
 [IO.File]::WriteAllText($launcherPath, (& $toLf $launcher), $utf8NoBom)
 
+# ---- 6. provenance report -----------------------------------------------------
+# Why this exists: an install that silently writes an OLD gate body looks exactly
+# like a successful upgrade ("installed-gate: OK"), which is how a vendored
+# .agent-kb copy pinned at an old gitlink downgraded four repos' hooks on
+# 2026-11-04 without any warning. So: name the target repo (batch installs that
+# rely on cwd can otherwise write every repo's hook into the current one), and
+# print source/installed blob hashes plus the gitlink the copy is pinned to.
+$newBlob     = Get-GitBlob $installedHookPath
+$srcBlob     = Get-GitBlob $gateSrc
+$repoRootAbs = (git -C $RepoRoot rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+$subCopy     = Join-Path $RepoRoot '.agent-kb\scripts\pre-push-gate.sh'
+$isVendored  = [IO.Path]::GetFullPath($gateSrc).Equals([IO.Path]::GetFullPath($subCopy),
+                    [StringComparison]::OrdinalIgnoreCase)
+
 Write-Host "installed-gate: OK -> $hooksDir"
-Write-Host "  gate body : pre-push-gate.sh (master: $gateSrc)"
-Write-Host "  launcher  : pre-push"
+Write-Host "  target repo : $repoRootAbs"
+Write-Host "  gate body   : pre-push-gate.sh"
+Write-Host ("  source      : {0}  [{1}]" -f $gateSrc, $(if ($isVendored) { 'vendored .agent-kb copy' } else { 'Agent-KB master' }))
+Write-Host ("  blob        : source={0} installed={1}" -f `
+    $(if ($srcBlob) { $srcBlob.Substring(0,8) } else { '?' }), `
+    $(if ($newBlob) { $newBlob.Substring(0,8) } else { '?' }))
+if ($oldBlob -and $oldBlob -eq $newBlob) {
+    Write-Host ("  version     : UNCHANGED (was {0}; already this version)" -f $oldBlob.Substring(0,8))
+} elseif ($oldBlob) {
+    Write-Host ("  version     : UPDATED {0} -> {1}" -f $oldBlob.Substring(0,8), $newBlob.Substring(0,8))
+} else {
+    Write-Host ("  version     : NEW install ({0})" -f $(if ($newBlob) { $newBlob.Substring(0,8) } else { '?' }))
+}
+
+# A vendored copy is only as new as the gitlink the parent repo pins it to, so
+# surface that pin -- "fc75fe4" is the tell that the source is stale.
+if ($isVendored) {
+    $pin = (git -C $RepoRoot ls-tree HEAD .agent-kb 2>$null | Select-Object -First 1)
+    if ($pin) {
+        $pinSha  = (($pin -split '\s+')[2]).Substring(0,7)
+        $subHead = (git -C (Join-Path $RepoRoot '.agent-kb') rev-parse --short HEAD 2>$null | Select-Object -First 1)
+        Write-Host ("  pinned at   : gitlink={0}  submodule HEAD={1}" -f $pinSha, $subHead)
+        if ($subHead -and -not $pinSha.StartsWith($subHead) -and -not $subHead.StartsWith($pinSha)) {
+            Write-Host "  WARNING: submodule working copy differs from the gitlink the parent repo" `
+                -ForegroundColor Yellow
+            Write-Host "           records -> the installed gate is whatever is checked out here," `
+                -ForegroundColor Yellow
+            Write-Host "           not what this repo pins. Commit the gitlink to make it durable." `
+                -ForegroundColor Yellow
+        }
+    }
+    Write-Host "  NOTE: source is this repo's vendored copy; to install from the live" `
+        -ForegroundColor Yellow
+    Write-Host "        master run: scripts\install-gate.ps1 -RepoRoot `"$repoRootAbs`" from Agent-KB." `
+        -ForegroundColor Yellow
+}
+
+# ---- decisive staleness signal ------------------------------------------------
+# Blob hashes alone still make a human decide "which one is newer?". Compare
+# against the gate body at Agent-KB origin/master (as the local clone/submodule
+# last fetched it) -- its blob sha is readable without a working tree.
+$originBlob = ''
+$originRefRepo = if ($isVendored) { Join-Path $RepoRoot '.agent-kb' } else { $PSScriptRoot }
+foreach ($ref in 'origin/master', 'origin/HEAD', 'origin/main') {
+    $b = (& git -C $originRefRepo rev-parse "${ref}:scripts/pre-push-gate.sh" 2>$null | Select-Object -First 1)
+    if ($b) { $originBlob = ([string]$b).Trim(); break }
+}
+if ($originBlob -and $newBlob) {
+    if ($newBlob -eq $originBlob) {
+        Write-Host "  vs origin   : matches Agent-KB origin/master (current)"
+    } elseif ($isVendored) {
+        Write-Host "  vs origin   : STALE -- installed is NOT the gate at origin/master" -ForegroundColor Red
+        Write-Host ("                installed={0}  origin/master={1}" -f $newBlob.Substring(0,8), $originBlob.Substring(0,8))
+        Write-Host "                Update the submodule/gitlink, or install from the live master"
+        Write-Host "                with -RepoRoot. Do NOT treat this install as an upgrade."
+    } else {
+        Write-Host "  vs origin   : differs from origin/master -- local master is ahead (unpushed?)" -ForegroundColor Yellow
+        Write-Host ("                installed={0}  origin/master={1}" -f $newBlob.Substring(0,8), $originBlob.Substring(0,8))
+    }
+} elseif ($newBlob) {
+    Write-Host "  vs origin   : n/a (no Agent-KB origin ref found locally; cannot tell if current)" -ForegroundColor Yellow
+}
+
+Write-Host "  launcher    : pre-push"
 Write-Host "  emergency skip: `$env:PREPUSH_SKIP='1'; git push ..."
+

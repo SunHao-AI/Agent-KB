@@ -20,10 +20,7 @@ tags:
 - 入口判断
 - 跨平台
 - auto-reviewed
-- promote-to:stack
-- needs-scope-review
-- promoted
-scope: project
+scope: stack
 status: accepted
 confidence: verified
 created: '2026-11-17'
@@ -38,6 +35,8 @@ verification:
   evidence: '2026-11-17 联调实测: tsx src/server.ts 秒退 exit 0 端口不监听(两次复现); 同代码 ks-e2e-shim.mts
     入口启动即 listening, /v3 全端点工作'
   reviewed_at: '2026-11-17'
+source:
+  project: Agent-KB
 ---
 
 # ESM 主入口守卫在 Windows 恒为假: file:// 拼 argv[1] 与 import.meta.url 永不相等, 进程 exit 0 无日志

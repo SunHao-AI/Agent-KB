@@ -1,5 +1,7 @@
 # 蜘蛛轨道缓动过渡 Implementation Plan
 
+> **路径失效批注(2026-11-17)**: 本文是 2026-10-21 的执行记录, 原文照录不改。文中 `E:\Workplace\prompt-spider-ui`(及 `d:\Workplace\Agent-KB`)均已失效——E: 盘已卸载, 蜘蛛克隆现挂 `D:\WorkPlace\Pycharm\prompt-spider-ui`(默认值见 `src/kb/spider_live.py` 的 `COMMON_HOMES`)。照本文重跑请先替换路径。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 消除回放中蜘蛛在首词到达/翻页/过滤等时刻的瞬移, 轨道参数(cx/cy/rx/ry)平滑缓动过渡。

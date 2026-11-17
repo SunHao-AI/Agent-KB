@@ -1,6 +1,6 @@
 """kb spider-live — trace → prompt-spider-ui 实时直播桥(PRD FR-2.4)。
 
-驱动克隆仓(e:/prompt-spider-ui)的 stdio MCP(mcp/server.mjs): 监听本机
+驱动克隆仓(默认 D:/WorkPlace/Pycharm/prompt-spider-ui)的 stdio MCP(mcp/server.mjs): 监听本机
 traces/*.jsonl 增量, 每条 search 事件开一个蜘蛛会话(项目层→code 绿,
 通用层→model 橙, 外接源→ext 粉, 随后到达的 get→you 黄), 5s 无新 get 即 complete 定格。
 
@@ -33,7 +33,8 @@ ROUTES = {"code": {"label": "项目层命中", "color": "#42D6A4"},
 
 
 # 默认克隆 = SunHao-AI fork 的本地工作副本(词墙/ext 路由/kbret wordmark 补丁都在里面);
-# 旧默认(e:\Workplace、~/Workplace)从未在本机存在过, D:\data 那份干净上游 clone 已废弃。
+# 旧默认 e:\Workplace\prompt-spider-ui(b929175 起, 当时 e2e 就在它上面跑通)随 E: 盘卸载失效;
+# D:\data 那份干净上游 clone 已于 2026-11-17 删除。
 COMMON_HOMES = [r"D:\WorkPlace\Pycharm\prompt-spider-ui"]
 
 

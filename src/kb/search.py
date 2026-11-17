@@ -175,11 +175,16 @@ def evaluate(repo_root: Path, *, type=None, domain=None, tag=None, scope=None,
             continue
         fields, spans, hit_tokens = (
             ([], [], set()) if not tokens else _hit(_parts(rec), tokens))
+        # 逐词归因按查询词序回映(非 sorted): 消费方(蜘蛛 word 视图)按 token 位置呈现,
+        # 集合序会把 "vite hmr 不存在词" 的部分命中显示成 hmr/vite, 与查询语序脱节。
+        seen: set[str] = set()
+        in_query = [t for t in tokens
+                    if t in hit_tokens and not (t in seen or seen.add(t))]
         if hit_tokens == uniq:                 # 无 query 时两侧同为空集, 走此支
             and_hits.append((_score(rec, fields, spans, tokens, today),
-                             order, rec, fields, spans))
+                             order, rec, fields, spans, in_query))
         elif hit_tokens:
-            cands.append((hit_tokens, order, rec, fields, spans))
+            cands.append((hit_tokens, order, rec, fields, spans, in_query))
         else:
             n_no_hit += 1
     report_partial = None
@@ -192,19 +197,20 @@ def evaluate(repo_root: Path, *, type=None, domain=None, tag=None, scope=None,
         match_mode = "partial"
         min_hit = min(2, len(uniq))
         scored = []
-        for hit_tokens, order, rec, fields, spans in cands:
+        for hit_tokens, order, rec, fields, spans, in_query in cands:
             if len(hit_tokens) < min_hit:
                 continue
             score = _score(rec, fields, spans, sorted(hit_tokens), today)
             ratio = round(len(hit_tokens) / len(uniq), 6)
-            scored.append((-ratio, -score, order, score, rec, fields, spans))
+            scored.append((-ratio, -score, order, score, rec, fields, spans, in_query))
         scored.sort()                          # order 全局唯一, 天然打破元组平分
-        hits = [(h[3], h[2], h[4], h[5], h[6]) for h in scored]
+        hits = [(h[3], h[2], h[4], h[5], h[6], h[7]) for h in scored]
         n_query = n_no_hit + (len(cands) - len(scored))  # 低于门槛也计 query 死因
         report_partial = {"min_hit": min_hit, "tokens": len(uniq)}
     matched = [{"id": h[2]["id"], "title": h[2].get("title"), "scope": h[2].get("scope"),
                 "confidence": h[2].get("confidence"), "hit_fields": h[3],
-                "hit_spans": h[4], "score": h[0], "rank": i + 1}
+                "hit_spans": h[4], "score": h[0], "rank": i + 1,
+                "hit_tokens": h[5]}
                for i, h in enumerate(hits)]
     rows = [h[2] for h in hits]
     report = {"scanned": len(recs),

@@ -122,30 +122,130 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
         # square" 整包拒导入(2026-11-11 线上实测)。切回私有 fork 时可改回 wall。
         "layout": "landscape", "unit": "task", "routes": ROUTES,
     }
-    # 对端契约: log 项用 type; configure/events/complete; events 批 1..100;
-    # revision 严格递增, at 非递减且≤duration; 空批非法; log≤10万条。
+    log = _build_log(config, events)
+    return {"format": FORMAT, "version": 1, "id": sid or "",
+            "status": "completed", "duration": log[-1]["at"],
+            "initialConfig": config, "config": config,
+            "events": events, "log": log,
+            "consumed": sorted(consumed)}
+
+
+def _query_tokens(query: str) -> list[str]:
+    """查询串 → token 序列, 必须与对端 lib/config.js tokenizePrompt 逐位一致
+    (逐行后 `\\S+`), 否则 tokenIndex 会指向别的词。"""
+    out: list[str] = []
+    for line in str(query).replace("\r\n", "\n").split("\n"):
+        out.extend(re.findall(r"\S+", line))
+    return out
+
+
+def to_word_record(search_ev: dict, get_evs: list[dict]) -> dict:
+    """一条 search trace → word-unit 记录: 每个真实查询词一腿, 腿的落点=该词的证据。
+
+    与 task 面同源同事实, 区别在呈现单位是查询词而非条目:
+    - 词命中项目层 → code, 只命中通用层 → model, 其命中条目被本 trace 读过 → you;
+    - **零命中词不产生事件**: 对端路由计数只按 route 累加不看 status, 给它挂任何
+      一条都会把"项目层命中"虚增成含未命中词。蜘蛛不去抓它(提示词上不高亮),
+      缺席本身即信号, 并在 subtitle 显式点名(放最前, 防 160 字截断吞掉诊断信息)。
+    - score 恒 None: 归因是确定性集合关系而非概率, 编 P 值即重回演示数据路线。
+
+    旧 trace(matched 缺 hit_tokens)无从归因 → 拒绝而非"全词算命中"式反猜。
+    """
+    sid = search_ev.get("trace_id")
+    query = str(search_ev.get("query") or "")
+    tokens = _query_tokens(query)
+    if not tokens:
+        raise ValueError("逐词归因需要非空查询词(该 trace 无查询词, 请用 task 视图)")
+    read_ids = {g["id"] for g in get_evs
+                if g.get("trace_id") == sid and isinstance(g.get("id"), str)}
+    returned = set(search_ev.get("returned", []))
+    # 词 → [最小层 index, {条目 id: 标题}]; 层 index 越小越贴近项目层。
+    # value 用 list 不用 tuple: 同词被多条命中条目共享时(真 trace 常态)归并分支
+    # 要就地写 best[tok][0]=min(...), tuple 会在生产路径 TypeError(§55 同族:
+    # 构造期形态与消费期操作不一致)。
+    best: dict[str, list] = {}
+    for idx, layer in enumerate(search_ev.get("layers", []) or []):
+        if not isinstance(layer, dict):
+            continue
+        for m in layer.get("matched") or []:
+            if not isinstance(m, dict) or m.get("id") not in returned:
+                continue
+            if "hit_tokens" not in m:
+                raise ValueError(
+                    f"trace {sid} 的条目 {m.get('id')} 无逐词归因字段"
+                    "(旧 trace 未记 hit_tokens), 请用 task 视图")
+            ev_id = str(m.get("id"))
+            for tok in m["hit_tokens"]:
+                key = str(tok).lower()
+                cur = best.get(key)
+                if cur is None:
+                    best[key] = [idx, {ev_id: (m.get("title") or ev_id)[:24]}]
+                else:
+                    cur[1].setdefault(ev_id, (m.get("title") or ev_id)[:24])
+                    cur[0] = min(cur[0], idx)   # 同词跨层取最贴近项目层的那层
+    events: list[dict] = []
+    zero_words: list[str] = []
+    for i, tok in enumerate(tokens):
+        hit = best.get(tok.lower())
+        if hit is None:
+            zero_words.append(tok)
+            continue
+        idx, evidence = hit
+        route = "you" if read_ids & evidence.keys() else _LAYER_ROUTE.get(idx, "model")
+        events.append({"id": spider_id(f"w{i}-{tok}"), "label": tok[:40],
+                       "route": route, "status": "completed",
+                       "tokenIndex": i, "score": None,
+                       "detail": f"该词命中 {len(evidence)} 条: "
+                                 + "、".join(list(evidence)[:3])})
+    layers_note = " · ".join(
+        f"{ly.get('repo', '?')} 扫描{ly.get('scanned', '?')}"
+        for ly in search_ev.get("layers", []) if isinstance(ly, dict))
+    head = (f"零命中词: {'、'.join(zero_words)} | " if zero_words else "")
+    base = (f"query: {query} | {layers_note} | 命中词 {len(events)}/{len(tokens)}"[:_SUBTITLE_MAX - len(head)])
+    config = {
+        "title": f"KB 逐词归因 {sid or '?'}"[:80],
+        "subtitle": (head + base)[:_SUBTITLE_MAX],
+        "modelName": f"{search_ev.get('caller_repo', '?')}"
+                     f" · {str(search_ev.get('ts', ''))[:10]}"[:80],
+        "prompt": query[:12000],       # 对端按它重算 tokenIndex, 必须与查询串一致
+        "layout": "landscape", "unit": "word", "routes": ROUTES,
+    }
+    log = _build_log(config, events)
+    return {"format": FORMAT, "version": 1, "id": sid or "",
+            "status": "completed", "duration": log[-1]["at"],
+            "initialConfig": config, "config": config,
+            "events": events, "log": log,
+            "consumed": sorted(read_ids & returned)}
+
+
+def _build_log(config: dict, events: list[dict]) -> list[dict]:
+    """events → 对端 log(configure/events/complete)。task 与 word 两面共用同一时序契约。
+
+    对端契约: log 项用 type; events 批 1..100; revision 严格递增, at 非递减且≤duration;
+    空批非法; log≤10万条。
+    """
     log = [{"revision": 1, "at": _T_CONFIG, "type": "configure", "config": config}]
     entries: list[tuple[float, int, list]] = []  # (at, 同刻序, events 批)
     if events:
         # you(已读)无扫描动画语义, 随首批一起落定; 其余逐条: running→(+fly)completed。
         # stagger<fly 时下一条 running 比上一条 completed 先到, 必须按 at 排序后再编
         # revision(直接顺序产 log 会 at 倒退, 被对端 validateRecord 拒收)。
-        running = [e for e in events if e["route"] != "you"]
-        you_first = [dict(e, status="completed") for e in events if e["route"] == "you"]
-        if running:
-            stag = _stagger(len(running))
-            you_head, you_rest = you_first[:_BATCH - 1], you_first[_BATCH - 1:]
-            for i, e in enumerate(running):
+        fly = [e for e in events if e["route"] != "you"]
+        settle = [e for e in events if e["route"] == "you"]
+        if fly:
+            stag = _stagger(len(fly))
+            head, rest = settle[:_BATCH - 1], settle[_BATCH - 1:]
+            for i, e in enumerate(fly):
                 t_r = round(_T_LEAD + i * stag, 2)
-                pend = you_head if i == 0 else []
+                pend = head if i == 0 else []
                 entries.append((t_r, 0, pend + [dict(e, status="running")]))
                 entries.append((round(t_r + _T_FLY, 2), 1, [dict(e, status="completed")]))
-            t_last = round(_T_LEAD + (len(running) - 1) * stag + _T_FLY, 2)
-            for batch in _chunks(you_rest):  # you 溢出(>99)单独成批, at 与末条同刻
+            t_last = round(_T_LEAD + (len(fly) - 1) * stag + _T_FLY, 2)
+            for batch in _chunks(rest):  # 溢出(>99)单独成批, at 与末条同刻
                 entries.append((t_last, 1, batch))
             end = round(t_last + _T_TAIL, 2)
-        else:  # 全 you(只读未扫): 无动画可排, 一批落定+短循环
-            for batch in _chunks(you_first):
+        else:  # 全定格态(只读未扫/全零命中): 无动画可排, 一批落定+短循环
+            for batch in _chunks(settle):
                 entries.append((_T_LEAD, 0, batch))
             end = _ZERO_END
     else:
@@ -156,10 +256,5 @@ def to_record(search_ev: dict, get_evs: list[dict]) -> dict:
         rev += 1
         log.append({"revision": rev, "at": at, "type": "events", "events": batch})
     rev += 1
-    log.append({"revision": rev, "at": end, "type": "complete",
-                "status": "completed"})
-    return {"format": FORMAT, "version": 1, "id": sid or "",
-            "status": "completed", "duration": end,
-            "initialConfig": config, "config": config,
-            "events": events, "log": log,
-            "consumed": sorted(consumed)}
+    log.append({"revision": rev, "at": end, "type": "complete", "status": "completed"})
+    return log

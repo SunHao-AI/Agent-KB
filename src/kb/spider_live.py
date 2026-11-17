@@ -32,8 +32,9 @@ ROUTES = {"code": {"label": "项目层命中", "color": "#42D6A4"},
           "you": {"label": "已读消费", "color": "#F0CA57"}}
 
 
-COMMON_HOMES = [r"e:\Workplace\prompt-spider-ui",
-                str(Path.home() / "Workplace" / "prompt-spider-ui")]
+# 默认克隆 = SunHao-AI fork 的本地工作副本(词墙/ext 路由/kbret wordmark 补丁都在里面);
+# 旧默认(e:\Workplace、~/Workplace)从未在本机存在过, D:\data 那份干净上游 clone 已废弃。
+COMMON_HOMES = [r"D:\WorkPlace\Pycharm\prompt-spider-ui"]
 
 
 def find_spider_home(explicit: str | None = None) -> Path:

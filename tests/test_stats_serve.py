@@ -1163,12 +1163,116 @@ def test_api_spider_revives_after_bridge_process_death(tmp_path, monkeypatch):
     monkeypatch.setattr(spider_live, "find_spider_home", lambda explicit=None: tmp_path)
     try:
         st, body = _get_url(f"{base}/api/spider/rb-4")
-        assert st == 200 and body["previewUrl"].endswith("session=new")
+        # kbret 追加在 query 尾(见 test_with_kbret_pure), 判定用 contains 而非 endswith
+        assert st == 200 and "session=new" in body["previewUrl"]
         assert respawn["n"] == 1          # 死桥被替换重spawn, 而非 _dead 短路 503
         # 死亡前缓存的旧 URL 指向已死进程, 必须作废重导而非原样返回
         srv.spider._mcp = DeadMcp()
         st2, body2 = _get_url(f"{base}/api/spider/rb-4")
         assert st2 == 200 and respawn["n"] == 2
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+# ---- /api/spider/<tid>?unit=word(逐词归因回放) ---------------------------
+
+def _word_search(tid, query="vite hmr"):
+    """带逐词归因字段的 search 事件(hit_tokens 是 word 视图的事实源)。"""
+    ev = _search(tid, "a", query, ["k1"])
+    ev["layers"][0]["matched"] = [
+        {"id": "k1", "title": "vite hmr DOM 失效", "hit_fields": ["title"],
+         "hit_tokens": query.split(), "rank": 1}]
+    return ev
+
+
+def test_api_spider_unit_word_imports_word_record(tmp_path, monkeypatch):
+    from kb import spider_live
+    srv, base = _serve(tmp_path)
+    imported = []
+
+    class FakeMcp:
+        p = None
+
+        def tool(self, name, args):
+            if name == "spider_import_session":
+                imported.append(args["record"])
+                return {"id": f"sid{len(imported)}",
+                        "previewUrl": f"http://127.0.0.1:9/?session={len(imported)}"}
+            return {}
+
+    monkeypatch.setattr(spider_live, "SpiderMcp", lambda home: FakeMcp())
+    monkeypatch.setattr(spider_live, "find_spider_home", lambda explicit=None: tmp_path)
+    _seed_trace(tmp_path, _word_search("w-1"), [])
+    try:
+        st, body = _get_url(f"{base}/api/spider/w-1?unit=word")
+        assert st == 200
+        rec = imported[0]
+        assert rec["config"]["unit"] == "word"
+        assert rec["config"]["prompt"] == "vite hmr"
+        assert [e["tokenIndex"] for e in rec["events"]] == [0, 1]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_api_spider_unit_cache_keyed_by_unit(tmp_path, monkeypatch):
+    """切视图必须重导: replay_url 若仍只按 trace_id 缓存, 点「逐词归因」会拿到
+    上一个 task 会话的 URL(同一 trace 两种视图互串)。"""
+    from kb import spider_live
+    srv, base = _serve(tmp_path)
+    imported = []
+
+    class FakeMcp:
+        p = None
+
+        def tool(self, name, args):
+            if name == "spider_import_session":
+                imported.append(args["record"]["config"]["unit"])
+                return {"id": f"sid{len(imported)}",
+                        "previewUrl": f"http://127.0.0.1:9/?session={len(imported)}"}
+            return {}
+
+    monkeypatch.setattr(spider_live, "SpiderMcp", lambda home: FakeMcp())
+    monkeypatch.setattr(spider_live, "find_spider_home", lambda explicit=None: tmp_path)
+    _seed_trace(tmp_path, _word_search("w-2"), [])
+    try:
+        _, t1 = _get_url(f"{base}/api/spider/w-2")                       # 默认 task
+        _, t1b = _get_url(f"{base}/api/spider/w-2")                      # 同视图: 命中缓存
+        _, w1 = _get_url(f"{base}/api/spider/w-2?unit=word")             # 换视图: 必须重导
+        assert imported == ["task", "word"]
+        assert t1["previewUrl"] == t1b["previewUrl"]
+        assert w1["previewUrl"] != t1["previewUrl"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_api_spider_unit_invalid_is_400(tmp_path):
+    srv, base = _serve(tmp_path)
+    _seed_trace(tmp_path, _word_search("w-3"), [])
+    try:
+        st, body = _get_any(f"{base}/api/spider/w-3?unit=bogus")
+        assert st == 400 and "unit" in body["error"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_api_spider_unit_word_on_legacy_trace_is_4xx_not_500(tmp_path, monkeypatch):
+    """旧 trace(无 hit_tokens)请求 word 视图: 必须是可读的 4xx 指引,
+    不能把 ValueError 抛成 500/traceback(面板要能提示"改用任务视图")。"""
+    from kb import spider_live
+    srv, base = _serve(tmp_path)
+    monkeypatch.setattr(spider_live, "SpiderMcp", lambda home: type(
+        "M", (), {"p": None, "tool": lambda s, n, a: {"previewUrl": "http://x/"}})())
+    ev = _search("w-4", "a", "vite", ["k1"])
+    ev["layers"][0]["matched"] = [{"id": "k1", "title": "T", "hit_fields": ["title"],
+                                   "rank": 1}]        # 故意不带 hit_tokens
+    _seed_trace(tmp_path, ev, [])
+    try:
+        st, body = _get_any(f"{base}/api/spider/w-4?unit=word")
+        assert st == 422 and "task" in body["error"]
     finally:
         srv.shutdown()
         srv.server_close()
@@ -2060,3 +2164,56 @@ def test_open_panel_local_carries_config_token(monkeypatch):
     url, mode = launcher.open_panel(4320, caller=None, no_browser=True)
     assert seen["token"] == "cfg-tok"
     assert mode == "local" and _qs_of(url).get("token") == "cfg-tok"
+
+
+def test_with_kbret_pure():
+    """kbret 注入的纯函数守护: 拼在 query 段(不碰 #token 片段), 已带则幂等。"""
+    from kb.serve import panel_url
+    out = panel_url("http://127.0.0.1:9/?session=x#token=t", "http://127.0.0.1:4320/")
+    assert out == ("http://127.0.0.1:9/?session=x"
+                   "&kbret=http%3A%2F%2F127.0.0.1%3A4320%2F#token=t")
+    again = panel_url(out, "http://127.0.0.1:1/")            # 幂等: 不重复注
+    assert again == out
+
+
+def test_panel_url_embed_adds_chrome_none():
+    """浮层内嵌态要 chrome=none(蜘蛛页 boot.js 的嵌入模式: 隐藏顶栏/标题行/传输条,
+    .stage-host 由 calc(100dvh-210px) 变 100dvh)——那 210px 外壳在面板里是纯浪费
+    (播放/进度面板 rpBar 已有)。整页 URL 仍不带, 新标签页要保留完整外壳。"""
+    from kb.serve import panel_url
+    out = panel_url("http://h:9/?session=x#token=t", "http://127.0.0.1:4320/", embed=True)
+    assert "chrome=none" in out and "kbret=" in out
+    assert out.endswith("#token=t")                          # 能力令牌片段不被拼坏
+    assert panel_url(out, "http://127.0.0.1:1/", embed=True) == out   # 两参数各自幂等
+    assert "chrome=" not in panel_url("http://h:9/?session=x", "http://p/", embed=False)
+
+
+def test_api_spider_preview_url_carries_kbret(tmp_path, monkeypatch):
+    """回放页 wordmark 的 '/' 是蜘蛛进程自己的模拟演示页(假数据)——真机实测用户
+    点它会误以为"数据变回测试数据"。previewUrl 必须带 kbret=面板根 URL, 配合克隆仓
+    live.js 的 wordmarkHref(kbret) 让内嵌/新标签的 wordmark 都回观测面板。"""
+    from kb import spider_live
+
+    class FakeMcp:
+        def tool(self, name, args):
+            if name == "spider_import_session":
+                return {"id": "s1",
+                        "previewUrl": "http://127.0.0.1:9/?session=x#token=t"}
+            return {}
+
+    monkeypatch.setattr(spider_live, "SpiderMcp", lambda home: FakeMcp())
+    monkeypatch.setattr(spider_live, "find_spider_home", lambda explicit=None: tmp_path)
+    _seed_trace(tmp_path, _word_search("w-9"), [])
+    srv, base = _serve(tmp_path)
+    try:
+        st, body = _get_url(f"{base}/api/spider/w-9")
+        assert st == 200
+        port = srv.server_address[1]
+        assert f"kbret=http%3A%2F%2F127.0.0.1%3A{port}%2F" in body["previewUrl"]
+        assert body["previewUrl"].endswith("#token=t")       # 能力令牌片段不被拼坏
+        # 浮层用 embedUrl(chrome=none 铺满), 新标签用 previewUrl(保留蜘蛛页外壳)
+        assert "chrome=none" not in body["previewUrl"]
+        assert "chrome=none" in body["embedUrl"] and "kbret=" in body["embedUrl"]
+    finally:
+        srv.shutdown()
+        srv.server_close()

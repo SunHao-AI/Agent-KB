@@ -259,3 +259,30 @@ def test_no_query_report_unchanged(tmp_path):
     _mk(tmp_path, [_rec(1)])
     _, rep = search.evaluate(tmp_path)
     assert set(rep) == {"scanned", "rejected", "matched"}  # 兼容红线不加键
+
+
+# ---- 逐词归因(蜘蛛 word 视图事实源): matched[i].hit_tokens ----
+
+def test_hit_tokens_and_path(tmp_path):
+    # "redis" 命中, "告警" 也命中 → AND 全命中; hit_tokens 须列出实际命中的词
+    _mk(tmp_path, [_rec(1, title="redis 连接池", tags=("redis",), summary="池耗尽告警")])
+    _, rep = search.evaluate(tmp_path, query="redis 告警")
+    assert rep["matched"][0]["hit_tokens"] == ["redis", "告警"]
+
+
+def test_hit_tokens_partial_path(tmp_path):
+    # 部分命中降级放行: hit_tokens 只含真正命中的词, 不含没命中的第三个词
+    _mk(tmp_path, [
+        _rec(1, title="vite hmr 抖动排查", tags=("vite",), summary="热更新失效"),
+        _rec(2, title="完全无关", tags=("x",), summary="无关"),
+    ])
+    _, rep = search.evaluate(tmp_path, query="vite hmr 不存在词")
+    assert rep["match_mode"] == "partial"
+    assert rep["matched"][0]["hit_tokens"] == ["vite", "hmr"]
+
+
+def test_hit_tokens_empty_without_query(tmp_path):
+    # 无查询词: 无归因可言 → 空列表(键恒在, 消费方不必判缺键)
+    _mk(tmp_path, [_rec(1)])
+    _, rep = search.evaluate(tmp_path)
+    assert rep["matched"][0]["hit_tokens"] == []

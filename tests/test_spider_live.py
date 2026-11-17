@@ -1,4 +1,6 @@
 """FR-2.4 spider-live 的纯映射回归(不依赖 Node)。"""
+from pathlib import Path
+
 from kb.spider_live import event_to_updates
 import pytest
 
@@ -250,3 +252,12 @@ def test_dispatch_get_branch_survives_stripped_id():
     assert mcp.calls and mcp.calls[0][0] == "spider_update_events"
     ev0 = mcp.calls[0][1]["events"][0]
     assert ev0["route"] == "you" and ev0["status"] == "completed"
+
+
+def test_default_spider_home_is_fork_clone():
+    """默认 spider-home 必须指向 SunHao-AI fork 的本地克隆(带 kbret wordmark 补丁):
+    2026-11-16 起 D:\data 那份干净上游 clone 已废弃删除, 旧默认路径(e:/~/Workplace)
+    从未在本机存在过——不设 KB_SPIDER_HOME 时起桥直接 FileNotFoundError。"""
+    from kb import spider_live
+    assert spider_live.COMMON_HOMES[0] == r"D:\WorkPlace\Pycharm\prompt-spider-ui"
+    assert (Path(spider_live.COMMON_HOMES[0]) / "mcp" / "server.mjs").exists()

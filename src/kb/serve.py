@@ -18,7 +18,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Empty, Queue
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse, urlsplit, urlunsplit
 
 from kb import metrics as kbmetrics
 from kb import stats, trace as kbtrace
@@ -102,6 +102,26 @@ class AggCache:
             return val
 
 
+def panel_url(url: str, host_root: str, embed: bool = False) -> str:
+    """回放 URL 注入宿主参数(拼 query 段, 不碰 #token 片段; 各自幂等)。
+
+    kbret= 面板根 URL: 回放页 wordmark 的 '/' 是蜘蛛进程自己的模拟演示页(假数据),
+    内嵌/新标签点击都该回观测面板(2026-11-16 真机反馈)。
+    chrome=none(embed=True): 蜘蛛页 boot.js 的嵌入模式——隐藏顶栏/标题行/传输条,
+    画布拿满 100dvh。只给浮层 iframe: 那 210px 外壳在面板里是纯浪费(播放/进度面板
+    rpBar 已有), 新标签整页则应保留完整外壳。"""
+    sp = urlsplit(url)
+    add = []
+    if host_root and "kbret=" not in url:
+        add.append("kbret=" + quote(host_root, safe=""))
+    if embed and "chrome=" not in url:
+        add.append("chrome=none")
+    if not add:
+        return url
+    q = (sp.query + "&" if sp.query else "?") + "&".join(add)
+    return urlunsplit((sp.scheme, sp.netloc, sp.path, q, sp.fragment))
+
+
 class SpiderBridge:
     """回放桥: 懒启动克隆仓 MCP, trace_id → previewUrl(整页回放, 面板新标签打开)。
 
@@ -111,12 +131,16 @@ class SpiderBridge:
 
     CAP = 15
 
-    def __init__(self):
+    def __init__(self, host_root: str = ""):
+        # host_root: 面板自身根 URL(如 http://127.0.0.1:4320/), 注入 previewUrl 的
+        # ?kbret= 供回放页 wordmark 回跳——'/' 在蜘蛛进程是 main.js 模拟演示页,
+        # 用户点了会误以为"回放数据变回测试数据"(2026-11-16 真机反馈)。
+        self.host_root = host_root
         import threading
         from collections import OrderedDict
         self._mcp = None
         self._dead: str | None = None
-        self._urls: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        self._urls: OrderedDict[tuple[str, str], tuple[str, str]] = OrderedDict()
         self._lock = threading.Lock()
         self._ready: bool | None = None
 
@@ -139,13 +163,22 @@ class SpiderBridge:
         p = getattr(self._mcp, "p", None)
         return self._mcp is not None and (p is None or p.poll() is None)
 
-    def replay_url(self, record: dict, tid: str) -> str:
+    def replay_urls(self, record: dict, tid: str, unit: str = "task") -> dict:
+        """导入会话 → {"previewUrl": 整页, "embedUrl": 浮层内嵌}(chrome=none 铺满画布)。
+
+        缓存键必须含 unit: 同一 trace 的 task/word 是两个独立会话, 只按 tid 缓存
+        会让"切逐词归因"拿回上一个 task 会话的 URL(视图互串)。缓存存**原始** URL,
+        宿主参数每次现拼: 同一会话既要给浮层(chrome=none)又要给新标签(整页外壳)。
+        """
+        key = (tid, unit)
         with self._lock:
             if self._urls and not self._alive():
                 self._urls.clear()   # 桥进程死过: 其会话 URL 全指向死进程, 一并作废
-            if tid in self._urls:
-                self._urls.move_to_end(tid)
-                return self._urls[tid][1]
+            if key in self._urls:
+                self._urls.move_to_end(key)
+                raw = self._urls[key][1]
+                return {"previewUrl": panel_url(raw, self.host_root),
+                        "embedUrl": panel_url(raw, self.host_root, embed=True)}
             # _dead 只对"起桥前的依赖缺失"永久短路(_mcp 仍 None); 运行期桥进程死亡
             # (被杀/崩溃→管道写入 [Errno 22])不是配置问题, 清引用下次自动重生。
             if self._dead and self._mcp is None:
@@ -173,14 +206,15 @@ class SpiderBridge:
             except (RuntimeError, FileNotFoundError, OSError) as exc:
                 self._dead = str(exc)
                 raise
-            self._urls[tid] = (sid, url)
+            self._urls[key] = (sid, url)
             while len(self._urls) > self.CAP:  # 逐旧腾位(关闭失败不阻断)
                 _, (old_sid, _) = self._urls.popitem(last=False)
                 try:
                     self._mcp.tool("spider_close_session", {"sessionId": old_sid})
                 except RuntimeError:
                     pass
-            return url
+            return {"previewUrl": panel_url(url, self.host_root),
+                    "embedUrl": panel_url(url, self.host_root, embed=True)}
 
 
 class TraceWatcher(threading.Thread):
@@ -673,12 +707,22 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(rec)
             elif u.path.startswith("/api/spider/"):
                 tid = u.path[len("/api/spider/"):]
-                rec = _replay_record(srv.root, tid)
+                unit = q.get("unit") or "task"   # q 已拍平为标量(do_GET 统一处理)
+                if unit not in ("task", "word"):
+                    self._json({"error": f"unit 须为 task/word, 收到 {unit!r}"}, 400)
+                    return
+                try:
+                    rec = _replay_record(srv.root, tid, unit)
+                except ValueError as exc:
+                    # 旧 trace 无逐词归因字段: 是"这个视图对该 trace 不适用",
+                    # 不是服务器故障 → 422 + 改用 task 的指引, 面板据此提示。
+                    self._json({"error": f"{exc}；该 trace 请用 task 视图"}, 422)
+                    return
                 if rec is None:
                     self._json({"error": f"trace {tid} not found"}, 404)
                     return
                 try:
-                    self._json({"previewUrl": srv.spider.replay_url(rec, tid)})
+                    self._json(srv.spider.replay_urls(rec, tid, unit))
                 except (RuntimeError, FileNotFoundError, OSError) as exc:
                     # 缺 Node/克隆依赖不是 500: 面板拿 message 引导降级(原生 SVG 回放仍在)
                     self._json({"error": str(exc)}, 503)
@@ -751,7 +795,11 @@ class ServeServer(ThreadingHTTPServer):
         self.seen_ingest: set[tuple] = set()
         self.ingest_cap = 50_000
         self.watcher = TraceWatcher(self.root, quiet=quiet)
-        self.spider = SpiderBridge()
+        # host_root 里的 port 取实际绑定结果(self.server_address): port=0 时由 OS 分配,
+        # 用入参 port 会写出错误回跳地址。bind 沿用 resolve_bind 规范值。
+        _b, _p = self.server_address[0], self.server_address[1]
+        _h = f"[{_b}]" if ":" in _b and not _b.startswith("[") else _b
+        self.spider = SpiderBridge(host_root=f"http://{_h}:{_p}/")
         self.agg = AggCache(self.root)
         self._html: str | None = None      # E2: 热加载缓存(见 _panel_html)
         self._html_sig: tuple | None = None
@@ -1274,12 +1322,19 @@ def _asset_dir() -> Path:
     return Path(__file__).resolve().parent / "web"
 
 
-def _replay_record(root: Path, tid: str) -> dict | None:
-    """trace_id → 完整可导入 record(仅喂本 trace 的 get, 已读态才不越界)。"""
+def _replay_record(root: Path, tid: str, unit: str = "task") -> dict | None:
+    """trace_id → 完整可导入 record(仅喂本 trace 的 get, 已读态才不越界)。
+
+    unit=word 走逐词归因投影; 旧 trace 无 hit_tokens 时 to_word_record 抛
+    ValueError(无从归因不可反猜), 由调用面转成 422 指引。
+    """
     s, g, _ = kbtrace.read_traces(root=root)
     search = next((e for e in s if e.get("trace_id") == tid), None)
     if search is None:
         return None
+    if unit == "word":
+        from kb.spider_export import to_word_record
+        return to_word_record(search, [e for e in g if e.get("trace_id") == tid])
     from kb.spider_export import to_record
     return to_record(search, [e for e in g if e.get("trace_id") == tid])
 

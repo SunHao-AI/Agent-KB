@@ -189,6 +189,7 @@ document.documentElement.dataset.theme=m==='auto'?(matchMedia('(prefers-color-sc
   #rpBar button{background:none;border:1px solid var(--bd);color:var(--mu);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px}
   #rpBar button:hover{color:var(--tx);border-color:var(--tx)}
   #rpBar button:disabled{opacity:.35;cursor:default;pointer-events:none}
+  #rpBar #rpWord.on{color:var(--tx);border-color:var(--tx);background:var(--panel2)}
   #rpBar #rpPrev,#rpBar #rpNext{padding:3px 8px}
   #rpStage{flex:1;min-height:0;position:relative}
   #rpStage iframe{width:100%;height:100%;border:0;background:#080909}
@@ -287,6 +288,7 @@ document.documentElement.dataset.theme=m==='auto'?(matchMedia('(prefers-color-sc
   <div id="rpBar"><span id="rpTitle">▶ 回放</span><span id="rpMeta"></span>
     <button id="rpPrev" title="本页上一条(← / 回放内 Shift+←)" disabled>◀</button>
     <button id="rpNext" title="本页下一条(→ / 回放内 Shift+→)" disabled>▶</button>
+    <button id="rpWord" title="逐词归因: 每个查询词一腿, 落点=该词的证据(零命中词不抓, 见副标题)">逐词归因</button>
     <button id="rpPop" title="在新标签页整页打开">⤢ 新标签</button>
     <button id="rpClose" title="关闭回放(Esc)">✕ 关闭</button></div>
   <div id="rpStage"><iframe id="rpFrame" title="蜘蛛回放" src="about:blank"></iframe></div></div></div>
@@ -1459,7 +1461,7 @@ $('feed').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.prev
 // 回放: 桥就绪(spider_ready)→ 大浮层 iframe 加载克隆仓整页 session 视图(原生 topbar/
 // transport/词墙切换全保留; serve 导入后已配自动重播+循环)。浮层开着点别的流条目=就地换
 // src(会话 serve 端缓存)。⤢ 可另开整页标签。桥不就绪/失败→回落 SVG 弹层(降级不变)。
-let spiderReady=false,rpUrl='',rpLastFocus=null,rpLastTid=null,rpSwapOnload=null,rpEverReady=false,rpSeq=0,rpAbort=null;   // §23 a11y: 开层时记录触发元素/trace, 关闭后归还焦点; rpEverReady: 本会话已有一次成功导出(蜘蛛进程已热); rpSeq/rpAbort: 握手代次守卫
+let spiderReady=false,rpUrl='',rpLastFocus=null,rpLastTid=null,rpSwapOnload=null,rpEverReady=false,rpSeq=0,rpAbort=null,rpUnit='task',rpLastRaw=null;   // §23 a11y: 开层时记录触发元素/trace, 关闭后归还焦点; rpEverReady: 本会话已有一次成功导出(蜘蛛进程已热); rpSeq/rpAbort: 握手代次守卫; rpUnit: 当前视图(task|word), rpLastRaw: 当前浮层在放的 trace(切换视图用)
 // 停靠分档: 面板宽 = min(1440, 80vw, 100vw-336)(见 --rpw, 第三项保证左列始终留 336px
 // 可点检索流)。视口不足以兑现该保证时(极窄)退回居中大面板(rp-center, feed 被盖属预期)。
 // 纯 CSS 媒体查询无法与 min()/vw 表达式精确联动, 用实测视口宽判定, resize 时重算。
@@ -1474,24 +1476,32 @@ function rpLayout(){const b=document.body.classList;
   mainInert(center);}
 function mainInert(on){const m=document.querySelector('main');if(m)m.inert=on;}
 addEventListener('resize',rpLayout);
-async function openReplay(raw){
+async function openReplay(raw,unit='task'){
   const tid=raw.trace_id||'';if(!tid){playSpider(raw);return;}
+  // 视图切换(逐词↔任务)与换 trace 走同一条握手路径, 区别只在失败处理: 同 trace 换
+  // 视图失败必须留在原视图(旧 trace 无 hit_tokens 时 serve 回 422), 换 trace 失败才
+  // 整层回落 SVG。
+  const sw=rpLastRaw&&rpLastRaw.trace_id===tid&&unit!==rpUnit&&rpUrl;
+  const prevUnit=rpUnit;
   const stage=$('rpStage'),wasOpen=$('rp').classList.contains('open');
   if(!wasOpen)rpLastFocus=document.activeElement;   // 首次开层才记触发点(换 trace 不覆盖)
   rpLastTid=tid;                                     // 焦点归还锚定"最后播放的条目"(鼠标点击不一定移动焦点)
+  rpLastRaw=raw;                                     // 切换按钮据此对同一 trace 重新握手
   $('rp').classList.remove('closing');               // 取消可能进行中的关闭动画
   $('rp').classList.add('open');rpLayout();
   // 标题立即落 query(raw 本地就有), 不等握手——否则占位「▶ 回放」挂 ~2s 才换。
   $('rpTitle').textContent='▶ '+(raw.query||'-');
   // 冷桥(本会话还没成功导出过=蜘蛛进程未热)首导实测 6~12s, 给足预期; 热桥只说连接。
   $('rpMeta').textContent=rpEverReady?'连接蜘蛛会话…':'连接蜘蛛会话(首次拉起约十余秒)…';
+  rpUnit=unit;rpUnitUI();                            // 乐观点亮按钮, 切换失败再回退
   // 换条目: 先卸旧 iframe(断上一会话的 SSE/回放循环, 否则透明期仍白跑), 再淡出+骨架,
   // 新会话首帧后 swapin 淡入。load 兜底 4s: 网络挂起时也不永久停在透明态。
   // load 监听只在实际 src 赋值前挂——about:blank 的延迟 load 事件不能误触发 swapIn。
+  // 同 trace 换视图不卸帧: 422 时原会话还挂在帧上, 撤掉遮罩即恢复, 不会留一块空白。
   stage.classList.add('swapping','loading');
   rpDetachSwap();
-  if(wasOpen&&rpUrl)$('rpFrame').src='about:blank';
-  rpUrl='';
+  if(wasOpen&&rpUrl&&!sw)$('rpFrame').src='about:blank';
+  if(!sw)rpUrl='';
   // 代次守卫: 快速连点时上一次握手可能更晚返回, 迟到响应会把 src/标题覆盖成旧会话,
   // 迟到的失败还会 rpClose() 关掉用户正在看的新浮层。abort 旧请求省带宽, seq 兜住乱序。
   const seq=++rpSeq;
@@ -1499,7 +1509,7 @@ async function openReplay(raw){
   try{
     // 20s 超时: 冷桥首导(拉起蜘蛛+导出)实测可近 12s, 10s 有误杀概率; 网络挂起也不让骨架无限等
     const ctl=rpAbort=new AbortController();const timer=setTimeout(()=>ctl.abort(),20000);
-    let r;try{r=await fetch(apiUrl(`/api/spider/${encodeURIComponent(tid)}`),{signal:ctl.signal});}
+    let r;try{r=await fetch(apiUrl(`/api/spider/${encodeURIComponent(tid)}?unit=${unit}`),{signal:ctl.signal});}
     finally{clearTimeout(timer);}
     const d=await r.json();
     if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);
@@ -1509,13 +1519,24 @@ async function openReplay(raw){
     rpSwapOnload=()=>rpSwapIn();
     $('rpFrame').addEventListener('load',rpSwapOnload,{once:true});
     setTimeout(()=>{if(rpSwapOnload)rpSwapIn();},4000);
-    $('rpFrame').src=rpUrl;
-    $('rpMeta').textContent=`trace ${tid} · 自动重播·循环`;
+    $('rpFrame').src=d.embedUrl;                             // 浮层用嵌入态(chrome=none): 蜘蛛页外壳(顶栏/标题/传输条)隐藏, 画布铺满
+    $('rpMeta').textContent=`trace ${tid} · ${unit==='word'?'逐词归因·零命中词不抓':'任务视图'} · 自动重播·循环`;
     rpStepButtons();
   }catch(err){if(seq!==rpSeq)return;                        // 被更新的开层取代(含我们自己 abort)
-    rpAbort=null;rpDetachSwap();rpClose();
-    playSpider(Object.assign({},raw,{_replayErr:err.name==='AbortError'?'连接蜘蛛会话超时(20s)':err.message}));}
+    rpAbort=null;rpDetachSwap();stage.classList.remove('swapping','loading');
+    const msg=err.name==='AbortError'?'连接蜘蛛会话超时(20s)':err.message;
+    if(sw&&rpUrl){rpUnit=prevUnit;rpUnitUI();                // 留在原视图, 只把原因写进 meta
+      $('rpMeta').textContent=`${prevUnit==='word'?'逐词':'任务'}视图 · ${msg}`;return;}
+    rpUnit='task';rpUnitUI();                                // 整层回落 SVG 前复位视图, 下次开层不再撞同一 422
+    rpClose();
+    playSpider(Object.assign({},raw,{_replayErr:msg}));}
 }
+// 逐词归因开关: 同一条 trace 换 unit 重新握手(serve 按 (tid,unit) 缓存导入, 二次切换不重跑导入)。
+// 零命中词不产生事件(对端路由计数不看 status, 挂了即虚增命中数), 只在副标题点名。
+function rpUnitUI(){const b=$('rpWord');if(!b)return;
+  b.classList.toggle('on',rpUnit==='word');
+  b.setAttribute('aria-pressed',rpUnit==='word'?'true':'false');}
+$('rpWord').onclick=()=>{if(rpLastRaw)openReplay(rpLastRaw,rpUnit==='word'?'task':'word');};
 // ◀▶ 换条目: 按当前检索流可见条目的 DOM 顺序步进(SSE 重排后也总是跟当前列表一致)。
 function rpStep(dir){
   const items=[...document.querySelectorAll('.feed-item[data-tid]')];
@@ -1523,7 +1544,7 @@ function rpStep(dir){
   if(i<0)i=dir>0?-1:items.length;
   const next=items[i+dir];if(!next)return;
   const raw=next.raw||feedBuf[next.dataset.tid];
-  if(raw&&raw.kind!=='get')openReplay(raw);
+  if(raw&&raw.kind!=='get')openReplay(raw,rpUnit);   // ◀▶ 步进沿用当前视图(逐词/任务)
 }
 function rpStepButtons(){
   const items=[...document.querySelectorAll('.feed-item[data-tid]')];
@@ -1548,7 +1569,7 @@ function rpClose(){const layer=$('rp'),stage=$('rpStage');
     const el=byTid||(rpLastFocus&&document.contains(rpLastFocus)?rpLastFocus:null)||$('fq');
     rpLastFocus=null;rpLastTid=null;
     if(el&&el.focus)el.focus();};
-  $('rpFrame').src='about:blank';rpUrl='';
+  $('rpFrame').src='about:blank';rpUrl='';rpUnit='task';rpLastRaw=null;rpUnitUI();   // 关层即回默认任务视图
   // 退场动画: .closing 逆向放 rpIn(此时仍保留 .open 才有 display 可动画), 结束后再收起。
   // reduced motion 下动画被全局停用, animationend 永不触发 → 直接收起, 不能只靠事件。
   layer.classList.add('closing');

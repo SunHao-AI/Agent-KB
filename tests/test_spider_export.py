@@ -338,3 +338,121 @@ def test_cli_export_requires_id_or_latest(env, capsys):
 def test_cli_export_id_and_caller_is_error(env, capsys):
     from kb.cli import main
     assert main(["trace", "export", "t-1", "--caller", "web"]) == 2
+
+
+# ---- 逐词归因记录(word unit): 真实查询 token 级事实源 --------------------
+
+def _word_trace(**over):
+    """查询 3 token: vite 命中项目层, kb-b 只命中通用层, 不存在词零命中。"""
+    t = _trace()
+    t["query"] = "vite kb-b 不存在词"
+    t["layers"][0]["matched"] = [{"id": "kb-a", "title": "vite hmr DOM 失效",
+                                  "hit_tokens": ["vite"], "rank": 1}]
+    t["layers"][1]["matched"] = [{"id": "kb-b", "title": "keep-alive SSE",
+                                  "hit_tokens": ["kb-b"], "rank": 1}]
+    t["returned"] = ["kb-a", "kb-b"]
+    t.update(over)
+    return t
+
+
+def test_word_record_config_and_token_indices():
+    rec = spider_export.to_word_record(_word_trace(), [])
+    cfg = rec["config"]
+    assert cfg["unit"] == "word"
+    assert cfg["prompt"] == "vite kb-b 不存在词"      # 与上游 \S+ 重算的分词逐一对齐
+    assert set(cfg["routes"]) == {"code", "model", "you"}   # 公开版路由白名单
+    evs = rec["events"]
+    # 零命中词(不存在词)不产生事件(见 route_attribution 用例的路由计数取证),
+    # 有证据的词才成腿, tokenIndex 仍指向它在 prompt 分词里的真实位置。
+    assert [e["tokenIndex"] for e in evs] == [0, 1]
+    assert [e["label"] for e in evs] == ["vite", "kb-b"]
+
+
+def test_word_record_route_attribution_is_per_token_evidence():
+    # you=该词的命中条目被本 trace 读过; code=项目层; model=通用层
+    gets = [{"kind": "get", "trace_id": "t-1", "ts": "2026-10-15T14:33:00+08:00",
+             "source": "mcp", "caller_repo": "x", "id": "kb-b", "layer": "kb",
+             "ok": True}]
+    rec = spider_export.to_word_record(_word_trace(), gets)
+    by_idx = {e["tokenIndex"]: e for e in rec["events"]}
+    assert by_idx[0]["route"] == "code"          # vite → 仅项目层命中
+    assert by_idx[1]["route"] == "you"           # kb-b → 命中条目已读
+    # 对端路由计数(live-renderer counts[route])只按 route 累加、不看 status,
+    # 给零命中词挂任何一条路由事件都会把"项目层命中"数字虚增成含未命中词
+    # → 零命中词不入 events(蜘蛛不抓它=提示词上不高亮), 改由副标题显式点名。
+    assert 2 not in by_idx
+    assert "零命中词: 不存在词" in rec["config"]["subtitle"]
+
+
+def test_word_record_model_layer_route():
+    # 只命中通用层(kb 层)的词 → model; 同词跨两层时项目层优先(code)
+    tr = _word_trace()
+    tr["layers"][0]["matched"] = []
+    tr["layers"][1]["matched"] = [{"id": "kb-b", "title": "keep-alive SSE",
+                                   "hit_tokens": ["vite", "kb-b"], "rank": 1}]
+    by_idx = {e["tokenIndex"]: e
+              for e in spider_export.to_word_record(tr, [])["events"]}
+    assert by_idx[0]["route"] == "model"
+    assert by_idx[1]["route"] == "model"
+
+
+def test_word_record_score_is_always_null():
+    # 归因是确定性集合关系, 不是概率; 编 P 值=重回演示数据的造假路线
+    for e in spider_export.to_word_record(_word_trace(), [])["events"]:
+        assert e["score"] is None
+
+
+def test_word_record_zero_hit_search_lists_every_token():
+    # 整条检索零命中: 无 events 可挂(挂了就是虚增命中数), 全部词进副标题
+    tr = _word_trace()
+    tr["layers"] = [{"repo": "docs", "scanned": 208,
+                     "rejected": {"filter": 0, "query": 208}, "matched": []}]
+    tr["returned"] = []
+    rec = spider_export.to_word_record(tr, [])
+    assert rec["events"] == []
+    sub = rec["config"]["subtitle"]
+    assert "命中词 0/3" in sub and "vite" in sub and "不存在词" in sub
+    assert rec["log"][0]["type"] == "configure" and rec["log"][-1]["type"] == "complete"
+
+
+def test_word_record_refuses_traces_without_attribution():
+    # 旧 trace(matched 无 hit_tokens)无法归因 → 显式拒绝, 绝不"全词算命中"式反猜
+    with pytest.raises(ValueError, match="逐词归因"):
+        spider_export.to_word_record(_trace(), _gets())
+
+
+def test_word_record_refuses_empty_query():
+    tr = _word_trace(query="   ")
+    with pytest.raises(ValueError, match="查询词"):
+        spider_export.to_word_record(tr, [])
+
+
+def test_word_record_log_contract_matches_upstream():
+    rec = spider_export.to_word_record(_word_trace(), [])
+    log = rec["log"]
+    assert [e["revision"] for e in log] == list(range(1, len(log) + 1))
+    assert all(b["at"] >= a["at"] for a, b in itertools.pairwise(log))
+    assert log[0]["type"] == "configure" and log[-1]["type"] == "complete"
+    assert rec["duration"] == log[-1]["at"]
+    assert rec["status"] == "completed"
+    # 对端: word 会话每个事件的 tokenIndex 必须在 prompt 分词界内
+    n = len("vite kb-b 不存在词".split())
+    assert all(0 <= e["tokenIndex"] < n for e in rec["events"])
+
+
+def test_word_record_same_token_across_multiple_entries(tmp_path):
+    """真 trace 实测(2026-11-16 t-20261116-ce4c): 两条命中条目共享同一查询词时,
+    best 归并分支对 tuple 做 cur[0]= 赋值 TypeError → /api/spider?unit=word 500。
+    单测此前每词只喂一条命中, 归并分支从未被走到。"""
+    t = _word_trace()
+    t["query"] = "vite kb-b"
+    t["layers"][0]["matched"] = [
+        {"id": "kb-a", "title": "vite hmr DOM 失效", "hit_tokens": ["vite"], "rank": 1},
+        {"id": "kb-c", "title": "vite 别名踩坑", "hit_tokens": ["vite"], "rank": 2}]
+    t["layers"][1]["matched"] = [{"id": "kb-b", "title": "keep-alive SSE",
+                                  "hit_tokens": ["kb-b"], "rank": 1}]
+    t["returned"] = ["kb-a", "kb-b", "kb-c"]
+    rec = spider_export.to_word_record(t, [])
+    ev = next(e for e in rec["events"] if e["label"] == "vite")
+    assert "2 条" in ev["detail"]                # 两条证据并入同一词腿
+    assert ev["route"] == "code"                 # 跨层取最贴近项目层的归因不变

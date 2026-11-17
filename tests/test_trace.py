@@ -312,3 +312,20 @@ def test_latest_search_id_prefers_search_that_returned_the_id(kbroot):
     # 回退: 关联不到(如外接源 id / 手动 get)时退回纯最近一次, 不返回 None
     assert trace.latest_search_id("web", root=kbroot, entry_id="nope") == "t-2"
     assert trace.latest_search_id("web", root=kbroot) == "t-2"  # 不传 entry_id 保持旧语义
+
+
+def test_read_preserves_matched_hit_tokens(kbroot):
+    """逐词归因事实源守护: 净化器是黑名单式, matched[i].hit_tokens 靠"不在名单内"
+    透传。将来若有人把它误加进删键名单, 蜘蛛 word 视图会静默退化成"全查询词命中"
+    的假归因——净化侧无 warn 可读, 只能靠本用例在 CI 拦。"""
+    ev = dict(_ev(41), returned=["kb-a"], layers=[{
+        "repo": "docs", "rejected": {"filter": 0, "query": 1},
+        "matched": [{"id": "kb-a", "title": "T", "hit_fields": ["title"],
+                     "hit_spans": [[0, 4]], "hit_tokens": ["vite", "hmr"],
+                     "score": 0.5, "rank": 1}]}])
+    _write(kbroot, f"{dt.date.today():%Y-%m-%d}.jsonl",
+           [{"kind": "meta", "schema": 2}, ev])
+    searches, _, warns = trace.read_traces(root=kbroot)
+    m = searches[0]["layers"][0]["matched"][0]
+    assert m["hit_tokens"] == ["vite", "hmr"]
+    assert warns == []                                    # 透传不该产生任何净化告警

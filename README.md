@@ -98,6 +98,19 @@ git submodule add <Agent-KB-url> .agent-kb   # 挂只读 submodule
 powershell -File <Agent-KB>\scripts\install-gate.ps1 -RepoRoot .   # 装 push 门禁
 ```
 
+挂上后要**定期追语料**: 指针停在旧提交 = 通用层一直在服务过期语料(`kb/index.jsonl`
+是 git 跟踪文件)。用 `kb sync` 收口——默认只读勘察, `--apply` 才写(fetch →
+checkout → 索引新鲜度校验 → 只提交 gitlink, **永不 push**):
+
+```powershell
+kb sync --repo docs --agent-kb .agent-kb            # 勘察: 落后多少、会纳入哪些 kb/ 提交
+kb sync --repo docs --agent-kb .agent-kb --apply    # 人工确认勘察输出后执行
+```
+
+`kb search` 的滞后提醒(stderr/notices)就指向这条命令; `KB_NO_LAG_HINT=1` 可静音。
+口径只数触及 `kb/` 的提交(语料口径), `src/kb/` 与 `traces/` 的漂移不提醒——见
+`kb-20261101-8321` 与本仓 `src/kb/sync.py` 模块头。
+
 ## 审核与流转命令(人用)
 
 ```powershell

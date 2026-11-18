@@ -351,8 +351,9 @@ def doctor(repo: Path, agent_kb: Path | None = None,
             add(("WARN", "submodule .agent-kb", "悬空指针: git submodule update --init"))
         else:
             add(("PASS", "submodule .agent-kb", "已 checkout"))
-            lag, ref = kb_corpus_lag(sub, _submodule_branch(gm))
-            raw, raw_ref = _submodule_lag(sub, root, _submodule_branch(gm))
+            br = _submodule_branch(gm)               # 一次读 .gitmodules, 两口径共用
+            lag, ref = kb_corpus_lag(sub, br)
+            raw, raw_ref = _submodule_lag(sub, root, br)
             # 时效限定沿用 _submodule_lag 的参照结论: 主仓已前进但新对象未 fetch 时
             # 它会给出"主仓 HEAD xxx 未 fetch, 无法比对"。既有 PASS 用例正是断言这句
             # (test_doctor_submodule_pointer_notes_unfetched_main_tip), 换了口径必须

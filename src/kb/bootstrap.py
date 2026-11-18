@@ -117,6 +117,36 @@ def _submodule_lag(sub: Path, main_root: Path, branch: str | None) -> tuple[int 
     return 0, note
 
 
+def kb_corpus_lag(sub: Path, branch: str | None) -> tuple[int | None, str]:
+    """通用层**语料**落后程度 → (触及 `kb/` 的提交数, 参照说明); None = 无从判定。
+
+    与 `_submodule_lag`(原始口径)的分工: 那个数用于诊断"指针差多远", 本函数决定
+    "要不要为这次漂移做点什么"。只数触及 `kb/`(语料 + 生成物索引)的提交, 因为只有
+    它会让双层检索降级。实测四仓(2026-11-18, 指针 → 远端 tip af37874):
+
+        原始口径  107 / 121 / 106 / 106      ← 看着像紧急事故
+        语料口径    7 /   7 /   7 /   7      ← 真正该动的部分
+
+    被剔除的两类提交对检索零影响: ① `src/kb/` 53~57 个 —— 业务仓的 kb 包加载自
+    同级主仓 venv(实测 kb.__file__ → Agent-KB/src/kb), 检索逻辑始终最新, 与指针无关;
+    ② `traces/` 5~12 个 —— 每日观测提交, 纯噪声。把它们算进来会让一条 chore(traces)
+    就触发四仓集体提醒, 一周后被无视 —— 与 `submodule index fresh` 恒 WARN 长期
+    被忽略同一死法(kb-20261101-8321)。
+
+    只读本地引用, **不 fetch**(doctor/search 零网络红线)。因此算的是 origin/<branch>
+    的**上次 fetch 快照**, 结论必然少报: 调用方须带出时效, 不得给虚假精确。
+    """
+    if not branch:
+        return None, ".gitmodules 未配 branch"
+    ref = _git_out(["-C", str(sub), "rev-parse", "--verify", f"origin/{branch}"])
+    if not ref:
+        return None, f"无 origin/{branch} 引用"
+    n = _git_out(["-C", str(sub), "rev-list", "--count", f"HEAD..{ref}", "--", "kb/"])
+    if n is None:
+        return None, "rev-list 失败"
+    return int(n), f"origin/{branch}"
+
+
 def resolve_interpreter(root: Path) -> str | None:
     root = Path(root)
     for rel in INTERPRETERS:

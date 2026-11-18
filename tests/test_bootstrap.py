@@ -319,3 +319,58 @@ def test_doctor_gate_missing_dep_hints_uv_command(fake_layout, monkeypatch):
     checks = doctor(biz / "docs", agent_kb=ak)
     pytest_line = next(msg for lvl, n, msg in checks if n == "gate pytest")
     assert "uv pip install" in pytest_line and "pip install -e" not in pytest_line
+
+
+def test_corpus_lag_counts_only_kb_path_commits(tmp_path, monkeypatch):
+    """语料口径的**定义**就是 pathspec `kb/`: 只有改动通用层语料的提交会让双层检索
+    降级。src/kb/ 的提交对业务仓零影响(kb 包加载自同级主仓 venv, 实测 kb.__file__),
+    traces/ 是每日观测噪声。四仓实测原始 107/121/106 → 语料 7/7/7。
+
+    本用例把 pathspec 钉进断言: 将来有人删掉 `kb/` 参数, 这里必须红, 而不是悄悄
+    退回原始口径(那正是本设计要消灭的噪声源)。
+    """
+    from kb import bootstrap
+    calls = []
+
+    def fake_git_out(args):
+        calls.append(list(args))
+        # 注意: 带 pathspec 的 rev-list 末位是 "kb/", 区间参数不在 args[-1]。
+        # 桩一律用 `any(a.startswith("HEAD.."))` 匹配区间, 用 `"kb/" in args` 分口径。
+        if args[-1] == "HEAD":
+            return "aaa"
+        if args[-1] == "origin/master":
+            return "bbb"
+        if any(a.startswith("HEAD..") for a in args):
+            return "7" if "kb/" in args else "107"
+        return None
+
+    monkeypatch.setattr(bootstrap, "_git_out", fake_git_out)
+    lag, ref = bootstrap.kb_corpus_lag(tmp_path, "master")
+    assert (lag, ref) == (7, "origin/master")
+    rev = [c for c in calls if "rev-list" in c]
+    assert len(rev) == 1, rev
+    assert rev[0][-2:] == ["--", "kb/"], rev[0]      # pathspec 必须在场
+
+
+def test_corpus_lag_none_without_reference(tmp_path, monkeypatch):
+    """未 fetch 过(无 origin/<branch>)时无从判定, 必须回 None 而不是 0。
+
+    回 0 会让检索侧以为"指针最新"而永久静默, 把最需要提醒的场景(从没同步过的仓)
+    盖成正常态。
+    """
+    from kb import bootstrap
+
+    def fake_git_out(args):
+        if args[-1] == "HEAD":
+            return "aaa"
+        return None                                   # origin/master 不存在
+
+    monkeypatch.setattr(bootstrap, "_git_out", fake_git_out)
+    assert bootstrap.kb_corpus_lag(tmp_path, "master") == (None, "无 origin/master 引用")
+
+
+def test_corpus_lag_none_without_branch(tmp_path, monkeypatch):
+    """.gitmodules 未配 branch 时同样回 None(不猜分支名)。"""
+    from kb import bootstrap
+    monkeypatch.setattr(bootstrap, "_git_out", lambda a: "aaa")
+    assert bootstrap.kb_corpus_lag(tmp_path, None) == (None, ".gitmodules 未配 branch")

@@ -187,7 +187,8 @@ def git_head(root: Path) -> tuple[str, str]:
     def _rev(*args: str) -> str:
         try:
             out = subprocess.run(["git", "-C", str(root), *args],
-                                 capture_output=True, text=True, timeout=10)
+                                 capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=10)
             return out.stdout.strip() if out.returncode == 0 else ""
         except OSError:
             return ""

@@ -204,7 +204,7 @@ def test_doctor_submodule_pointer_up_to_date_passes(fake_layout, monkeypatch):
         if args[:3] == ["-C", str(ak), "rev-parse"]:
             return None                                  # 主仓不可比
         if args[-1] in ("HEAD", "origin/master", "ccc"):
-            return "ccc" if args[-1] != "HEAD" else "ccc"
+            return "ccc"                               # 指针与参照齐平
         if any(a.startswith("HEAD..") for a in args):
             return "0"                                   # 两种口径均不落后
         return None
@@ -261,6 +261,43 @@ def test_submodule_branch_parses_gitmodules(tmp_path):
     gm.write_text('[submodule "other"]\n\tpath = other\n\tbranch = dev\n'
                   '[submodule ".agent-kb"]\n\tpath = .agent-kb\n', encoding="utf-8")
     assert _submodule_branch(gm) is None                 # 别的 submodule 的 branch 不得串味
+
+
+def test_doctor_submodule_pointer_uncomparable_when_corpus_probe_fails(fake_layout, monkeypatch):
+    """语料口径探针失败(rev-list 出 None)时必须报"无从判定", 绝不塌成"不落后"。
+
+    None≠0 纪律的 doctor 面守护: `or 0` 这类压平曾让 apply_sync 在探针抖动时误报
+    up-to-date + exit 0(最终评审 F1); doctor 同一数据源, 塌成 PASS"语料不落后"
+    就是虚假安全感的 doctor 版本。原始口径仍可算(107), 恰好证明"能算出原始数"
+    与"语料探针失败"可以并存。
+    """
+    from kb import bootstrap
+    biz, ak = fake_layout
+    (biz / ".gitmodules").write_text(
+        '[submodule ".agent-kb"]\n\tpath = .agent-kb\n\tbranch = master\n', encoding="utf-8")
+    (biz / ".agent-kb" / "kb").mkdir(parents=True)
+    monkeypatch.setattr(bootstrap, "_mod_ok", lambda *a, **k: True)
+    (biz / ".venv" / "Scripts").mkdir(parents=True)
+    (biz / ".venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+
+    def fake_git_out(args):
+        if args[:3] == ["-C", str(ak), "rev-parse"]:
+            return None                                  # 主仓不可比
+        if args[-1] == "HEAD":
+            return "aaa"
+        if args[-1] == "origin/master":
+            return "ccc"
+        if any(a.startswith("HEAD..") for a in args):
+            return None if "kb/" in args else "107"      # 语料探针炸 / 原始可算
+        return None
+
+    monkeypatch.setattr(bootstrap, "_git_out", fake_git_out)
+    checks = doctor(biz / "docs", agent_kb=ak)
+    by_name = {n: (lvl, msg) for lvl, n, msg in checks}
+    lvl, msg = by_name["submodule pointer"]
+    assert lvl == "PASS" and "无从判定" in msg, (lvl, msg)
+    assert "不落后" not in msg, msg                      # 不许塌成假安心
+    assert by_name["submodule lag raw"][1] == "107"      # 诊断面照常给原始数
 
 
 def test_doctor_abs_path_mcp_command_warns(fake_layout):

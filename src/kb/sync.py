@@ -80,10 +80,11 @@ class SyncPlan:
     sub: Path | None = None
     head: str = ""
     tip: str = ""
-    lag: int = 0
+    lag: int | None = 0
     raw_lag: int = 0
     corpus_log: str = ""
     dirty: list[str] = field(default_factory=list)
+    staged: int = 0                       # 业务仓已 staged 文件数(仅提示, §4.3)
     reasons: list[str] = field(default_factory=list)
     # 机器可读拒绝码(§4.4): 每个拒绝案例一个稳定码, reasons 只做人读文案。
     # 两个拒绝案例不得共用同一个码, 否则脚本消费方分不开场景。
@@ -123,7 +124,17 @@ def plan_sync(biz_root: Path) -> SyncPlan:
         plan.reasons.append("dirty-submodule")
         plan.code = "dirty-submodule"
         return plan
-    plan.lag = kb_corpus_lag(plan.sub, plan.branch)[0] or 0
+    # 业务仓已 staged 内容(§4.3): commit --only .agent-kb 已保证不吞他人 WIP
+    # (§2.3 实测), 计数只为人安心, 不构成拒绝。走只读通道 _git_out(读探测
+    # 与 dirty 的写路径语义无关, 也不该混进写命令守护的记录)。
+    bout = _git_out(["-C", str(biz), "status", "--porcelain"]) or ""
+    plan.staged = sum(1 for ln in bout.splitlines()
+                      if ln[:1] not in ("", "?", " ", "!"))
+    # 保留 None(探针失败)而非 `or 0`: 勘察面如实渲染"无从判定", 但不进 reasons
+    # 不判失败 —— fetch 正是 apply 的自愈步骤(fetch 补齐缺失对象后探针通常恢复),
+    # 在 fetch 前就拒绝会把这条路堵死。§4.4 的 corpus-lag-unknown 原义是
+    # "**fetch 后**仍无法计算", 判定发生在 apply_sync 里。
+    plan.lag = kb_corpus_lag(plan.sub, plan.branch)[0]
     plan.raw_lag = int(_git_out(["-C", str(plan.sub), "rev-list", "--count",
                                  f"HEAD..{plan.tip}"]) or 0)
     plan.corpus_log = _git_out(["-C", str(plan.sub), "log", "--oneline",
@@ -243,12 +254,20 @@ def render_plan(plan: SyncPlan) -> str:
         return "\n".join(lines)
     lines.append(f"跟踪分支   {plan.branch}")
     lines.append(f"origin 引用 {plan.tip[:7] or '—'}(上次 fetch 快照)")
-    lines.append(f"语料落后   {plan.lag} 个提交(原始 {plan.raw_lag}, 差额在 src/kb/ 与 traces/)")
+    if plan.lag is None:
+        # None = 探针失败 ≠ 0(不落后): 报 0 是虚假精确, 数字面须与 lag_notice 同纪律。
+        lines.append("语料落后   无从判定(rev-list 探针失败, 稍后重试或人工核对)")
+    else:
+        lines.append(f"语料落后   {plan.lag} 个提交"
+                     f"(原始 {plan.raw_lag}, 差额在 src/kb/ 与 traces/)")
     if plan.reasons:
         lines.append("不可同步: " + "; ".join(plan.reasons))
         if plan.dirty:
             lines.append("  脏文件: " + ", ".join(plan.dirty))
         return "\n".join(lines)
+    if plan.staged:
+        lines.append(f"提示:     业务仓有 {plan.staged} 个已 staged 文件, "
+                     "本次提交不涉及它们(commit --only .agent-kb)")
     if plan.lag == 0:
         lines.append("结论: 语料已最新, 无需同步。")
         return "\n".join(lines)

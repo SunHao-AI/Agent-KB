@@ -96,7 +96,7 @@ def test_lag_notice_silenced_by_env(tmp_path, monkeypatch):
 
 # ── plan_sync / apply_sync 共用桩 ───────────────────────────────────────────
 def _stub_git(monkeypatch, biz, *, head="aaa", tip="bbb", dirty="",
-              raw="107", corpus="7", biz_sha="9f8e7d6"):
+              raw="107", corpus="7", biz_sha="9f8e7d6", biz_staged=""):
     """让 sync 模块内所有 git 探测返回可控值(不跑真实 git)。
 
     **四处必须正确，否则测试会假绿/假红：**
@@ -119,6 +119,8 @@ def _stub_git(monkeypatch, biz, *, head="aaa", tip="bbb", dirty="",
             return corpus if "kb/" in args else raw
         if "log" in args:
             return "abc1234 语料提交样例"
+        if "status" in args and not in_sub:   # 业务仓 staged 计数探针(只读通道)
+            return biz_staged
         if args[-1] == "FETCH_HEAD":           # fetch 之后的新 tip
             return tip
         if args[-1] == "HEAD":
@@ -136,7 +138,8 @@ def _stub_git(monkeypatch, biz, *, head="aaa", tip="bbb", dirty="",
     monkeypatch.setattr(sync, "_git_out", fake_git_out)
     monkeypatch.setattr(sync, "_run", fake_run)
     monkeypatch.setattr(sync, "kb_corpus_lag",
-                        lambda p, br: (int(corpus), f"origin/{br}"))
+                        lambda p, br: (int(corpus) if corpus is not None else None,
+                                       f"origin/{br}"))
 
 
 def test_plan_refuses_repo_without_submodule(tmp_path, monkeypatch):
@@ -210,6 +213,42 @@ def _recorder(monkeypatch):
 def _verbs(calls):
     """取每条命令的 git 子命令名(args 形如 ["-C", 路径, 子命令, ...])。"""
     return [c[2] for c in calls if len(c) > 2]
+
+
+def test_plan_counts_biz_staged_and_renders_notice(tmp_path, monkeypatch):
+    """spec §4.3: 业务仓有已 staged 文件时勘察须提示"不涉及它们"(纯提示, 非拒绝)。
+
+    X 列计数守护: 首列 M/空格的未 staged 改动不得混进计数(否则提示数字说谎);
+    走只读 _git_out ⇒ 写命令记录恒零 status 条目(读探测不污染写路径守护)。
+    """
+    from kb import sync
+    biz = _biz(tmp_path)
+    _stub_git(monkeypatch, biz,
+              biz_staged="M  .agent-kb\nM  other.py\n MM wip.py\n?? untracked\n")
+    calls = _recorder(monkeypatch)
+    plan = sync.plan_sync(biz)
+    assert plan.ok and plan.staged == 2, plan.staged
+    out = sync.render_plan(plan)
+    assert "已 staged 文件" in out and "commit --only" in out, out
+    assert _verbs(calls) == ["status"], _verbs(calls)   # 仅 submodule 脏检查;
+    # 业务仓 staged 探针走只读 _git_out, 不得以业务仓为 -C 目标出现在写记录里
+    assert not any(len(c) > 1 and c[1] == str(biz) for c in calls), calls
+
+
+def test_plan_renders_lag_unknown_without_lying_zero(tmp_path, monkeypatch):
+    """语料探针失败(rev-list 出 None)时勘察不得渲染"落后 0"/"无需同步"。
+
+    None≠0 纪律的勘察面: apply 里 corpus-lag-unknown 守的是写路径, 但勘察打印
+    "语料落后 0 → 无需同步"同样会把人支开(fetch 恰是恢复探针的自愈步骤,
+    所以也不进 reasons 不判失败 —— §4.4 该码的原义是"fetch 后仍无法计算")。
+    """
+    from kb import sync
+    biz = _biz(tmp_path)
+    _stub_git(monkeypatch, biz, corpus=None)
+    plan = sync.plan_sync(biz)
+    assert plan.lag is None and plan.ok          # 不拒绝: fetch 能自愈
+    out = sync.render_plan(plan)
+    assert "无从判定" in out and "落后 0" not in out, out
 
 
 def test_apply_short_circuits_when_corpus_fresh(tmp_path, monkeypatch):

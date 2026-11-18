@@ -79,6 +79,9 @@ class SyncPlan:
     corpus_log: str = ""
     dirty: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
+    # 机器可读拒绝码(§4.4): 每个拒绝案例一个稳定码, reasons 只做人读文案。
+    # 两个拒绝案例不得共用同一个码, 否则脚本消费方分不开场景。
+    code: str = ""
 
     @property
     def ok(self) -> bool:
@@ -92,21 +95,27 @@ def plan_sync(biz_root: Path) -> SyncPlan:
     plan.branch = _declared_branch(biz)
     if plan.branch is None:
         plan.reasons.append("not-a-submodule-repo")
+        plan.code = "not-a-submodule-repo"
         return plan
     plan.declared = True
     if not (plan.sub / "kb").is_dir():
+        # 码与文案分工: code 供机器分场景, 文案是**全模块唯一**一处 init 指引
+        # (spec §4.4; 检索侧零 init 提示由 Task 3 用例守护)。
         plan.reasons.append("submodule 未初始化: git submodule update --init .agent-kb")
+        plan.code = "submodule-not-initialized"
         return plan
     plan.head = _git_out(["-C", str(plan.sub), "rev-parse", "HEAD"]) or ""
     plan.tip = _git_out(["-C", str(plan.sub), "rev-parse", "--verify",
                          f"origin/{plan.branch}"]) or ""
     if not plan.tip:
         plan.reasons.append(f"无 origin/{plan.branch} 引用(需先 fetch)")
+        plan.code = "origin-ref-missing"
         return plan
     _rc, out, _err = _run(["-C", str(plan.sub), "status", "--porcelain"])
     plan.dirty = [ln[3:] for ln in out.splitlines() if ln.strip()]
     if plan.dirty:
         plan.reasons.append("dirty-submodule")
+        plan.code = "dirty-submodule"
         return plan
     plan.lag = kb_corpus_lag(plan.sub, plan.branch)[0] or 0
     plan.raw_lag = int(_git_out(["-C", str(plan.sub), "rev-list", "--count",
@@ -151,11 +160,14 @@ def apply_sync(biz_root: Path) -> SyncResult:
         return SyncResult(False, "not-a-submodule-repo",
                           "本仓 .gitmodules 未声明 .agent-kb, 无指针可同步。")
     if plan.reasons and "dirty-submodule" in plan.reasons:
-        return SyncResult(False, "dirty-submodule",
+        return SyncResult(False, plan.code,
                           ".agent-kb 有未提交改动, 先在其中提交或 stash: \n  "
                           + "\n  ".join(plan.dirty))
     if plan.reasons:
-        return SyncResult(False, "precondition", "\n".join(plan.reasons))
+        # 每个拒绝案例带各自的稳定码(submodule-not-initialized /
+        # origin-ref-missing / ...), 不再压成泛化 "precondition" ——
+        # 机器消费方要能分辨场景(§4.4)。
+        return SyncResult(False, plan.code, "\n".join(plan.reasons))
 
     rc, _out, err = _run(["-C", str(plan.sub), "fetch", "origin", plan.branch])
     if rc != 0:
@@ -178,7 +190,18 @@ def apply_sync(biz_root: Path) -> SyncResult:
                           f"checkout {tip[:7]} 失败(工作树可能处于中间态, 请人工确认):\n{err}")
 
     if not _indexes_fresh(plan.sub):
-        _run(["-C", str(plan.sub), "checkout", "--detach", plan.head])
+        rb_rc, _rb_out, rb_err = _run(
+            ["-C", str(plan.sub), "checkout", "--detach", plan.head])
+        if rb_rc != 0:
+            # 回滚失败必须如实报(§4.3 错误教义): 此刻 submodule 实际仍停在被拒的
+            # tip 上, 声称"已回滚"是在对仓库状态撒谎; 把人工命令原样给出。
+            return SyncResult(False, "tip-index-stale",
+                              (f"tip {tip[:7]} 自带的 kb/index.jsonl 与正文不一致, "
+                               f"且回滚 checkout 失败, submodule 可能仍停在 tip "
+                               f"{tip[:7]}(未提交任何 gitlink):\n{rb_err}\n"
+                               f"请人工执行 `git -C .agent-kb checkout --detach "
+                               f"{plan.head}`, 再在 Agent-KB 主仓跑 "
+                               f"`kb index --repo . --repo-name agent-kb` 并提交。"))
         return SyncResult(False, "tip-index-stale",
                           (f"tip {tip[:7]} 自带的 kb/index.jsonl 与正文不一致, "
                            f"已回滚到 {plan.head[:7]}。请在 Agent-KB 主仓跑 "

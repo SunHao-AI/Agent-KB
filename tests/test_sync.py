@@ -165,7 +165,10 @@ def test_plan_refuses_dirty_submodule(tmp_path, monkeypatch):
 
 def test_plan_reports_uninitialized_submodule_for_init(tmp_path, monkeypatch):
     """.agent-kb 目录空 = 未 init。这是**唯一**该指回 submodule update --init 的
-    地方 —— sync 本身是装配动作, 在这里说清楚; 检索侧不提(Task 3 的静默约定)。"""
+    地方 —— sync 本身是装配动作, 在这里说清楚; 检索侧不提(Task 3 的静默约定)。
+    拒绝码必须是独立稳定码 submodule-not-initialized(§4.4), 不得与其他前置
+    拒绝共用泛化码; apply 层同样必须带这个码(码在 plan 生产、apply 透传,
+    任何一侧回退成 "precondition" 都会红)。"""
     from kb import sync
     biz = _biz(tmp_path)
     for p in sorted((biz / ".agent-kb").rglob("*"), reverse=True):
@@ -173,7 +176,13 @@ def test_plan_reports_uninitialized_submodule_for_init(tmp_path, monkeypatch):
     _stub_git(monkeypatch, biz)
     plan = sync.plan_sync(biz)
     assert plan.ok is False
+    assert plan.code == "submodule-not-initialized", plan.code
     assert any("submodule update --init" in r for r in plan.reasons)
+    res = sync.apply_sync(biz)
+    assert res.ok is False and res.exit_code == 1
+    assert res.code == "submodule-not-initialized", res.code
+    assert "precondition" not in res.code
+    assert "submodule update --init" in res.detail, res.detail
 
 
 def _recorder(monkeypatch):
@@ -286,7 +295,72 @@ def test_apply_rolls_back_when_tip_index_stale(tmp_path, monkeypatch):
     checkout = [c for c in calls if c[2] == "checkout"]
     assert len(checkout) == 2, checkout                      # 去 + 回滚
     assert checkout[1][-1] == "aaa", checkout[1]             # 回到原指针
+    assert "已回滚到 aaa" in res.detail, res.detail           # 回滚成功才允许这么声称
     assert not [c for c in calls if c[2] == "commit"], calls
+
+
+def test_apply_reports_when_rollback_checkout_fails(tmp_path, monkeypatch):
+    """回滚 checkout 自身失败(git lockfile 与每日 traces 定时任务竞争等) →
+    detail 必须如实报"回滚失败"并给出人工命令(§4.3 错误教义: 如实报错并停下)。
+
+    旧实现在这里无条件声称"已回滚到 <head>": 回滚失败时 submodule 实际仍停在被拒
+    tip, 消息对仓库状态撒谎。本用例把第二次的回滚 checkout 打桩成非零退出, 断言
+    失败措辞 + 人工命令 + tip-index-stale 码仍在; "已回滚到"的旧断言随之变红。
+    """
+    from kb import sync
+    biz = _biz(tmp_path)
+    _stub_git(monkeypatch, biz)
+    calls = _recorder(monkeypatch)
+    inner = sync._run
+
+    def failing_rollback(args):
+        out = inner(args)                                  # 先经 recorder 记录
+        # 只让回滚那次(回原指针 aaa)失败, 正向 checkout 到 tip 照常成功
+        if args[2] == "checkout" and args[-1] == "aaa":
+            return 128, "", "fatal: Unable to create '.git/index.lock': File exists"
+        return out
+
+    monkeypatch.setattr(sync, "_run", failing_rollback)
+    monkeypatch.setattr(sync, "_indexes_fresh", lambda *a, **k: False)
+    res = sync.apply_sync(biz)
+    assert res.ok is False and res.code == "tip-index-stale"   # 码不因回滚态而丢
+    assert res.exit_code == 1
+    rollback = [c for c in calls if c[2] == "checkout" and c[-1] == "aaa"]
+    assert rollback, calls                                     # 回滚确实尝试过
+    assert "回滚 checkout 失败" in res.detail, res.detail
+    assert "git -C .agent-kb checkout --detach aaa" in res.detail, res.detail
+    assert "Unable to create" in res.detail                    # git stderr 原样透传
+    assert "已回滚到" not in res.detail, res.detail             # 不得谎称已回滚
+    assert not [c for c in calls if c[2] == "commit"], calls
+
+
+def _stub_missing_origin_ref(monkeypatch, biz):
+    """把 origin/<branch> 的 rev-parse --verify 打成空(本机从未 fetch 过)。"""
+    from kb import sync
+    inner = sync._git_out
+
+    def fake(args):
+        if args[-1] == "origin/master":
+            return ""
+        return inner(args)
+
+    monkeypatch.setattr(sync, "_git_out", fake)
+
+
+def test_apply_refuses_missing_origin_ref_with_its_own_code(tmp_path,
+                                                           monkeypatch):
+    """从未 fetch 过 → origin/<branch> 不存在: 独立码 origin-ref-missing,
+    detail 指回 fetch。与未 init 分码是 §4.4 的要求(两个场景机器面必须可分辨),
+    任何"把多个拒绝压成一个泛化码"的改法都会被这两条用例各红一次。"""
+    from kb import sync
+    biz = _biz(tmp_path)
+    _stub_git(monkeypatch, biz)
+    _stub_missing_origin_ref(monkeypatch, biz)
+    res = sync.apply_sync(biz)
+    assert res.ok is False and res.exit_code == 1
+    assert res.code == "origin-ref-missing", res.code
+    assert "需先 fetch" in res.detail, res.detail
+    assert "submodule update --init" not in res.detail   # init 指引只属未 init 场景
 
 
 def test_cli_sync_plan_reject_exits_1(tmp_path, monkeypatch, capsys):

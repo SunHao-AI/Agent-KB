@@ -15,3 +15,6 @@ dist/
 .coverage
 .coverage.*
 htmlcov/
+
+# Qoder Knowledge Center 本地缓存(IDE 生成物, 重新生成即可, 不入库)
+.qoder/

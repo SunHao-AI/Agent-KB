@@ -408,3 +408,30 @@ def test_doctor_submodule_pointer_silent_when_corpus_fresh(fake_layout, monkeypa
     assert by_name["submodule pointer"][0] == "PASS", by_name["submodule pointer"]
     assert "99" not in by_name["submodule pointer"][1]
     assert by_name["submodule lag raw"][1] == "99"
+
+
+def test_git_root_decodes_git_output_as_utf8(tmp_path, monkeypatch):
+    """_git_root 在每次检索路径上都被走(lag_notice → _biz_root → _git_root), 但它
+    仍是裸 text=True: Windows 下按 GBK locale 解码, git 输出含 CJK 路径即
+    UnicodeDecodeError, 而 except 只捕 OSError/TimeoutExpired ⇒ 异常直接穿透检索
+    (与 448e825 修的 _git_out 同一根因, 最终评审点名站点)。
+
+    断言打在**传给 subprocess.run 的解码参数**上: 这是"永不炸"的唯一契约点,
+    删掉 encoding/errors 任一项本用例必红。
+    """
+    from kb import bootstrap
+    captured: dict = {}
+
+    class Completed:
+        returncode = 0
+        stdout = "D:/\u5de5\u4f5c\u533a/biz\n"      # git 输出恒 UTF-8(Windows 实测)
+
+    def fake_run(argv, **kwargs):
+        captured.update(kwargs)
+        return Completed()
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_run)
+    got = bootstrap._git_root(tmp_path)
+    assert got == pathlib.PurePath("D:/\u5de5\u4f5c\u533a/biz"), got
+    assert captured.get("encoding") == "utf-8", captured
+    assert captured.get("errors") == "replace", captured   # 脏字节降级为占位而非抛

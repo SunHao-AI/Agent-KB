@@ -229,6 +229,157 @@ def test_apply_short_circuits_when_corpus_fresh(tmp_path, monkeypatch):
     assert _verbs(calls) == ["status", "fetch"], _verbs(calls)   # 无 checkout / 无 commit
 
 
+def test_apply_refuses_when_corpus_lag_unknown(tmp_path, monkeypatch):
+    """fetch 后语料探针本身失败(返回 None)→ corpus-lag-unknown, 绝不判"已最新"。
+
+    None 与 0 语义完全不同: 0 是"算过, 不差", None 是"没算出来"(损坏对象、与每日
+    traces 定时任务抢 `.git/index.lock` 等, §4.4 明写的场景)。旧实现
+    `kb_corpus_lag(...)[0] or 0` 把两者压成同一个 0 → 探针一抖动就 up-to-date +
+    exit 0, 这正是本模块要消灭的虚假成功(与 kb-20261101-8321 同一类病)。
+    """
+    from kb import sync
+    biz = _biz(tmp_path)
+    _stub_git(monkeypatch, biz, corpus="7")
+    calls = _recorder(monkeypatch)
+    monkeypatch.setattr(sync, "kb_corpus_lag",
+                        lambda p, br: (None, "rev-list 失败"))
+    res = sync.apply_sync(biz)
+    assert res.ok is False, res
+    assert res.code == "corpus-lag-unknown", res.code
+    assert res.exit_code == 1, res.exit_code            # §4.4: 校验类失败退 1
+    assert "未产生任何写入" in res.detail, res.detail
+    assert res.commit_sha is None
+    assert _verbs(calls) == ["status", "fetch"], _verbs(calls)   # 无 checkout / 无 commit
+
+
+def test_apply_raw_count_comes_from_post_fetch_tip(tmp_path, monkeypatch):
+    """"语料已最新(原始 N 个提交)"的 N 必须是 **fetch 后** 的口径。
+
+    raw_lag 在勘察时(fetch 前)算, 文案却在 fetch 后用: fetch 捞出 50 个提交后仍打
+    "原始 3 个"是在给人看旧地图。桩把两个 tip 分开给(勘察 `bbb` / fetch 后 `ccc`),
+    按区间参数区分两次查询, 这样"取错了哪一次"在断言里可分辨。
+    """
+    from kb import sync
+    biz = _biz(tmp_path)
+    _stub_git(monkeypatch, biz, corpus="0")
+    calls = _recorder(monkeypatch)
+    inner = sync._git_out
+    raw_by_range = {"HEAD..bbb": "3", "HEAD..ccc": "50"}
+
+    def fake(args):
+        if "rev-list" in args:
+            if "kb/" in args:
+                return "0"                       # 语料口径: 前后都是 0
+            return raw_by_range[next(a for a in args if a.startswith("HEAD.."))]
+        if args[-1] == "origin/master":
+            return "bbb"                         # 勘察时点: 上次 fetch 的旧 tip
+        if args[-1] == "FETCH_HEAD":
+            return "ccc"                         # 本次 fetch 到的新 tip
+        return inner(args)
+
+    monkeypatch.setattr(sync, "_git_out", fake)
+    res = sync.apply_sync(biz)
+    assert res.ok and res.exit_code == 0
+    assert "原始 50" in res.detail, res.detail     # fetch 后口径
+    assert "原始 3" not in res.detail, res.detail  # 不得复用 fetch 前旧数
+    assert _verbs(calls) == ["status", "fetch"], _verbs(calls)
+
+
+def test_apply_maps_fetch_timeout_to_fetch_failed(tmp_path, monkeypatch):
+    """git fetch 挂死(>120s, 本模块唯一网络调用)→ 走 fetch-failed, 不是裸 traceback。
+
+    `_run` 原本没有 `_git_out` 那层 `TimeoutExpired` 捕获, 超时直接穿透到 CLI 顶层
+    崩栈: 人看到的是 Python 栈, 不是"fetch 失败, 未产生任何写入"。
+
+    这条用例**必须跑真实 `_run`**(超时捕获点在它内部): `_stub_git` 把 `_run` 整个
+    换掉了, 故这里先存原始函数再挂回去, 只在最底层 `subprocess.run` 上打桩。
+    """
+    import subprocess
+    from types import SimpleNamespace
+
+    from kb import sync
+    real_run = sync._run                        # 必须在 _stub_git 之前取
+    biz = _biz(tmp_path)
+    _stub_git(monkeypatch, biz)
+    monkeypatch.setattr(sync, "_run", real_run)  # 恢复真实 _run
+    calls = _recorder(monkeypatch)
+    spawned: list[list[str]] = []
+
+    def fake_spawn(argv, **kwargs):
+        spawned.append(list(argv))
+        assert kwargs.get("timeout"), "写路径必须带超时, 否则挂死无上限"
+        if "fetch" in argv:
+            raise subprocess.TimeoutExpired(argv, 120)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_spawn)
+    res = sync.apply_sync(biz)
+    assert res.ok is False, res
+    assert res.code == "fetch-failed", res.code
+    assert res.exit_code == 1
+    assert "未产生任何写入" in res.detail and "超时" in res.detail, res.detail
+    assert any("fetch" in a for a in spawned), spawned   # 桩确实被走到(防假绿)
+    assert _verbs(calls) == ["status", "fetch"], _verbs(calls)
+
+
+def test_apply_reports_fetch_failure_without_any_write(tmp_path, monkeypatch):
+    """fetch 非零退出(断网/鉴权失败)→ fetch-failed + git stderr 原样透传, 零写入。
+
+    apply 层的拒绝码此前只在 plan 层有用例, 这一条把"网络失败不动工作树"钉成可执行
+    契约: 若有人把 fetch 挪到 checkout 之后, 本用例必红。
+    """
+    from kb import sync
+    biz = _biz(tmp_path)
+    _stub_git(monkeypatch, biz)
+    calls = _recorder(monkeypatch)
+    inner = sync._run
+
+    def failing_fetch(args):
+        out = inner(args)
+        if args[2] == "fetch":
+            return 128, "", "fatal: unable to access 'https://x/agent.git/': timed out"
+        return out
+
+    monkeypatch.setattr(sync, "_run", failing_fetch)
+    res = sync.apply_sync(biz)
+    assert res.ok is False and res.exit_code == 1
+    assert res.code == "fetch-failed", res.code
+    assert res.commit_sha is None
+    assert "未产生任何写入" in res.detail, res.detail
+    assert "unable to access" in res.detail            # git stderr 原样给出
+    assert _verbs(calls) == ["status", "fetch"], _verbs(calls)   # 无 checkout / 无 commit
+
+
+def test_apply_reports_commit_failure_but_keeps_checkout(tmp_path, monkeypatch):
+    """commit 失败(hook 拒/身份缺失)→ commit-failed; checkout **不回滚**。
+
+    不回滚是幂等性裁定: submodule 已在新 tip, 重跑一次只会补提交, 不必把指针撤回
+    去再走一遍 checkout; 且 commit_sha 必须是 None —— 谎报 sha 会让脚本消费方以为
+    提交成功了。
+    """
+    from kb import sync
+    biz = _biz(tmp_path)
+    _stub_git(monkeypatch, biz)
+    calls = _recorder(monkeypatch)
+    inner = sync._run
+
+    def failing_commit(args):
+        out = inner(args)
+        if args[2] == "commit":
+            return 1, "", "pre-push gate 前置检查未通过"
+        return out
+
+    monkeypatch.setattr(sync, "_run", failing_commit)
+    monkeypatch.setattr(sync, "_indexes_fresh", lambda *a, **k: True)
+    res = sync.apply_sync(biz)
+    assert res.ok is False and res.exit_code == 1
+    assert res.code == "commit-failed", res.code
+    assert res.commit_sha is None, res.commit_sha     # 没有提交就没有 sha
+    assert "重跑幂等" in res.detail and "pre-push gate" in res.detail, res.detail
+    checkout = [c for c in calls if c[2] == "checkout"]
+    assert len(checkout) == 1 and checkout[0][-1] == "bbb", checkout   # 留在新 tip, 不回滚
+
+
 def test_apply_commits_only_the_gitlink(tmp_path, monkeypatch):
     """业务仓提交必须走 `commit --only .agent-kb`。
 

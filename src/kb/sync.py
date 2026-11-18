@@ -60,10 +60,17 @@ def _run(args: list[str]) -> tuple[int, str, str]:
 
     与 `_git_out`(只读、吞错)分开: 写路径必须把 stderr 原样交给调用方呈现,
     否则 commit 被 hook 拒时人只能看到"失败了"。
+
+    超时/OS 错误吞成 (124, ...) 而非穿透: `fetch` 是本模块唯一网络调用, 挂死
+    >120s 若抛 TimeoutExpired 就绕过 fetch-failed 分支, 人只看到裸 traceback。
+    走 (rc, out, err) 契约则既有失败路径(fetch-failed 等)原样接住。
     """
-    r = subprocess.run(["git", *args], check=False, capture_output=True,
-                       text=True, encoding="utf-8", errors="replace",
-                       timeout=120)
+    try:
+        r = subprocess.run(["git", *args], check=False, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 124, "", f"命令超时/失败: git {' '.join(args[:3])} …: {exc}"
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 
@@ -177,8 +184,20 @@ def apply_sync(biz_root: Path) -> SyncResult:
     if not tip:
         return SyncResult(False, "fetch-failed", "FETCH_HEAD 不可解析, 未产生任何写入。")
     plan.tip = tip
-    plan.lag = kb_corpus_lag(plan.sub, plan.branch)[0] or 0
+    # None 与 0 是两回事: 0 = 算过且不落后, None = 探针本身失败(损坏对象 / 与每日
+    # traces 定时任务抢 index.lock, §4.4 明写的场景)。`or 0` 把两者压平 → 探针一抖
+    # 就 up-to-date + exit 0, 是本模块要消灭的虚假成功。
+    lag = kb_corpus_lag(plan.sub, plan.branch)[0]
+    if lag is None:
+        return SyncResult(False, "corpus-lag-unknown",
+                          "fetch 后仍无法计算语料 lag(探针失败), 未产生任何写入;"
+                          " 请稍后重试或人工核对 .agent-kb 仓状态。")
+    plan.lag = lag
     if plan.lag == 0:
+        # 原始数取 fetch 后口径: plan.raw_lag 是勘察(fetch 前)算的, 用它打 fetch 后
+        # 的"已最新"文案会在捞出 50 个提交后仍写"原始 0 个"。
+        plan.raw_lag = int(_git_out(["-C", str(plan.sub), "rev-list", "--count",
+                                     f"HEAD..{tip}"]) or plan.raw_lag)
         return SyncResult(True, "up-to-date",
                           f"语料已最新(原始 {plan.raw_lag} 个提交, 均不触及 kb/)。")
 

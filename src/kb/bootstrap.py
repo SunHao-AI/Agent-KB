@@ -40,8 +40,12 @@ def _git_root(p: Path) -> Path | None:
     """git 仓根(业务仓根): doctor 用它区分 kb 载体目录(--repo docs)与仓根(.git/
     .venv/.mcp.json/.gitmodules 所在)。非 git 环境回退 None。"""
     try:
+        # 与 _git_out 同源(448e825): git 路径输出是 UTF-8, Windows 下裸 text=True 按
+        # GBK 解码, CJK 路径直接 UnicodeDecodeError 且不在 except (OSError, TimeoutExpired)
+        # 之内。本函数在每次检索路径上都被走(lag_notice → _biz_root → _git_root)。
         r = subprocess.run(["git", "-C", str(p), "rev-parse", "--show-toplevel"],
-                           check=False, capture_output=True, text=True, timeout=30)
+                           check=False, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=30)
         if r.returncode == 0:
             return Path(r.stdout.strip())
     except (OSError, subprocess.TimeoutExpired):

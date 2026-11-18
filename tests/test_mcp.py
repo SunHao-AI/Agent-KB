@@ -249,3 +249,22 @@ async def test_search_payload_shape_unchanged_without_notice(layers):
     srv = build_server(proj, agent_kbs=[kb], repo_name="docs")
     err, out = await _call(srv, "kb_search", {"query": "Vite"})
     assert err is False and isinstance(out, list) and "notices" not in out
+
+
+async def test_search_notice_keeps_sources_in_federated_payload(layers, monkeypatch):
+    """联邦态(dict 形 {rows, sources})叠加提醒 → notices 是**新增**键不是替换。
+
+    审查实锤的缺陷: 旧实现重组载荷时只挑 rows, 语料滞后时恰好吞掉 sources——
+    外接源健康度正是滞后时最需要的诊断信息。零网络: demo 是本地假源。
+    """
+    import kb.mcp_server as mcp_mod
+    monkeypatch.setattr(mcp_mod, "lag_notice",
+                        lambda *a, **k: "[kb] 通用层落后 7 个语料提交 → kb sync")
+    monkeypatch.setenv("KB_SOURCES", "demo")
+    proj, kb = layers
+    srv = build_server(proj, agent_kbs=[kb], repo_name="docs")
+    err, out = await _call(srv, "kb_search", {"query": "Vite"})
+    assert err is False
+    assert out["rows"][0]["id"] == "kb-20261014-e1e1"
+    assert out["sources"] and out["sources"][0]["source"] == "demo"
+    assert out["notices"] == ["[kb] 通用层落后 7 个语料提交 → kb sync"]

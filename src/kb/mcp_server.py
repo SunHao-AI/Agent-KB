@@ -92,8 +92,12 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
         if rows or not query:
             payload = rows if not ext_health else {"rows": rows, "sources": ext_health}
             if notice:                     # 命中态本是裸数组, 有提醒才升级为带说明的对象
-                payload = {"rows": payload if isinstance(payload, list)
-                           else payload.get("rows", []), "notices": [notice]}
+                # spec §3.2: notices 是**新增**字段不是替换 —— dict 形(联邦态带
+                # sources)必须原样保留全部键, 否则语料滞后时恰好丢掉外接源健康度,
+                # 正是最需要诊断信息的时刻。
+                payload = ({"rows": payload, "notices": [notice]}
+                           if isinstance(payload, list)
+                           else {**payload, "notices": [notice]})
             out = _compact(payload)
         else:  # FR-3.2: 零命中从裸 [] 升级为死因+建议(命中态结构不变)
             scanned = sum(r.get("scanned", 0) for r in reports)

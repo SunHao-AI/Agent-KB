@@ -271,16 +271,23 @@ def test_cli_search_prints_lag_notice_on_stderr(tmp_repo, capsys, monkeypatch):
     main(["search", "--repo", str(tmp_repo), "--query", "vite", "--no-trace"])
     captured = capsys.readouterr()
     assert "落后 7 个语料提交" in captured.err
+    assert captured.err.count("落后") == 1     # 一行提醒: 防未来按提交逐条刷屏
     assert json.loads(captured.out)            # stdout 仍是合法 JSON 且有命中
     assert "落后" not in captured.out
 
 
 def test_cli_search_output_unchanged_without_lag(tmp_repo, capsys, monkeypatch):
-    """零漂移时输出**字节级不变** —— 防噪声回归的主守护。"""
+    """零漂移时输出**字节级不变** —— 防噪声回归的主守护。
+
+    桩必须在取 baseline **之前**打上: 否则 baseline 那次跑的是真实 lag_notice,
+    经 _biz_root 起 `git rev-parse --show-toplevel` 子进程 —— 全仓测试"永不跑真实
+    git"的约束就此破防, 且 tmp_path 是否落在 git 仓内随机器布局漂移。lag>0 方向由
+    上一条用例覆盖, 这里桩成 None 不损失语义。
+    """
     from kb.cli import main
+    _stub_notice(monkeypatch, None)
     main(["search", "--repo", str(tmp_repo), "--query", "vite", "--no-trace"])
     baseline = capsys.readouterr()
-    _stub_notice(monkeypatch, None)
     main(["search", "--repo", str(tmp_repo), "--query", "vite", "--no-trace"])
     after = capsys.readouterr()
     assert after == baseline

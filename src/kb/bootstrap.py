@@ -51,8 +51,12 @@ def _git_root(p: Path) -> Path | None:
 
 def _git_out(args: list[str]) -> str | None:
     try:
+        # git 输出(提交标题/中文文件名)是 UTF-8: Windows 下 text=True 按 GBK 解码,
+        # kb sync 的 `log --oneline` 在含中文提交标题的子仓直接 UnicodeDecodeError
+        # (2026-11-18 真实环境实测)。显式 utf-8 + replace: 解码永不炸, 脏字节降级为占位。
         r = subprocess.run(["git", *args], check=False, capture_output=True,
-                           text=True, timeout=30)
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=30)
         if r.returncode == 0:
             return r.stdout.strip()
     except (OSError, subprocess.TimeoutExpired):

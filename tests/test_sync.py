@@ -395,7 +395,7 @@ def test_apply_commits_only_the_gitlink(tmp_path, monkeypatch):
     res = sync.apply_sync(biz)
     assert res.ok and res.commit_sha == "9f8e7d6", res       # 业务仓 HEAD 由桩给出
     assert _verbs(calls) == ["status", "fetch", "checkout", "commit"], _verbs(calls)
-    commit = [c for c in calls if c[2] == "commit"][0]
+    commit = next(c for c in calls if c[2] == "commit")
     assert "--only" in commit and ".agent-kb" in commit, commit
     assert "add" not in _verbs(calls), _verbs(calls)         # 绝不 git add
 

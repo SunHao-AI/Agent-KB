@@ -17,8 +17,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from kb.bootstrap import (_biz_root, _git_out, _submodule_branch,
-                          kb_corpus_lag)
+from kb.bootstrap import _biz_root, _git_out, _submodule_branch, kb_corpus_lag
 
 
 def _declared_branch(biz: Path) -> str | None:

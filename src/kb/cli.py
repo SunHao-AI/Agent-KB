@@ -149,6 +149,11 @@ def _dispatch(argv: list[str] | None = None) -> int:
     p_doc.add_argument("--current-python", action="store_true",
                        help="追加检查当前解释器(kb CLI 自身运行环境)")
 
+    p_sync = sub.add_parser("sync", parents=[common],
+                            help="同步通用层 submodule 指针(默认只勘察, --apply 才写)")
+    p_sync.add_argument("--apply", action="store_true",
+                        help="fetch + checkout tip + 只提交 gitlink(永不 push)")
+
     # 观测面(FR-2): serve=服务端(读侧, 只读); web=瘦客户端启动器(自动代拉起)
     p_serve = sub.add_parser("serve", help="观测服务端(只读 REST+SSE, 默认仅本机)")
     p_serve.add_argument("--repo", default=None,
@@ -323,6 +328,18 @@ def _dispatch(argv: list[str] | None = None) -> int:
         checks = run_doctor(repo, agent_kb=ak, current_python=args.current_python)
         print(render_doctor(checks))
         return doctor_exit_code(checks)
+    if args.cmd == "sync":
+        from kb.sync import apply_sync, plan_sync, render_plan, render_result
+        if args.apply:
+            res = apply_sync(repo)
+            print(render_result(res))
+            return res.exit_code
+        plan = plan_sync(repo)
+        print(render_plan(plan))
+        # 拒绝(dirty-submodule 等)必须退 1: declared 只表示 .gitmodules 声明过
+        # .agent-kb, 拒绝态下同样为真 —— 用 `or plan.declared` 会把失败报成成功。
+        # Spec §4.4: 0=成功/无需同步, 1=校验类失败。
+        return 0 if plan.ok else 1
     if args.cmd == "lint":
         errs = lint_repo(repo, scope=args.scope, cross_repos=[Path(p) for p in args.agent_kb])
         base_path = Path(args.baseline) if args.baseline else repo / ".kb-lint-baseline"

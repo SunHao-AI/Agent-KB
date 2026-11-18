@@ -13,10 +13,12 @@
 from __future__ import annotations
 
 import os
+import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from kb.bootstrap import (_biz_root, _git_out,  # noqa: F401 - _git_out 供本模块
-                          _submodule_branch, kb_corpus_lag)  # Task 4 写路径复用
+from kb.bootstrap import (_biz_root, _git_out, _submodule_branch,
+                          kb_corpus_lag)
 
 
 def _declared_branch(biz: Path) -> str | None:
@@ -51,3 +53,170 @@ def lag_notice(biz_root: Path, branch: str | None = None) -> str | None:
         return None
     return (f"[kb] 通用层落后 {lag} 个语料提交(参照 {ref}, 上次 fetch 快照"
             f"可能更少) → kb sync")
+
+
+def _run(args: list[str]) -> tuple[int, str, str]:
+    """执行 git 写命令 → (returncode, stdout, stderr)。
+
+    与 `_git_out`(只读、吞错)分开: 写路径必须把 stderr 原样交给调用方呈现,
+    否则 commit 被 hook 拒时人只能看到"失败了"。
+    """
+    r = subprocess.run(["git", *args], check=False, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace",
+                       timeout=120)
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+@dataclass
+class SyncPlan:
+    declared: bool = False
+    branch: str | None = None
+    sub: Path | None = None
+    head: str = ""
+    tip: str = ""
+    lag: int = 0
+    raw_lag: int = 0
+    corpus_log: str = ""
+    dirty: list[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.declared and not self.reasons
+
+
+def plan_sync(biz_root: Path) -> SyncPlan:
+    """只读勘察: 该不该同步、会被纳入什么。不 fetch 不写, 可反复跑。"""
+    biz = _biz_root(Path(biz_root))
+    plan = SyncPlan(sub=biz / ".agent-kb")
+    plan.branch = _declared_branch(biz)
+    if plan.branch is None:
+        plan.reasons.append("not-a-submodule-repo")
+        return plan
+    plan.declared = True
+    if not (plan.sub / "kb").is_dir():
+        plan.reasons.append("submodule 未初始化: git submodule update --init .agent-kb")
+        return plan
+    plan.head = _git_out(["-C", str(plan.sub), "rev-parse", "HEAD"]) or ""
+    plan.tip = _git_out(["-C", str(plan.sub), "rev-parse", "--verify",
+                         f"origin/{plan.branch}"]) or ""
+    if not plan.tip:
+        plan.reasons.append(f"无 origin/{plan.branch} 引用(需先 fetch)")
+        return plan
+    _rc, out, _err = _run(["-C", str(plan.sub), "status", "--porcelain"])
+    plan.dirty = [ln[3:] for ln in out.splitlines() if ln.strip()]
+    if plan.dirty:
+        plan.reasons.append("dirty-submodule")
+        return plan
+    plan.lag = kb_corpus_lag(plan.sub, plan.branch)[0] or 0
+    plan.raw_lag = int(_git_out(["-C", str(plan.sub), "rev-list", "--count",
+                                 f"HEAD..{plan.tip}"]) or 0)
+    plan.corpus_log = _git_out(["-C", str(plan.sub), "log", "--oneline",
+                               f"HEAD..{plan.tip}", "--", "kb/"]) or ""
+    return plan
+
+
+@dataclass
+class SyncResult:
+    ok: bool
+    code: str
+    detail: str = ""
+    commit_sha: str | None = None
+
+    @property
+    def exit_code(self) -> int:
+        return 0 if self.ok else 1
+
+
+def _indexes_fresh(sub: Path) -> bool:
+    """tip 自带的生成物索引是否与正文一致 —— 本模块存在的技术要害。
+
+    `kb/index.jsonl` 是 git 跟踪文件, 指针指向自带旧索引的 tip 就会让 `sections`
+    检索面整层失效(kb-20261101-8321 的根因第 1+3 条)。就地重建无效(submodule
+    update 即丢弃), 唯一持久化方式是推进指针 —— 那就必须保证推进的目标本身健康。
+    这一步使该缺陷**结构性不可复发**。
+    """
+    from kb.index import check_indexes, resolve_repo_name
+    try:
+        return check_indexes(sub, repo_name=resolve_repo_name(sub))
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def apply_sync(biz_root: Path) -> SyncResult:
+    """fetch → checkout tip → 校验索引新鲜 → 只提交 gitlink。**永不 push**。"""
+    biz = _biz_root(Path(biz_root))
+    plan = plan_sync(biz)
+    if not plan.declared:
+        return SyncResult(False, "not-a-submodule-repo",
+                          "本仓 .gitmodules 未声明 .agent-kb, 无指针可同步。")
+    if plan.reasons and "dirty-submodule" in plan.reasons:
+        return SyncResult(False, "dirty-submodule",
+                          ".agent-kb 有未提交改动, 先在其中提交或 stash: \n  "
+                          + "\n  ".join(plan.dirty))
+    if plan.reasons:
+        return SyncResult(False, "precondition", "\n".join(plan.reasons))
+
+    rc, _out, err = _run(["-C", str(plan.sub), "fetch", "origin", plan.branch])
+    if rc != 0:
+        return SyncResult(False, "fetch-failed",
+                          f"git fetch 失败, 未产生任何写入:\n{err}")
+    tip = _git_out(["-C", str(plan.sub), "rev-parse", "FETCH_HEAD"]) or ""
+    if not tip:
+        return SyncResult(False, "fetch-failed", "FETCH_HEAD 不可解析, 未产生任何写入。")
+    plan.tip = tip
+    plan.lag = kb_corpus_lag(plan.sub, plan.branch)[0] or 0
+    if plan.lag == 0:
+        return SyncResult(True, "up-to-date",
+                          f"语料已最新(原始 {plan.raw_lag} 个提交, 均不触及 kb/)。")
+
+    rc, _out, err = _run(["-C", str(plan.sub), "checkout", "--detach", tip])
+    if rc != 0:
+        # 半切换态如实报, 不自动 `checkout -- .`: 那会吞掉他人可能正在做的
+        # submodule 操作。本函数保证自己的每一步可重放, 不负责收拾现场。
+        return SyncResult(False, "checkout-failed",
+                          f"checkout {tip[:7]} 失败(工作树可能处于中间态, 请人工确认):\n{err}")
+
+    if not _indexes_fresh(plan.sub):
+        _run(["-C", str(plan.sub), "checkout", "--detach", plan.head])
+        return SyncResult(False, "tip-index-stale",
+                          (f"tip {tip[:7]} 自带的 kb/index.jsonl 与正文不一致, "
+                           f"已回滚到 {plan.head[:7]}。请在 Agent-KB 主仓跑 "
+                           f"`kb index --repo . --repo-name agent-kb` 并提交。"))
+
+    rc, _out, err = _run(["-C", str(biz), "commit", "--only", ".agent-kb",
+                          "-m", f"chore(kb): bump .agent-kb -> {tip[:7]}"])
+    if rc != 0:
+        return SyncResult(False, "commit-failed",
+                          f"提交失败(submodule 已在新 tip, 重跑幂等):\n{err}")
+    sha = _git_out(["-C", str(biz), "rev-parse", "HEAD"])
+    return SyncResult(True, "bumped",
+                      f"已推进指针 {plan.head[:7]} → {tip[:7]}(语料 {plan.lag} 个提交)。"
+                      f"未 push。", sha)
+
+
+def render_plan(plan: SyncPlan) -> str:
+    lines = [f"仓库指针   {plan.head[:7] or '—'}"]
+    if not plan.declared:
+        lines.append("结论: 本仓未声明 .agent-kb submodule, 无指针可同步。")
+        return "\n".join(lines)
+    lines.append(f"跟踪分支   {plan.branch}")
+    lines.append(f"origin 引用 {plan.tip[:7] or '—'}(上次 fetch 快照)")
+    lines.append(f"语料落后   {plan.lag} 个提交(原始 {plan.raw_lag}, 差额在 src/kb/ 与 traces/)")
+    if plan.reasons:
+        lines.append("不可同步: " + "; ".join(plan.reasons))
+        if plan.dirty:
+            lines.append("  脏文件: " + ", ".join(plan.dirty))
+        return "\n".join(lines)
+    if plan.lag == 0:
+        lines.append("结论: 语料已最新, 无需同步。")
+        return "\n".join(lines)
+    lines.append("将被纳入的语料提交:")
+    lines.extend(f"  {ln}" for ln in plan.corpus_log.splitlines() if ln.strip())
+    lines.append("下一步: kb sync --apply")
+    return "\n".join(lines)
+
+
+def render_result(res: SyncResult) -> str:
+    head = f"[{'ok' if res.ok else 'FAIL'}] {res.code}"
+    return f"{head}\n{res.detail}" if res.detail else head

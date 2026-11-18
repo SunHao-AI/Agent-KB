@@ -149,9 +149,8 @@ def test_doctor_index_fresh_uses_persisted_label(fake_layout, monkeypatch):
 def test_doctor_warns_stale_submodule_pointer(fake_layout, monkeypatch):
     """submodule 指针停在旧提交 = 通用层一直在服务过期语料, doctor 必须报出来。
 
-    `.gitmodules` 配 branch = master 只是声明, 没人 fetch 就没人知道落后(2026-11-01
-    实测三仓指针停在数月前, 通用层 sections 字段整层缺失)。这里只读本地引用:
-    同级主仓 HEAD 的对象在 submodule 内可解析时, 离线即可算出落后数。
+    口径是**语料**而非原始提交数(2026-11-18 换口径): 四仓实测原始 107/121/106 里只有
+    7 个触及 kb/, 用原始数示人会把人引向"必须 bump 一个对检索毫无收益的指针"。
     """
     from kb import bootstrap
     biz, ak = fake_layout
@@ -163,26 +162,29 @@ def test_doctor_warns_stale_submodule_pointer(fake_layout, monkeypatch):
     monkeypatch.setattr(bootstrap, "_mod_ok", lambda *a, **k: True)
     (biz / ".venv" / "Scripts").mkdir(parents=True)      # 门禁 venv 齐备, 只考察指针项
     (biz / ".venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
-    refs = {"HEAD": "aaa", "origin/master": None}
 
     def fake_git_out(args):
         if args[:3] == ["-C", str(ak), "rev-parse"]:
             return "bbb"                                 # 同级主仓 HEAD
         if args[-1] == "HEAD":
-            return refs["HEAD"]
+            return "aaa"
         if args[-1].startswith("bbb"):
-            return ""                                    # cat-file -e: 对象可见(空输出=成功)
-        if args[-1].startswith("HEAD.."):
-            return "37"
+            return ""                                    # cat-file -e: 对象可见
         if args[-1] == "origin/master":
-            return refs["origin/master"]
+            return "ccc"
+        # 带 pathspec 时区间参数不在 args[-1], 一律用 any() 匹配 + "kb/" 分口径
+        if any(a.startswith("HEAD..") for a in args):
+            return "7" if "kb/" in args else "107"       # 语料 / 原始
         return None
 
     monkeypatch.setattr(bootstrap, "_git_out", fake_git_out)
     checks = doctor(biz / "docs", agent_kb=ak)
     by_name = {n: (lvl, msg) for lvl, n, msg in checks}
     assert by_name["submodule pointer"][0] == "WARN"
-    assert "37" in by_name["submodule pointer"][1]
+    msg = by_name["submodule pointer"][1]
+    assert "7" in msg and "107" not in msg, msg          # 以语料数示人
+    assert "kb sync" in msg, msg                         # 给可执行的下一步
+    assert by_name["submodule lag raw"][1] == "107"      # 原始数保留为诊断项
     assert doctor_exit_code(checks) == 0                 # 只 WARN 不 FAIL
 
 
@@ -203,8 +205,8 @@ def test_doctor_submodule_pointer_up_to_date_passes(fake_layout, monkeypatch):
             return None                                  # 主仓不可比
         if args[-1] in ("HEAD", "origin/master", "ccc"):
             return "ccc" if args[-1] != "HEAD" else "ccc"
-        if args[-1].startswith("HEAD.."):
-            return "0"
+        if any(a.startswith("HEAD..") for a in args):
+            return "0"                                   # 两种口径均不落后
         return None
 
     monkeypatch.setattr(bootstrap, "_git_out", fake_git_out)
@@ -239,7 +241,7 @@ def test_doctor_submodule_pointer_notes_unfetched_main_tip(fake_layout, monkeypa
             return "c" * 40                                # 快照与指针齐平
         if args[-2:] == ["-e", "d" * 40 + "^{commit}"]:
             return None                                    # 新对象未 fetch 进 submodule
-        if args[-1].startswith("HEAD.."):
+        if any(a.startswith("HEAD..") for a in args):
             return "0"
         return None
 
@@ -374,3 +376,35 @@ def test_corpus_lag_none_without_branch(tmp_path, monkeypatch):
     from kb import bootstrap
     monkeypatch.setattr(bootstrap, "_git_out", lambda a: "aaa")
     assert bootstrap.kb_corpus_lag(tmp_path, None) == (None, ".gitmodules 未配 branch")
+
+
+def test_doctor_submodule_pointer_silent_when_corpus_fresh(fake_layout, monkeypatch):
+    """原始数很大但语料数为 0(漂移全在 src/kb/ 与 traces/) → PASS 不 WARN。
+
+    这是换口径的全部意义: Agent-KB 每日 chore(traces) 提交会让原始口径天天红,
+    提醒随之失去"响了就该动"的可信度。
+    """
+    from kb import bootstrap
+    biz, ak = fake_layout
+    (biz / ".gitmodules").write_text(
+        '[submodule ".agent-kb"]\n\tpath = .agent-kb\n\tbranch = master\n', encoding="utf-8")
+    (biz / ".agent-kb" / "kb").mkdir(parents=True)
+    monkeypatch.setattr(bootstrap, "_mod_ok", lambda *a, **k: True)
+    (biz / ".venv" / "Scripts").mkdir(parents=True)
+    (biz / ".venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+
+    def fake_git_out(args):
+        if args[:3] == ["-C", str(ak), "rev-parse"]:
+            return None
+        if args[-1] in ("HEAD", "origin/master"):
+            return "aaa" if args[-1] == "HEAD" else "ccc"
+        if any(a.startswith("HEAD..") for a in args):
+            return "0" if "kb/" in args else "99"        # 语料 0 / 原始 99
+        return None
+
+    monkeypatch.setattr(bootstrap, "_git_out", fake_git_out)
+    checks = doctor(biz / "docs", agent_kb=ak)
+    by_name = {n: (lvl, msg) for lvl, n, msg in checks}
+    assert by_name["submodule pointer"][0] == "PASS", by_name["submodule pointer"]
+    assert "99" not in by_name["submodule pointer"][1]
+    assert by_name["submodule lag raw"][1] == "99"

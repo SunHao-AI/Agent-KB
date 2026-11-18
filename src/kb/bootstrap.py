@@ -343,15 +343,28 @@ def doctor(repo: Path, agent_kb: Path | None = None,
             add(("WARN", "submodule .agent-kb", "悬空指针: git submodule update --init"))
         else:
             add(("PASS", "submodule .agent-kb", "已 checkout"))
-            lag, ref = _submodule_lag(sub, root, _submodule_branch(gm))
+            lag, ref = kb_corpus_lag(sub, _submodule_branch(gm))
+            raw, raw_ref = _submodule_lag(sub, root, _submodule_branch(gm))
+            # 时效限定沿用 _submodule_lag 的参照结论: 主仓已前进但新对象未 fetch 时
+            # 它会给出"主仓 HEAD xxx 未 fetch, 无法比对"。既有 PASS 用例正是断言这句
+            # (test_doctor_submodule_pointer_notes_unfetched_main_tip), 换了口径必须
+            # 保留 —— 消灭虚假安全感靠的就是把参照边界说出来, 与用哪个数无关。
+            # tail 判据用"与语料参照完全相同"而非 startswith("origin/"): 未 fetch
+            # 场景的 raw_ref 是组合串"origin/master / 主仓 HEAD xxx 未 fetch…",
+            # 以 origin/ 开头但带着必须示人的时效限定, 不能被前缀判断吞掉。
+            tail = "" if raw_ref == ref else f"; 原始口径 {raw_ref}"
             if lag:
                 add(("WARN", "submodule pointer",
-                     (f"落后 {ref} 共 {lag} 个提交: 通用层语料过期, "
-                      f"git submodule update --remote .agent-kb")))
+                     (f"落后 {lag} 个语料提交(参照 {ref}, 上次 fetch 快照可能更少)"
+                      f"{tail}: 通用层语料过期 → kb sync --apply")))
             elif lag is None:
-                add(("PASS", "submodule pointer", f"无从判定: {ref}"))
+                add(("PASS", "submodule pointer", f"无从判定: {ref}{tail}"))
             else:
-                add(("PASS", "submodule pointer", f"不落后(参照: {ref})"))
+                add(("PASS", "submodule pointer", f"语料不落后(参照: {ref}){tail}"))
+            # 原始提交数只作诊断: 它与语料口径的差异全在 src/kb/(代码始终最新)
+            # 与 traces/(每日噪声), 不是行动依据, 故不进 WARN 文案数字只列在这里。
+            if raw is not None:
+                add(("PASS", "submodule lag raw", str(raw)))
             # 通用层索引新鲜度: 指针新但索引 stale 同样让双层检索降级(sections 缺位)
             if (sub / "kb").is_dir():
                 try:

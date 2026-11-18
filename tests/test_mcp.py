@@ -224,3 +224,28 @@ async def test_review_proposed_needs_no_evidence(layers):
         "id": eid, "to": "accepted", "confidence": "probable",
         "evidence": "两处项目实测一致"})
     assert err is False and out["status"] == "accepted"
+
+
+async def test_search_hit_payload_upgrades_to_object_with_notice(layers, monkeypatch):
+    """命中态本是**裸数组**; 有提醒才升级为 {rows, notices} 对象。
+
+    裸数组不能直接塞字段, 但也不能因为"怕改结构"就不提醒 —— agent 读到的载荷
+    形状变了必须带得上原因。零提醒时结构不变由下一条守着。
+    """
+    import kb.mcp_server as mcp_mod
+    monkeypatch.setattr(mcp_mod, "lag_notice",
+                        lambda *a, **k: "[kb] 通用层落后 7 个语料提交 → kb sync")
+    proj, kb = layers
+    srv = build_server(proj, agent_kbs=[kb], repo_name="docs")
+    err, out = await _call(srv, "kb_search", {"query": "Vite"})
+    assert err is False
+    assert out["notices"] == ["[kb] 通用层落后 7 个语料提交 → kb sync"]
+    assert out["rows"][0]["id"] == "kb-20261014-e1e1"
+
+
+async def test_search_payload_shape_unchanged_without_notice(layers):
+    """零提醒 → 载荷与改动前**逐字节同形**(命中态仍是裸数组, 不多包一层)。"""
+    proj, kb = layers
+    srv = build_server(proj, agent_kbs=[kb], repo_name="docs")
+    err, out = await _call(srv, "kb_search", {"query": "Vite"})
+    assert err is False and isinstance(out, list) and "notices" not in out

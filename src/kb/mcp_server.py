@@ -13,6 +13,7 @@ from kb.gate import (DuplicateCandidate, GateViolation, create_draft, review,
 from kb.layers import get_layered, related_layers, search_layers_report
 from kb.repowiki import (REPOWIKI_ID_PREFIX, find_repowiki_root,
                          get_card_by_id, make_repowiki_layer)
+from kb.sync import lag_notice
 
 
 def _json(obj) -> str:
@@ -87,8 +88,12 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
                 ext_rows.extend(dict(h, hit_fields=["source"], hit_spans=[]) for h in hits)
                 ext_health.append(c.health())
         rows = rows + ext_rows
+        notice = lag_notice(repo)          # None = 零漂移/未 init/无从判定
         if rows or not query:
             payload = rows if not ext_health else {"rows": rows, "sources": ext_health}
+            if notice:                     # 命中态本是裸数组, 有提醒才升级为带说明的对象
+                payload = {"rows": payload if isinstance(payload, list)
+                           else payload.get("rows", []), "notices": [notice]}
             out = _compact(payload)
         else:  # FR-3.2: 零命中从裸 [] 升级为死因+建议(命中态结构不变)
             scanned = sum(r.get("scanned", 0) for r in reports)
@@ -100,6 +105,7 @@ def build_server(repo: Path, agent_kbs: list[Path] | None = None,
                                      f"死于词匹配 {n_q}; AND 与部分命中均已尝试, "
                                      f"建议更换关键词或按 suggest 改写"),
                             "suggest": suggest,
+                            "notices": [notice] if notice else [],
                             "sources": ext_health or None})
         if kbtrace.trace_enabled():
             ev = kbtrace.build_search_event(

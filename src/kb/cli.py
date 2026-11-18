@@ -23,6 +23,7 @@ from kb.query import due_review, get_entry, needs_scope, related, stat
 from kb.repowiki import (build_sidecar, export_repowiki, find_repowiki_root,
                          get_card_by_id, make_repowiki_layer,
                          REPOWIKI_ID_PREFIX)
+from kb.sync import lag_notice
 
 
 def _date_arg(v: str) -> str:
@@ -399,6 +400,10 @@ def _dispatch(argv: list[str] | None = None) -> int:
                 returned_chars=len(json.dumps(res, ensure_ascii=False)))
             kbtrace.append_event(ev)
         print(json.dumps(res, ensure_ascii=False, indent=2))
+        # 通用层语料漂移提醒走 stderr(stdout 保持纯 JSON 可管道)。只发现不写状态:
+        # 推进指针是 kb sync 的职责, 检索侧永不 fetch。
+        if (msg := lag_notice(repo)):
+            print(msg, file=sys.stderr)
         return 0
     if args.cmd == "show":
         if args.id.startswith(REPOWIKI_ID_PREFIX):

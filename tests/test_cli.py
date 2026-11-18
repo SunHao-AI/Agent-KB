@@ -241,3 +241,46 @@ def test_kb_new_summary_flag(tmp_repo, capsys):
                  "--repo", str(tmp_repo)]) == 0
     rec = json.loads((tmp_repo / "kb" / "index.jsonl").read_text(encoding="utf-8"))
     assert rec["summary"] == "Vite 端口漂移需固定 server.port。"
+
+
+# ── search 侧 lag 提醒 ──────────────────────────────────────────────────────
+def _stub_notice(monkeypatch, value):
+    """patch **kb.cli** 上的名字, 不是 kb.sync 上的。
+
+    cli.py 用的是 `from kb.sync import lag_notice`, 名字在 import 时就绑进 kb.cli
+    命名空间; patch kb.sync.lag_notice 改的是源模块属性, cli 手里那份不受影响 →
+    提醒照走真实实现, 三条用例全变成"恰好没 submodule 所以静默"的假绿。
+    """
+    import kb.cli as cli_mod
+    monkeypatch.setattr(cli_mod, "lag_notice", lambda *a, **k: value)
+
+
+def test_cli_search_prints_lag_notice_on_stderr(tmp_repo, capsys, monkeypatch):
+    """提醒走 stderr, stdout 保持纯 JSON 可管道(与 --no-trace 等开关互不干扰)。
+
+    播种一条命中: tmp_repo 空库时 stdout 是 `[]`, json.loads 后为 falsy 空列表,
+    `assert json.loads(...)` 会因"零命中"而非"JSON 被污染"红 —— 与本用例意图
+    (stderr 分流不扰 stdout)无关, 故按 test_cli_index_then_search_json 同法播种。
+    """
+    from kb.cli import main
+    _put(tmp_repo, "kb/pitfall/frontend/a.md",
+         make_entry(id="kb-20261012-aaaa", title="Vite", status="accepted"))
+    assert main(["index", "--repo", str(tmp_repo)]) == 0
+    capsys.readouterr()                        # 清掉 index 的 stdout
+    _stub_notice(monkeypatch, "[kb] 通用层落后 7 个语料提交 → kb sync")
+    main(["search", "--repo", str(tmp_repo), "--query", "vite", "--no-trace"])
+    captured = capsys.readouterr()
+    assert "落后 7 个语料提交" in captured.err
+    assert json.loads(captured.out)            # stdout 仍是合法 JSON 且有命中
+    assert "落后" not in captured.out
+
+
+def test_cli_search_output_unchanged_without_lag(tmp_repo, capsys, monkeypatch):
+    """零漂移时输出**字节级不变** —— 防噪声回归的主守护。"""
+    from kb.cli import main
+    main(["search", "--repo", str(tmp_repo), "--query", "vite", "--no-trace"])
+    baseline = capsys.readouterr()
+    _stub_notice(monkeypatch, None)
+    main(["search", "--repo", str(tmp_repo), "--query", "vite", "--no-trace"])
+    after = capsys.readouterr()
+    assert after == baseline

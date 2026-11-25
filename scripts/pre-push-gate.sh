@@ -503,12 +503,30 @@ if [ -z "$py_touched" ]; then
 else
     # 就地跑前先确认测试面与工作区一致 (pytest 收集 tests/, 受后端源码与配置影响)
     assert_test_face_clean '*.py' pyproject.toml pytest.ini setup.cfg tox.ini conftest.py
+    # D-TEST-SIDE-EFFECT-01 (2026-11-19): hook 导出的 GIT_DIR 等会被 pytest 子进程继承,
+    # 测试 helper 的 git 子进程可能写到真实仓(实测出现 t@t 提交/core.bare=true)。
+    # 净化会话环境 + GIT_CEILING_DIRECTORIES, 并在 pytest 前后比对仓状态, 变化即 FAIL。
+    _gate_head_before=$(git rev-parse HEAD)
+    _gate_status_before=$(git status --porcelain)
+    _gate_bare_before=$(git config --get core.bare || true)
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
+    GIT_CEILING_DIRECTORIES=$(cd .. && pwd)
+    export GIT_CEILING_DIRECTORIES
     echo "pre-push-gate: pytest 全量 (coverage 报告: ${COV_TARGET}, 无阈值) ..." >&2
     # shellcheck disable=SC2086
     "$VENV_PY" -m pytest -q $COV_ARGS || {
         echo "pre-push-gate: FAIL - 测试未过, 禁止 push。修复后重试, 或 PREPUSH_SKIP=1 应急跳过。" >&2
         exit 1
     }
+    _gate_head_after=$(git rev-parse HEAD)
+    _gate_status_after=$(git status --porcelain)
+    _gate_bare_after=$(git config --get core.bare || true)
+    if [ "$_gate_head_after" != "$_gate_head_before" ] || [ "$_gate_status_after" != "$_gate_status_before" ] || [ "$_gate_bare_after" = "true" ]; then
+        echo "pre-push-gate: FAIL - pytest 期间真实仓被写入或配置被改(D-TEST-SIDE-EFFECT-01 防护)" >&2
+        [ "$_gate_head_after" != "$_gate_head_before" ] && echo "  HEAD: $_gate_head_before -> $_gate_head_after" >&2
+        [ "$_gate_bare_after" = "true" ] && echo "  core.bare=true, 必须恢复 false" >&2
+        exit 1
+    fi
 fi
 
 # ---- 3.5 python 仓内的前端子项目 (混合仓): frontend/ 有 package.json 时纳入门禁 ----
